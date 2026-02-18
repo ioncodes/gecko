@@ -1,0 +1,9 @@
+[package]
+name = "tinyemu"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gekko = { path = "../gekko" }
+colored = "3.1.1"
+disasm = { path = "../disasm" }

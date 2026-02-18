@@ -1,5 +1,3 @@
 [workspace]
 resolver = "3"
-members = [
-    "gctool"
-]
+members = ["gctool", "disasm", "gekko", "tinyemu"]

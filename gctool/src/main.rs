@@ -1,7 +1,5 @@
-mod cpu;
-
-use cpu::gekko::GekkoInstruction;
-use cpu::dsp::DspInstruction;
+use disasm::dsp::DspInstruction;
+use disasm::gekko::GekkoInstruction;
 
 use clap::{Parser, ValueEnum};
 use std::fs;
@@ -17,7 +15,8 @@ fn parse_offset(s: &str) -> Result<usize, String> {
     if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
         usize::from_str_radix(hex, 16).map_err(|e| e.to_string())
     } else {
-        s.parse().map_err(|e: std::num::ParseIntError| e.to_string())
+        s.parse()
+            .map_err(|e: std::num::ParseIntError| e.to_string())
     }
 }
 
@@ -39,7 +38,7 @@ fn disassemble_dol(data: &[u8], start: usize) {
 
         match GekkoInstruction::decode(&data[offset..]) {
             Some((instr, _)) => println!("{:08X}  {:08X}  {}", addr, word, instr),
-            None => println!("{:08X}  {:08X}  .long     {:#010x}", addr, word, word),
+            None => println!("{:08X}  {:08X}  .long {:#010x}", addr, word, word),
         }
 
         offset += 4;
@@ -54,18 +53,15 @@ fn disassemble_dsp(data: &[u8], start: usize) {
 
         match DspInstruction::decode(&data[offset..]) {
             Some((instr, bytes_consumed)) => {
-                let mut hex_parts = Vec::new();
-                let mut i = 0;
-                while i + 2 <= bytes_consumed {
-                    let w = u16::from_be_bytes(data[offset + i..offset + i + 2].try_into().unwrap());
-                    hex_parts.push(format!("{:04x}", w));
-                    i += 2;
-                }
+                let hex_parts: Vec<_> = data[offset..offset + bytes_consumed]
+                    .chunks_exact(2)
+                    .map(|c| format!("{:04x}", u16::from_be_bytes(c.try_into().unwrap())))
+                    .collect();
                 println!("{:04x}  {:9}  {}", addr, hex_parts.join(" "), instr);
                 offset += bytes_consumed;
             }
             None => {
-                println!("{:04x}  {:10}  .word     {:#06x}", addr, format!("{:04x}", word), word);
+                println!("{:04x}  {:04x}      .word  {:#06x}", addr, word, word);
                 offset += 2;
             }
         }

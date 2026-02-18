@@ -5,6 +5,4 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-
-[build-dependencies]
-chipi = { path = "../../chipi" }
+disasm = { path = "../disasm" }
