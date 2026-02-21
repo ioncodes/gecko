@@ -1,8 +1,16 @@
 pub mod interpreter;
+pub mod semantics;
+
+#[allow(dead_code, unused_variables, non_upper_case_globals, clippy::all)]
+pub mod lut {
+    include!(concat!(env!("OUT_DIR"), "/gekko_lut.rs"));
+}
 
 pub struct Cpu {
     pub gprs: [u32; 32],
     pub fprs: [f64; 32],
+    pub current_pc: u32,
+    pub next_pc: u32,
     pub pc: u32,
 }
 
@@ -11,6 +19,8 @@ impl Cpu {
         Cpu {
             gprs: [0; 32],
             fprs: [0.0; 32],
+            current_pc: 0x100,
+            next_pc: 0x104,
             pc: 0x100,
         }
     }

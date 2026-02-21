@@ -1,19 +1,31 @@
 use colored::Colorize;
+use disasm::gekko::GekkoInstruction;
 use disasm::tokenizer::{self, AsmToken};
 
 fn main() {
     let path = std::env::args()
         .nth(1)
         .expect("Usage: debugger <path_to_rom>");
+    let is_debug = std::env::args().any(|arg| arg == "--debug");
+
     let mut gekko = gekko::gekko::Gekko::new(&path);
     loop {
         let addr = gekko.cpu.pc;
-        let (instr, _) = gekko.execute_instruction().unwrap();
+        let instr = GekkoInstruction::decode(&gekko.mmu.memory[addr as usize..])
+            .expect("failed to decode instruction")
+            .0;
+
+        if is_debug {
+            dbg!(&instr);
+        }
+
         println!(
             "{}: {}",
             format!("{:08X}", addr).bold(),
             colorize_instr(&instr)
         );
+
+        gekko.run_until_event();
     }
 }
 

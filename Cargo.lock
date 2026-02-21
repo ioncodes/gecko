@@ -54,9 +54,9 @@ dependencies = [
 
 [[package]]
 name = "chipi"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e160fec8ea8eed2ee3fd2f80599156ec8be09978f1e2744a3669dc08e86ba3f"
+checksum = "a0b1c8f88248e1712bda8e8b64ae1359bb01e953abd5f76c53ddabf32be88fa1"
 
 [[package]]
 name = "clap"
@@ -132,7 +132,7 @@ dependencies = [
 name = "gekko"
 version = "0.1.0"
 dependencies = [
- "disasm",
+ "chipi",
 ]
 
 [[package]]

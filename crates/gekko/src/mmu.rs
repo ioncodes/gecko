@@ -13,6 +13,11 @@ impl Mmu {
         self.memory[addr as usize]
     }
 
+    pub fn read_u32(&self, addr: u32) -> u32 {
+        let a = addr as usize;
+        u32::from_be_bytes(self.memory[a..a + 4].try_into().unwrap())
+    }
+
     pub fn write_u8(&mut self, addr: u32, value: u8) {
         self.memory[addr as usize] = value;
     }

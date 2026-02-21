@@ -3,5 +3,5 @@ name = "gekko"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-disasm = { path = "../disasm" }
+[build-dependencies]
+chipi = "0.4.0"

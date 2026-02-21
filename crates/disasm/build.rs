@@ -6,17 +6,17 @@ fn main() {
 
     // Generate Gekko (PowerPC) decoder
     chipi::generate(
-        "../rsrc/chipi-spec/gamecube/gekko.chipi",
+        "../../rsrc/chipi-spec/gamecube/gekko.chipi",
         out_dir.join("gekko.rs").to_str().unwrap(),
     )
     .expect("failed to generate gekko decoder");
-    println!("cargo:rerun-if-changed=../rsrc/chipi-spec/gamecube/gekko.chipi");
+    println!("cargo:rerun-if-changed=../../rsrc/chipi-spec/gamecube/gekko.chipi");
 
     // Generate DSP decoder
     chipi::generate(
-        "../rsrc/chipi-spec/gamecube/dsp.chipi",
+        "../../rsrc/chipi-spec/gamecube/dsp.chipi",
         out_dir.join("dsp.rs").to_str().unwrap(),
     )
     .expect("failed to generate dsp decoder");
-    println!("cargo:rerun-if-changed=../rsrc/chipi-spec/gamecube/dsp.chipi");
+    println!("cargo:rerun-if-changed=../../rsrc/chipi-spec/gamecube/dsp.chipi");
 }
