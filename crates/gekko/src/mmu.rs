@@ -21,14 +21,16 @@ impl Mmu {
 
     /// Resolve a physical address to a `(backing_slice, offset)` pair
     /// This is the one place that maps physical addresses to memory regions
-    #[tracing::instrument(skip(self), level = "trace")]
     fn resolve(&self, phys: u32) -> (&[u8], usize) {
         match phys {
             RAM_BASE..=RAM_END => (&self.ram, phys as usize),
             EFB_BASE..=EFB_END => (&self.efb, (phys - EFB_BASE) as usize),
-            HW_REG_BASE..=HW_REG_END => (&self.hwr, (phys - HW_REG_BASE) as usize),
+            HW_REG_BASE..=HW_REG_END => {
+                tracing::warn!(phys_addr = format!("{:08X}", phys), "read from mmio");
+                (&self.hwr, (phys - HW_REG_BASE) as usize)
+            }
             _ => {
-                tracing::error!("unmapped physical read at {:08X}", phys);
+                tracing::error!(phys_addr = format!("{:08X}", phys), "unmapped physical read");
                 (&self.ram, 0)
             }
         }
@@ -37,14 +39,16 @@ impl Mmu {
     /// Resolve a physical address to a `(backing_slice, offset)` pair
     /// This is the one place that maps physical addresses to memory regions
     /// Returns a mutable slice for write operations
-    #[tracing::instrument(skip(self), level = "trace")]
     fn resolve_mut(&mut self, phys: u32) -> (&mut [u8], usize) {
         match phys {
             RAM_BASE..=RAM_END => (&mut self.ram, phys as usize),
             EFB_BASE..=EFB_END => (&mut self.efb, (phys - EFB_BASE) as usize),
-            HW_REG_BASE..=HW_REG_END => (&mut self.hwr, (phys - HW_REG_BASE) as usize),
+            HW_REG_BASE..=HW_REG_END => {
+                tracing::warn!(phys_addr = format!("{:08X}", phys), "write to mmio");
+                (&mut self.hwr, (phys - HW_REG_BASE) as usize)
+            }
             _ => {
-                tracing::error!("unmapped physical write at {:08X}", phys);
+                tracing::error!(phys_addr = format!("{:08X}", phys), "unmapped physical write");
                 (&mut self.ram, 0)
             }
         }
