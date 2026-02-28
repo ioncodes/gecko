@@ -1,7 +1,9 @@
 use disasm::dsp::DspInstruction;
 use disasm::gekko::GekkoInstruction;
+use dol::Dol;
 
 use clap::{Parser, ValueEnum};
+use comfy_table::{Table, presets::ASCII_MARKDOWN};
 use std::fs;
 use std::process;
 
@@ -25,6 +27,9 @@ fn parse_offset(s: &str) -> Result<usize, String> {
 struct Args {
     #[arg(short, long, value_enum, default_value_t = Mode::Dol)]
     mode: Mode,
+    /// Inspect file headers instead of disassembling
+    #[arg(short, long)]
+    inspect: bool,
     file: String,
     #[arg(value_parser = parse_offset, default_value_t = 0)]
     offset: usize,
@@ -68,6 +73,40 @@ fn disassemble_dsp(data: &[u8], start: usize) {
     }
 }
 
+fn section_table(sections: &[dol::Section]) -> Table {
+    let mut table = Table::new();
+    table.load_preset(ASCII_MARKDOWN);
+    table.set_header(vec!["idx", "offset", "vaddr", "size", "end"]);
+    for (i, s) in sections.iter().enumerate() {
+        table.add_row(vec![
+            format!("{i}"),
+            format!("0x{:08X}", s.offset),
+            format!("0x{:08X}", s.vaddr),
+            format!("0x{:08X}", s.size),
+            format!("0x{:08X}", s.vaddr + s.size),
+        ]);
+    }
+    table
+}
+
+fn inspect_dol(data: &[u8]) {
+    let dol = Dol::parse(data);
+
+    println!("Text Sections ({}):", dol.text_sections.len());
+    println!("{}\n", section_table(&dol.text_sections));
+
+    println!("Data Sections ({}):", dol.data_sections.len());
+    println!("{}\n", section_table(&dol.data_sections));
+
+    println!("Entry point: 0x{:08X}\n", dol.entry_point);
+    println!(
+        "BSS: 0x{:08X} - 0x{:08X} (size: 0x{:08X})",
+        dol.bss_start,
+        dol.bss_start + dol.bss_size,
+        dol.bss_size
+    );
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -75,6 +114,17 @@ fn main() {
         eprintln!("failed to read {}: {}", args.file, e);
         process::exit(1);
     });
+
+    if args.inspect {
+        match args.mode {
+            Mode::Dol => inspect_dol(&data),
+            Mode::Dsp => {
+                eprintln!("inspect is only supported for DOL files");
+                process::exit(1);
+            }
+        }
+        return;
+    }
 
     let min_size = match args.mode {
         Mode::Dol => 4,

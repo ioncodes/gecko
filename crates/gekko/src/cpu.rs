@@ -26,13 +26,13 @@ pub struct Cpu {
 }
 
 impl Cpu {
-    pub fn new() -> Self {
+    pub fn new(initial_pc: u32) -> Self {
         Cpu {
             gprs: [0; 32],
             fprs: [0.0; 32],
-            pc: 0x80004000,
-            cia: 0x80004000,
-            nia: 0x80004004,
+            pc: initial_pc,
+            cia: initial_pc,
+            nia: initial_pc.wrapping_add(4),
             lr: 0,
             ctr: 0,
             xer: 0,

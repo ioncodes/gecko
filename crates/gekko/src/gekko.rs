@@ -13,10 +13,34 @@ impl Gekko {
     pub fn new(path: &str) -> Self {
         let mut mmu = mmu::Mmu::new();
         let data = std::fs::read(path).expect("failed to read ROM");
-        mmu.ram[0x3F00..0x3F00 + data.len()].copy_from_slice(&data);
+        let dol = dol::Dol::parse(&data);
+
+        // Copy TEXT sections to memory
+        for section in &dol.text_sections {
+            for i in 0..section.size {
+                let addr = section.vaddr + i;
+                let value = data[(section.offset + i) as usize];
+                mmu.virt_write_u8(addr, value);
+            }
+        }
+
+        // Copy DATA sections to memory
+        for section in &dol.data_sections {
+            for i in 0..section.size {
+                let addr = section.vaddr + i;
+                let value = data[(section.offset + i) as usize];
+                mmu.virt_write_u8(addr, value);
+            }
+        }
+
+        // Zero out the BSS section
+        for i in 0..dol.bss_size {
+            let addr = dol.bss_start + i;
+            mmu.virt_write_u8(addr, 0);
+        }
 
         Gekko {
-            cpu: cpu::Cpu::new(),
+            cpu: cpu::Cpu::new(dol.entry_point),
             scheduler: scheduler::Scheduler { cycles: 0 },
             mmu,
         }
