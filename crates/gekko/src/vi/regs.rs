@@ -1,16 +1,9 @@
-use crate::mmio::{Mmio, traits::{MmioAccess, MmioRegister}};
-use chapa::BitEnum;
-
 use super::Vi;
-
-macro_rules! impl_mmio_access {
-    ($reg:ty, $owner:ty, $field:ident) => {
-        impl MmioAccess<$owner> for $reg {
-            fn read(dev: &$owner) -> Self { dev.$field }
-            fn write(self, dev: &mut $owner) { dev.$field = self; }
-        }
-    };
-}
+use crate::mmio::{
+    Mmio,
+    traits::{MmioAccess, MmioRegister},
+};
+use chapa::BitEnum;
 
 #[derive(Debug, BitEnum)]
 pub enum VideoFormat {
@@ -31,14 +24,6 @@ pub struct DisplayConfiguration {
     #[bits(4..=5, alias = "le0")] pub display_latch0: u8,
     #[bits(6..=7, alias = "le1")] pub display_latch1: u8,
     #[bits(8..=9, alias = "fmt")] pub video_format: VideoFormat,
-}
-
-#[rustfmt::skip]
-impl MmioRegister for DisplayConfiguration {
-    const ADDR: u32 = Mmio::virt_to_phys(0xCC002002);
-    const SIZE: usize = 2;
-    fn from_raw(raw: u32) -> Self { (raw as u16).into() }
-    fn to_raw(self) -> u32 { self.raw() as u32 }
 }
 
 impl MmioAccess<Vi> for DisplayConfiguration {
@@ -67,7 +52,6 @@ pub struct TopFieldBase {
 
     #[bits(28)]
     pub page_offset: bool,
-
     // TODO: 29-31	y	always zero (maybe some write only control register stuff?, setting bit 31 clears bits 31-28 (?))
 }
 
@@ -79,25 +63,41 @@ pub struct BottomFieldBase {
 
     #[bits(28)]
     pub page_offset: bool,
-
     // TODO:  	y	always zero (maybe some write-only control register stuff?)
 }
 
 #[rustfmt::skip]
-impl MmioRegister for TopFieldBase {
-    const ADDR: u32 = Mmio::virt_to_phys(0xCC00201c);
-    const SIZE: usize = 4;
-    fn from_raw(raw: u32) -> Self { raw.into() }
-    fn to_raw(self) -> u32 { self.raw() }
+macro_rules! impl_mmio_access {
+    ($reg:ty, $owner:ty, $field:ident) => {
+        impl MmioAccess<$owner> for $reg {
+            fn read(dev: &$owner) -> Self { dev.$field }
+            fn write(self, dev: &mut $owner) { dev.$field = self; }
+        }
+    };
 }
 
 #[rustfmt::skip]
-impl MmioRegister for BottomFieldBase {
-    const ADDR: u32 = Mmio::virt_to_phys(0xCC002024);
-    const SIZE: usize = 4;
-    fn from_raw(raw: u32) -> Self { raw.into() }
-    fn to_raw(self) -> u32 { self.raw() }
+macro_rules! size_to_raw_type {
+    (1, $raw:expr) => { $raw as u8 };
+    (2, $raw:expr) => { $raw as u16 };
+    (4, $raw:expr) => { $raw };
 }
+
+#[rustfmt::skip]
+macro_rules! impl_mmio_register {
+    ($reg:ty, $addr:expr, $size:tt) => {
+        impl MmioRegister for $reg {
+            const ADDR: u32 = Mmio::virt_to_phys($addr);
+            const SIZE: usize = $size;
+            fn from_raw(raw: u32) -> Self { size_to_raw_type!($size, raw).into() }
+            fn to_raw(self) -> u32 { self.raw() as u32 }
+        }
+    };
+}
+
+impl_mmio_register!(DisplayConfiguration, 0xCC002002, 2);
+impl_mmio_register!(TopFieldBase, 0xCC00201C, 4);
+impl_mmio_register!(BottomFieldBase, 0xCC002024, 4);
 
 impl_mmio_access!(TopFieldBase, Vi, top_field_base);
 impl_mmio_access!(BottomFieldBase, Vi, bottom_field_base);

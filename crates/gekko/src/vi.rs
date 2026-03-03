@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 pub mod regs;
 
 use crate::{
@@ -21,61 +24,53 @@ impl Vi {
         }
     }
 
+    crate::impl_mmio_dispatch!(
+        regs::DisplayConfiguration,
+        regs::TopFieldBase,
+        regs::BottomFieldBase,
+    );
+
     pub fn xfb_addr(&self) -> u32 {
         let top = self.top_field_base;
         (top.xfb_addr() << 9) | ((top.page_offset() as u32) << 24)
     }
 
     pub fn mmio_read_u8(&self, offset: u32) -> u8 {
-        tracing::warn!(offset = format!("{offset:#06X}"), "unhandled VI read_u8");
-        0
+        self.read_raw(VI_BASE + offset, 1).unwrap_or_else(|| {
+            tracing::warn!(offset = format!("{offset:08X}"), "unhandled VI read_u8");
+            0
+        }) as u8
     }
 
-    pub fn mmio_write_u8(&mut self, offset: u32, _val: u8) {
-        tracing::warn!(offset = format!("{offset:#06X}"), "unhandled VI write_u8");
-    }
-
-    pub fn mmio_read_u16(&self, offset: u32) -> u16 {
-        match VI_BASE + offset {
-            regs::DisplayConfiguration::ADDR => {
-                regs::DisplayConfiguration::read(self).to_raw() as u16
-            }
-            _ => {
-                tracing::warn!(offset = format!("{offset:#06X}"), "unhandled VI read_u16");
-                0
-            }
+    pub fn mmio_write_u8(&mut self, offset: u32, val: u8) {
+        if !self.write_raw(VI_BASE + offset, 1, val as u32) {
+            tracing::warn!(offset = format!("{offset:#08X}"), "unhandled VI write_u8");
         }
     }
 
+    pub fn mmio_read_u16(&self, offset: u32) -> u16 {
+        self.read_raw(VI_BASE + offset, 2).unwrap_or_else(|| {
+            tracing::warn!(offset = format!("{offset:#08X}"), "unhandled VI read_u16");
+            0
+        }) as u16
+    }
+
     pub fn mmio_write_u16(&mut self, offset: u32, val: u16) {
-        match VI_BASE + offset {
-            regs::DisplayConfiguration::ADDR => {
-                <regs::DisplayConfiguration as MmioRegister>::from_raw(val as u32).write(self)
-            }
-            _ => tracing::warn!(offset = format!("{offset:#06X}"), "unhandled VI write_u16"),
+        if !self.write_raw(VI_BASE + offset, 2, val as u32) {
+            tracing::warn!(offset = format!("{offset:#08X}"), "unhandled VI write_u16");
         }
     }
 
     pub fn mmio_read_u32(&self, offset: u32) -> u32 {
-        match VI_BASE + offset {
-            regs::TopFieldBase::ADDR => regs::TopFieldBase::read(self).to_raw(),
-            regs::BottomFieldBase::ADDR => regs::BottomFieldBase::read(self).to_raw(),
-            _ => {
-                tracing::warn!(offset = format!("{offset:#06X}"), "unhandled VI read_u32");
-                0
-            }
-        }
+        self.read_raw(VI_BASE + offset, 4).unwrap_or_else(|| {
+            tracing::warn!(offset = format!("{offset:#08X}"), "unhandled VI read_u32");
+            0
+        })
     }
 
     pub fn mmio_write_u32(&mut self, offset: u32, val: u32) {
-        match VI_BASE + offset {
-            regs::TopFieldBase::ADDR => {
-                <regs::TopFieldBase as MmioRegister>::from_raw(val).write(self)
-            }
-            regs::BottomFieldBase::ADDR => {
-                <regs::BottomFieldBase as MmioRegister>::from_raw(val).write(self)
-            }
-            _ => tracing::warn!(offset = format!("{offset:#06X}"), "unhandled VI write_u32"),
+        if !self.write_raw(VI_BASE + offset, 4, val) {
+            tracing::warn!(offset = format!("{offset:#08X}"), "unhandled VI write_u32");
         }
     }
 }
