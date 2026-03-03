@@ -163,13 +163,14 @@ impl Vi {
     }
 }
 
-pub const XFB_WIDTH: usize = 640;
-pub const XFB_HEIGHT: usize = 574;
-
 impl Gekko {
     #[rustfmt::skip]
     pub fn render_xfb(&self) -> Vec<u32> {
-        let mut pixels = vec![0u32; XFB_WIDTH * XFB_HEIGHT];
+        let video_format = self.vi.dcr.video_format();
+        let width = video_format.columns();
+        let height = video_format.lines();
+
+        let mut pixels = vec![0u32; width * height];
         let xfb_addr = self.vi.xfb_addr();
 
         // XFB is YUY2 (YCbCr 4:2:2): each 32-bit word = [Y0][Cb][Y1][Cr] (big-endian)
@@ -181,7 +182,7 @@ impl Gekko {
             ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
         };
 
-        for i in 0..(XFB_WIDTH * XFB_HEIGHT / 2) {
+        for i in 0..(width * height / 2) {
             let word = self.mmio.phys_read_u32(xfb_addr + (i as u32) * 4);
             let y0 = ((word >> 24) & 0xFF) as f32 - 16.0;
             let cb = ((word >> 16) & 0xFF) as f32 - 128.0;

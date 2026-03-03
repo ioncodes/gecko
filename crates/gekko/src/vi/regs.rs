@@ -13,12 +13,37 @@ crate::mmio_register! {
 
 // 0xCC002002	2	R/W	DCR - Display Configuration Register
 
+pub enum RefreshRate {
+    Hz60,
+    Hz50,
+}
+
 #[derive(Debug, BitEnum)]
 pub enum VideoFormat {
     Ntsc = 0,
     Pal = 1,
     Mpal = 2,
     Debug = 3,
+}
+
+impl VideoFormat {
+    pub fn refresh_rate(&self) -> RefreshRate {
+        match self {
+            VideoFormat::Ntsc | VideoFormat::Mpal => RefreshRate::Hz60,
+            VideoFormat::Pal | VideoFormat::Debug => RefreshRate::Hz50,
+        }
+    }
+
+    pub fn lines(&self) -> usize {
+        match self {
+            VideoFormat::Ntsc | VideoFormat::Mpal => 480,
+            VideoFormat::Pal | VideoFormat::Debug => 574,
+        }
+    }
+
+    pub fn columns(&self) -> usize {
+        640
+    }
 }
 
 crate::mmio_register! {

@@ -4,7 +4,6 @@ mod snaptshot;
 use base64::Engine as _;
 use colored::Colorize;
 use disasm::gekko::GekkoInstruction;
-use gekko::vi;
 use snaptshot::CpuSnapshot;
 
 fn main() {
@@ -98,7 +97,8 @@ fn main() {
 
     println!("Render current XFB:");
     let pixels = gekko.render_xfb();
-    render_kitty(&pixels, vi::XFB_WIDTH, vi::XFB_HEIGHT);
+    let video_format = gekko.vi.dcr.video_format();
+    render_kitty(&pixels, video_format.columns(), video_format.lines());
 }
 
 fn dump_registers(curr: &CpuSnapshot, prev: &CpuSnapshot) {
