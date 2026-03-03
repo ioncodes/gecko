@@ -4,7 +4,7 @@ use crate::{
     scheduler::Scheduler,
     vi::Vi,
 };
-use dol::Dol;
+use image::Executable;
 
 pub struct Gekko {
     pub cpu: Cpu,
@@ -14,13 +14,12 @@ pub struct Gekko {
 }
 
 impl Gekko {
-    pub fn new(path: &str) -> Self {
+    pub fn new(exe: &impl Executable) -> Self {
         let mut mmio = Mmio::new();
-        let data = std::fs::read(path).expect("failed to read ROM");
-        let dol = Dol::parse(&data);
+        let data = exe.data();
 
         // Copy TEXT sections to memory
-        for section in &dol.text_sections {
+        for section in exe.text_sections() {
             for i in 0..section.size {
                 let addr = section.vaddr + i;
                 let value = data[(section.offset + i) as usize];
@@ -29,7 +28,7 @@ impl Gekko {
         }
 
         // Copy DATA sections to memory
-        for section in &dol.data_sections {
+        for section in exe.data_sections() {
             for i in 0..section.size {
                 let addr = section.vaddr + i;
                 let value = data[(section.offset + i) as usize];
@@ -38,13 +37,14 @@ impl Gekko {
         }
 
         // Zero out the BSS section
-        for i in 0..dol.bss_size {
-            let addr = dol.bss_start + i;
+        let (bss_start, bss_size) = exe.bss();
+        for i in 0..bss_size {
+            let addr = bss_start + i;
             mmio.virt_write_u8(addr, 0);
         }
 
         Gekko {
-            cpu: Cpu::new(dol.entry_point),
+            cpu: Cpu::new(exe.entry_point()),
             scheduler: Scheduler { cycles: 0 },
             mmio,
             vi: Vi::new(),

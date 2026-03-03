@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 gekko = { path = "../gekko" }
+image = { path = "../image" }
 colored = "3.1.1"
 disasm = { path = "../disasm" }
 tracing = "0.1"

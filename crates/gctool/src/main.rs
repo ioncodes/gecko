@@ -1,6 +1,6 @@
 use disasm::dsp::DspInstruction;
 use disasm::gekko::GekkoInstruction;
-use dol::Dol;
+use image::{Dol, Executable};
 
 use clap::{Parser, ValueEnum};
 use comfy_table::{Table, presets::ASCII_MARKDOWN};
@@ -73,7 +73,7 @@ fn disassemble_dsp(data: &[u8], start: usize) {
     }
 }
 
-fn section_table(sections: &[dol::Section]) -> Table {
+fn section_table(sections: &[image::Section]) -> Table {
     let mut table = Table::new();
     table.load_preset(ASCII_MARKDOWN);
     table.set_header(vec!["idx", "offset", "vaddr", "size", "end"]);
@@ -89,21 +89,22 @@ fn section_table(sections: &[dol::Section]) -> Table {
     table
 }
 
-fn inspect_dol(data: &[u8]) {
+fn inspect_dol(data: Vec<u8>) {
     let dol = Dol::parse(data);
 
-    println!("Text Sections ({}):", dol.text_sections.len());
-    println!("{}\n", section_table(&dol.text_sections));
+    println!("Text Sections ({}):", dol.text_sections().len());
+    println!("{}\n", section_table(dol.text_sections()));
 
-    println!("Data Sections ({}):", dol.data_sections.len());
-    println!("{}\n", section_table(&dol.data_sections));
+    println!("Data Sections ({}):", dol.data_sections().len());
+    println!("{}\n", section_table(dol.data_sections()));
 
-    println!("Entry point: 0x{:08X}\n", dol.entry_point);
+    let (bss_start, bss_size) = dol.bss();
+    println!("Entry point: 0x{:08X}\n", dol.entry_point());
     println!(
         "BSS: 0x{:08X} - 0x{:08X} (size: 0x{:08X})",
-        dol.bss_start,
-        dol.bss_start + dol.bss_size,
-        dol.bss_size
+        bss_start,
+        bss_start + bss_size,
+        bss_size
     );
 }
 
@@ -117,7 +118,7 @@ fn main() {
 
     if args.inspect {
         match args.mode {
-            Mode::Dol => inspect_dol(&data),
+            Mode::Dol => inspect_dol(data),
             Mode::Dsp => {
                 eprintln!("inspect is only supported for DOL files");
                 process::exit(1);

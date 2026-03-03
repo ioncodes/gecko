@@ -9,4 +9,4 @@ chipi = "0.5.1"
 [dependencies]
 chapa = { git = "http://github.com/ioncodes/chapa" }
 tracing = "0.1.44"
-dol = { path = "../dol" }
+image = { path = "../image" }
