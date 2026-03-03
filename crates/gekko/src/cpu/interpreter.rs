@@ -5,7 +5,7 @@ pub fn branch<const OP: u32>(
     instr: crate::cpu::semantics::Instruction,
 ) {
     if instr.lk() {
-        ctx.cpu.lr = ctx.cpu.cia.wrapping_add(4);
+        ctx.cpu.spr.lr = ctx.cpu.cia.wrapping_add(4);
     }
 
     match OP {
@@ -21,7 +21,7 @@ pub fn branch<const OP: u32>(
             tracing::trace!("Branch control: {ctrl:?}");
 
             if ctrl.should_decrement_ctr() {
-                ctx.cpu.ctr = ctx.cpu.ctr.wrapping_sub(1);
+                ctx.cpu.spr.ctr = ctx.cpu.spr.ctr.wrapping_sub(1);
             }
 
             let (crf, bit) = (instr.bi() >> 2, instr.bi() & 0b11);
@@ -32,13 +32,13 @@ pub fn branch<const OP: u32>(
                 3 => ctx.cpu.cr.get_field(crf).so(),
                 _ => panic!("Invalid CR bit index: {}", bit),
             };
-            if !ctrl.should_branch(ctx.cpu.ctr, condition) {
+            if !ctrl.should_branch(ctx.cpu.spr.ctr, condition) {
                 return;
             }
 
             match OP {
                 crate::cpu::lut::OP_BCLRX => {
-                    ctx.cpu.nia = ctx.cpu.lr;
+                    ctx.cpu.nia = ctx.cpu.spr.lr;
                 }
                 crate::cpu::lut::OP_BCX => {
                     ctx.cpu.nia = if instr.aa() {
@@ -133,7 +133,7 @@ pub fn rotate<const OP: u32>(
 }
 
 pub fn msr<const OP: u32>(
-    _ctx: &mut crate::gekko::Gekko,
+    ctx: &mut crate::gekko::Gekko,
     _instr: crate::cpu::semantics::Instruction,
 ) {
     match OP {
@@ -142,6 +142,15 @@ pub fn msr<const OP: u32>(
         }
         crate::cpu::lut::OP_MFMSR => {
             tracing::error!("OP_MFMSR!!");
+        }
+        crate::cpu::lut::OP_RFI => {
+            // "Bits SRR1[16–23, 25–27, 30–31] are placed into the corresponding bits of the MSR."
+            const RFI_MSR_MASK: u32 = 0x0000_FF73;
+            ctx.cpu.msr = (ctx.cpu.msr & !RFI_MSR_MASK) | (ctx.cpu.spr.srr1 & RFI_MSR_MASK);
+            // "If the new MSR value does not enable any pending exceptions, then the
+            // next instruction is fetched, under control of the new MSR value,
+            // from the address SRR0[0–29] || 0b00"
+            ctx.cpu.pc = ctx.cpu.spr.srr0.value() << 2;
         }
         _ => todo!("MSR instruction with OP = {OP:#x}"),
     }
@@ -152,18 +161,13 @@ pub fn spr<const OP: u32>(
     instr: crate::cpu::semantics::Instruction,
 ) {
     match OP {
-        crate::cpu::lut::OP_MTSPR => match instr.spr_swapped() {
-            1 => ctx.cpu.xer = ctx.cpu.read_gpr(instr.rs()),
-            8 => ctx.cpu.lr = ctx.cpu.read_gpr(instr.rs()),
-            9 => ctx.cpu.ctr = ctx.cpu.read_gpr(instr.rs()),
-            _ => todo!("unimplemented SPR number {}", instr.spr()),
-        },
-        crate::cpu::lut::OP_MFSPR => match instr.spr_swapped() {
-            1 => ctx.cpu.write_gpr(instr.rd(), ctx.cpu.xer),
-            8 => ctx.cpu.write_gpr(instr.rd(), ctx.cpu.lr),
-            9 => ctx.cpu.write_gpr(instr.rd(), ctx.cpu.ctr),
-            _ => todo!("unimplemented SPR number {}", instr.spr()),
-        },
+        crate::cpu::lut::OP_MTSPR => ctx
+            .cpu
+            .spr
+            .write(instr.spr_swapped(), ctx.cpu.read_gpr(instr.rs())),
+        crate::cpu::lut::OP_MFSPR => ctx
+            .cpu
+            .write_gpr(instr.rd(), ctx.cpu.spr.read(instr.spr_swapped())),
         _ => todo!("SPR instruction with OP = {OP:#x}"),
     }
 }

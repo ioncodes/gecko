@@ -12,8 +12,8 @@ impl CpuSnapshot {
     pub fn from_cpu(cpu: &gekko::cpu::Cpu) -> Self {
         Self {
             gprs: cpu.gprs,
-            lr: cpu.lr,
-            ctr: cpu.ctr,
+            lr: cpu.spr.lr,
+            ctr: cpu.spr.ctr,
             cr: cpu.cr,
         }
     }

@@ -13,7 +13,7 @@ fn main() {
         .group("branch", ["bx", "bcx", "bclrx"])
         .group("alu", ["ori", "oris", "addx", "addi", "addis"])
         .group("rotate", ["rlwinmx"])
-        .group("msr", ["mtmsr", "mfmsr"])
+        .group("msr", ["mtmsr", "mfmsr", "rfi"])
         .group("spr", ["mtspr", "mfspr"])
         .group("store_load", ["stw", "stwu", "sth", "sthu", "lwz", "lwzu"])
         .group("compare", ["cmp", "cmpi"]);
