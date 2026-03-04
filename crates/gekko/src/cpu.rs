@@ -54,6 +54,16 @@ impl Cpu {
         self.gprs[index as usize] = value;
     }
 
+    #[inline(always)]
+    pub fn read_fpr(&self, index: u8) -> f64 {
+        self.fprs[index as usize]
+    }
+
+    #[inline(always)]
+    pub fn write_fpr(&mut self, index: u8, value: f64) {
+        self.fprs[index as usize] = value;
+    }
+
     #[inline]
     pub fn update_cr0(&mut self, val: u32) {
         let so = (self.spr.xer >> 31) != 0; // SO is copied from XER[SO]

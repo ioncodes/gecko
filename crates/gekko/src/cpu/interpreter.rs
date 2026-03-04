@@ -240,6 +240,41 @@ pub fn store_load<const OP: u32>(
     }
 }
 
+pub fn store_load_fp<const OP: u32>(
+    ctx: &mut crate::gekko::Gekko,
+    instr: crate::cpu::semantics::Instruction,
+) {
+    match OP {
+        crate::cpu::lut::OP_LFD | crate::cpu::lut::OP_LFDU => {
+            let addr = ctx
+                .cpu
+                .read_gpr(instr.ra())
+                .wrapping_add_signed(instr.disp());
+            let value =
+                (ctx.read_u32(addr) as u64 | ((ctx.read_u32(addr + 4) as u64) << 32)) as f64;
+            ctx.cpu.write_fpr(instr.rd(), value);
+
+            if OP == crate::cpu::lut::OP_LFDU {
+                ctx.cpu.write_gpr(instr.ra(), addr);
+            }
+        }
+        crate::cpu::lut::OP_STFD | crate::cpu::lut::OP_STFDU => {
+            let addr = ctx
+                .cpu
+                .read_gpr(instr.ra())
+                .wrapping_add_signed(instr.disp());
+            let value = ctx.cpu.read_fpr(instr.rs()) as u64;
+            ctx.write_u32(addr, value as u32);
+            ctx.write_u32(addr + 4, (value >> 32) as u32);
+
+            if OP == crate::cpu::lut::OP_STFDU {
+                ctx.cpu.write_gpr(instr.ra(), addr);
+            }
+        }
+        _ => todo!("FP Store/Load instruction with OP = {OP:#x}"),
+    }
+}
+
 pub fn compare<const OP: u32>(
     ctx: &mut crate::gekko::Gekko,
     instr: crate::cpu::semantics::Instruction,

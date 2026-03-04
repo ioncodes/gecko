@@ -135,7 +135,8 @@ fn print_instruction(gekko: &gekko::gekko::Gekko, prev_snapshot: &CpuSnapshot, d
     }
 
     let refs = fmt::gpr_refs(&instr);
-    let comment = fmt::reg_comment(&prev_snapshot.gprs, &refs);
+    let fpr_refs = fmt::fpr_refs(&instr);
+    let comment = fmt::reg_comment(&prev_snapshot.gprs, &refs, &prev_snapshot.fprs, &fpr_refs);
     let prefix = format!(
         "{}: {}",
         format!("{:08X}", gekko.cpu.pc).bold(),

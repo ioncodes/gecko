@@ -30,6 +30,7 @@ fn main() {
         .group("spr", ["mtspr", "mfspr"])
         .group("segment", ["mtsr", "mfsr"])
         .group("store_load", ["stw", "stwu", "sth", "sthu", "lwz", "lwzu"])
+        .group("store_load_fp", ["lfd", "lfdu", "stfd", "stfdu"])
         .group("compare", ["cmp", "cmpi"])
         .group("nop", ["isync", "sync"]); // instructions that we can treat as no-ops
 

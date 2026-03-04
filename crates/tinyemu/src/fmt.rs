@@ -45,14 +45,34 @@ pub fn gpr_refs(instr: &disasm::gekko::GekkoInstruction) -> Vec<u8> {
     refs
 }
 
-pub fn reg_comment(gprs: &[u32; 32], refs: &[u8]) -> String {
-    if refs.is_empty() {
-        return String::new();
+pub fn fpr_refs(instr: &disasm::gekko::GekkoInstruction) -> Vec<u8> {
+    let text = format!("{}", instr);
+    let tokens = tokenizer::tokenize(&text);
+    let mut seen = [false; 32];
+    let mut refs = Vec::new();
+    for tok in tokens {
+        if let AsmToken::Fpr(n) = tok {
+            let n = n as usize;
+            if !seen[n] {
+                seen[n] = true;
+                refs.push(n as u8);
+            }
+        }
     }
-    let parts: Vec<String> = refs
+    refs
+}
+
+pub fn reg_comment(gprs: &[u32; 32], gpr_refs: &[u8], fprs: &[f64; 32], fpr_refs: &[u8]) -> String {
+    let mut parts: Vec<String> = gpr_refs
         .iter()
         .map(|&n| format!("r{}={:08X}", n, gprs[n as usize]))
         .collect();
+    for &n in fpr_refs {
+        parts.push(format!("f{}={:.6e}", n, fprs[n as usize]));
+    }
+    if parts.is_empty() {
+        return String::new();
+    }
     format!("; {}", parts.join(", ")).dimmed().to_string()
 }
 
