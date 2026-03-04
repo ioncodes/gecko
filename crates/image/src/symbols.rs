@@ -25,10 +25,7 @@ impl SymbolTable {
 
     /// Find the symbol containing `addr` (i.e. `sym.addr <= addr < sym.addr + sym.size`)
     pub fn lookup(&self, addr: u32) -> Option<&Symbol> {
-        let idx = self
-            .symbols
-            .partition_point(|s| s.addr <= addr)
-            .checked_sub(1)?;
+        let idx = self.symbols.partition_point(|s| s.addr <= addr).checked_sub(1)?;
         let sym = &self.symbols[idx];
         if addr < sym.addr.wrapping_add(sym.size) {
             Some(sym)
@@ -45,7 +42,6 @@ impl SymbolTable {
 
     /// Returns `true` if `addr` is the entry point of a function symbol
     pub fn is_function_entry(&self, addr: u32) -> bool {
-        self.lookup_exact(addr)
-            .is_some_and(|s| s.kind == SymbolKind::Func)
+        self.lookup_exact(addr).is_some_and(|s| s.kind == SymbolKind::Func)
     }
 }

@@ -66,7 +66,7 @@ impl Cpu {
 
     #[inline]
     pub fn update_cr0(&mut self, val: u32) {
-        let so = (self.spr.xer >> 31) != 0; // SO is copied from XER[SO]
+        let so = self.spr.xer.summary_overflow(); // SO is copied from XER[SO]
         self.cr.set_cr0(
             condition::ConditionField::new()
                 .with_lt((val as i32) < 0)
@@ -74,5 +74,30 @@ impl Cpu {
                 .with_eq(val == 0)
                 .with_so(so),
         );
+    }
+
+    /// Update CR1 with FPSCR[0:3] (used by Rc=1 FP instructions)
+    #[inline]
+    pub fn update_cr1(&mut self) {
+        let cr1 = condition::ConditionField::from((self.fpscr >> 28) as u8);
+        self.cr.set_field(1, cr1);
+    }
+
+    /// Read GPR with the PowerPC "rA|0" convention: returns 0 when index is 0
+    #[inline(always)]
+    pub fn read_gpr_or_zero(&self, index: u8) -> u32 {
+        if index == 0 { 0 } else { self.gprs[index as usize] }
+    }
+
+    /// Get XER carry bit
+    #[inline(always)]
+    pub fn xer_ca(&self) -> u32 {
+        self.spr.xer.carry() as u32
+    }
+
+    /// Set XER carry bit
+    #[inline(always)]
+    pub fn set_xer_ca(&mut self, ca: bool) {
+        self.spr.xer = self.spr.xer.with_carry(ca);
     }
 }

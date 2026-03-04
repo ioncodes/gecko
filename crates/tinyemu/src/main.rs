@@ -31,8 +31,7 @@ struct Args {
 }
 
 fn parse_hex_addr(s: &str) -> Result<u32, String> {
-    u32::from_str_radix(s.trim_start_matches("0x"), 16)
-        .map_err(|e| format!("invalid hex address: {e}"))
+    u32::from_str_radix(s.trim_start_matches("0x"), 16).map_err(|e| format!("invalid hex address: {e}"))
 }
 
 fn main() {
@@ -67,11 +66,7 @@ fn main() {
     render_kitty(&pixels, video_format.columns(), video_format.lines());
 }
 
-fn run_emulator(
-    gekko: &mut gekko::gekko::Gekko,
-    args: &Args,
-    symbols: Option<&image::symbols::SymbolTable>,
-) {
+fn run_emulator(gekko: &mut gekko::gekko::Gekko, args: &Args, symbols: Option<&image::symbols::SymbolTable>) {
     let mut prev_snapshot = CpuSnapshot::from_cpu(&gekko.cpu);
     let mut prev_pc = gekko.cpu.pc;
     let mut in_busyloop = false;
@@ -194,23 +189,22 @@ fn dump_registers(curr: &CpuSnapshot, prev: &CpuSnapshot) {
         ("cr7", curr.cr.cr7(), prev.cr.cr7()),
     ];
 
-    let fmt_cr_field = |label: &str,
-                        val: gekko::cpu::condition::ConditionField,
-                        prev_val: gekko::cpu::condition::ConditionField| {
-        let flags = format!(
-            "{}{}{}{}",
-            if val.lt() { "L" } else { "·" },
-            if val.gt() { "G" } else { "·" },
-            if val.eq() { "Z" } else { "·" },
-            if val.so() { "O" } else { "·" },
-        );
-        let text = format!("{}[{}] ", label, flags);
-        if val.raw() != prev_val.raw() {
-            format!("{}", text.bright_red().bold())
-        } else {
-            format!("{}", text.dimmed())
-        }
-    };
+    let fmt_cr_field =
+        |label: &str, val: gekko::cpu::condition::ConditionField, prev_val: gekko::cpu::condition::ConditionField| {
+            let flags = format!(
+                "{}{}{}{}",
+                if val.lt() { "L" } else { "·" },
+                if val.gt() { "G" } else { "·" },
+                if val.eq() { "Z" } else { "·" },
+                if val.so() { "O" } else { "·" },
+            );
+            let text = format!("{}[{}] ", label, flags);
+            if val.raw() != prev_val.raw() {
+                format!("{}", text.bright_red().bold())
+            } else {
+                format!("{}", text.dimmed())
+            }
+        };
 
     let cr_line: String = cr_fields
         .iter()

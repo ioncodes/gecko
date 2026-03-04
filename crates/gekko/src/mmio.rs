@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod tests;
 
+pub mod bus;
 pub mod constants;
 pub mod macros;
 pub mod traits;
-pub mod bus;
 
 use constants::*;
 
@@ -28,18 +28,13 @@ impl Mmio {
     fn resolve(&self, phys: u32) -> (&[u8], usize) {
         match phys {
             RAM_BASE..=RAM_END => (&self.ram, phys as usize),
-            EFB_BASE..=EFB_END => {
-                (&self.efb, (phys - EFB_BASE) as usize)
-            },
+            EFB_BASE..=EFB_END => (&self.efb, (phys - EFB_BASE) as usize),
             HW_REG_BASE..=HW_REG_END => {
                 tracing::warn!(phys_addr = format!("{:08X}", phys), "read from mmio");
                 (&self.hwr, (phys - HW_REG_BASE) as usize)
             }
             _ => {
-                tracing::error!(
-                    phys_addr = format!("{:08X}", phys),
-                    "unmapped physical read"
-                );
+                tracing::error!(phys_addr = format!("{:08X}", phys), "unmapped physical read");
                 (&self.ram, 0)
             }
         }
@@ -57,10 +52,7 @@ impl Mmio {
                 (&mut self.hwr, (phys - HW_REG_BASE) as usize)
             }
             _ => {
-                tracing::error!(
-                    phys_addr = format!("{:08X}", phys),
-                    "unmapped physical write"
-                );
+                tracing::error!(phys_addr = format!("{:08X}", phys), "unmapped physical write");
                 (&mut self.ram, 0)
             }
         }

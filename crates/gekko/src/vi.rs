@@ -1,6 +1,6 @@
+pub mod regs;
 #[cfg(test)]
 mod tests;
-pub mod regs;
 
 use crate::{
     gekko::Gekko,

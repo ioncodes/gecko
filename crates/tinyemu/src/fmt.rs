@@ -21,11 +21,7 @@ pub fn colorize(tok: &AsmToken<'_>) -> String {
 pub fn colorize_instr(instr: &disasm::gekko::GekkoInstruction) -> String {
     let text = format!("{}", instr);
     let tokens = tokenizer::tokenize(&text);
-    tokens
-        .into_iter()
-        .map(|t| colorize(&t))
-        .collect::<Vec<_>>()
-        .join("")
+    tokens.into_iter().map(|t| colorize(&t)).collect::<Vec<_>>().join("")
 }
 
 pub fn gpr_refs(instr: &disasm::gekko::GekkoInstruction) -> Vec<u8> {

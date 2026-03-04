@@ -37,13 +37,12 @@ impl fmt::Display for AsmToken<'_> {
 }
 
 static SPR_NAMES: &[&str] = &[
-    "xer", "lr", "ctr", "dsisr", "dar", "dec", "sdr1", "srr0", "srr1", "sprg0", "sprg1", "sprg2",
-    "sprg3", "ear", "pvr", "ibat0u", "ibat0l", "ibat1u", "ibat1l", "ibat2u", "ibat2l", "ibat3u",
-    "ibat3l", "dbat0u", "dbat0l", "dbat1u", "dbat1l", "dbat2u", "dbat2l", "dbat3u", "dbat3l",
-    "gqr0", "gqr1", "gqr2", "gqr3", "gqr4", "gqr5", "gqr6", "gqr7", "hid0", "hid1", "hid2", "wpar",
-    "dmau", "dmal", "ummcr0", "upmc1", "upmc2", "usia", "ummcr1", "upmc3", "upmc4", "usda",
-    "mmcr0", "pmc1", "pmc2", "sia", "mmcr1", "pmc3", "pmc4", "sda", "l2cr", "ictc", "thrm1",
-    "thrm2", "thrm3", "iabr", "dabr", "cr",
+    "xer", "lr", "ctr", "dsisr", "dar", "dec", "sdr1", "srr0", "srr1", "sprg0", "sprg1", "sprg2", "sprg3", "ear",
+    "pvr", "ibat0u", "ibat0l", "ibat1u", "ibat1l", "ibat2u", "ibat2l", "ibat3u", "ibat3l", "dbat0u", "dbat0l",
+    "dbat1u", "dbat1l", "dbat2u", "dbat2l", "dbat3u", "dbat3l", "gqr0", "gqr1", "gqr2", "gqr3", "gqr4", "gqr5", "gqr6",
+    "gqr7", "hid0", "hid1", "hid2", "wpar", "dmau", "dmal", "ummcr0", "upmc1", "upmc2", "usia", "ummcr1", "upmc3",
+    "upmc4", "usda", "mmcr0", "pmc1", "pmc2", "sia", "mmcr1", "pmc3", "pmc4", "sda", "l2cr", "ictc", "thrm1", "thrm2",
+    "thrm3", "iabr", "dabr", "cr",
 ];
 
 static SPR_MNEMONICS: &[&str] = &["mfspr", "mtspr", "mftb", "mftbu"];
@@ -119,11 +118,7 @@ pub fn tokenize(s: &str) -> Vec<AsmToken<'_>> {
     tokens
 }
 
-fn tokenize_operands<'a>(
-    sc: &mut Scanner<'a>,
-    tokens: &mut Vec<AsmToken<'a>>,
-    mut expect_spr: bool,
-) {
+fn tokenize_operands<'a>(sc: &mut Scanner<'a>, tokens: &mut Vec<AsmToken<'a>>, mut expect_spr: bool) {
     while let Some(b) = sc.peek() {
         let ch = b as char;
 
@@ -233,15 +228,10 @@ fn classify_word<'a>(word: &'a str, expect_spr: bool) -> AsmToken<'a> {
 
 fn parse_register(word: &str, prefix: &str, max: u8) -> Option<u8> {
     let rest = word.strip_prefix(prefix)?;
-    let n: u8 = rest
-        .parse()
-        .ok()
-        .filter(|_| rest.bytes().all(|b| b.is_ascii_digit()))?;
+    let n: u8 = rest.parse().ok().filter(|_| rest.bytes().all(|b| b.is_ascii_digit()))?;
     (n <= max).then_some(n)
 }
 
 fn is_standalone_operand(tokens: &[AsmToken<'_>]) -> bool {
-    tokens.len() == 2
-        && matches!(tokens[0], AsmToken::Mnemonic(_))
-        && matches!(tokens[1], AsmToken::Punct(' '))
+    tokens.len() == 2 && matches!(tokens[0], AsmToken::Mnemonic(_)) && matches!(tokens[1], AsmToken::Punct(' '))
 }

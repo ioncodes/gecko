@@ -10,7 +10,7 @@ fn main() {
         .handler_mod("crate::cpu::interpreter")
         .ctx_type("crate::gekko::Gekko")
         .instr_type("crate::cpu::semantics::Instruction")
-        .group("branch", ["bx", "bcx", "bclrx"])
+        .group("branch", ["bx", "bcx", "bclrx", "bcctrx"])
         .group(
             "alu",
             [
@@ -23,16 +23,76 @@ fn main() {
                 "xoris",
                 "andi_dot",
                 "andis_dot",
+                "subfx",
+                "negx",
+                "addcx",
+                "subfcx",
+                "addex",
+                "subfex",
+                "addzex",
+                "subfzex",
+                "addmex",
+                "subfmex",
+                "mullwx",
+                "divwux",
+                "divwx",
+                "mulhwux",
+                "mulhwx",
+                "subfic",
+                "addic",
+                "addic_dot",
+                "mulli",
             ],
         )
-        .group("rotate", ["rlwinmx"])
+        .group("rotate", ["rlwinmx", "rlwimix", "rlwnmx"])
         .group("msr", ["mtmsr", "mfmsr", "rfi"])
         .group("spr", ["mtspr", "mfspr"])
         .group("segment", ["mtsr", "mfsr"])
-        .group("store_load", ["stw", "stwu", "sth", "sthu", "lwz", "lwzu"])
-        .group("store_load_fp", ["lfd", "lfdu", "stfd", "stfdu"])
-        .group("compare", ["cmp", "cmpi"])
-        .group("nop", ["isync", "sync"]); // instructions that we can treat as no-ops
+        .group(
+            "store_load",
+            [
+                "stw", "stwu", "sth", "sthu", "lwz", "lwzu", "lbz", "lbzu", "stb", "stbu", "lhz", "lhzu", "lha",
+                "lhau", "lmw", "stmw", "lwzx", "lbzx", "lhzx", "lhax", "stwx", "stbx", "sthx", "lwzux", "lbzux",
+                "lhzux", "lhaux", "stwux", "stbux", "sthux",
+            ],
+        )
+        .group(
+            "store_load_fp",
+            [
+                "lfd", "lfdu", "stfd", "stfdu", "lfs", "lfsu", "stfs", "stfsu", "lfsx", "lfsux", "lfdx", "lfdux",
+                "stfsx", "stfsux", "stfdx", "stfdux",
+            ],
+        )
+        .group("compare", ["cmp", "cmpi", "cmpli", "cmpl"])
+        .group(
+            "nop",
+            [
+                "isync", "sync", "eieio", "dcbf", "dcbi", "dcbst", "dcbt", "dcbtst", "dcba", "dcbz", "dcbz_l", "icbi",
+                "tlbie", "tlbia", "tlbsync", "tlbld", "tlbli",
+            ],
+        )
+        .group(
+            "logical",
+            [
+                "andx", "orx", "xorx", "nandx", "norx", "andcx", "orcx", "eqvx", "slwx", "srwx", "srawx", "srawix",
+                "cntlzwx", "extshx", "extsbx",
+            ],
+        )
+        .group(
+            "cr_ops",
+            [
+                "mtcrf", "mfcr", "crxor", "cror", "crand", "creqv", "crnor", "crnand", "crandc", "crorc", "mcrf",
+            ],
+        )
+        .group(
+            "fp_ops",
+            [
+                "mtfsfx", "mffsx", "mtfsb0x", "mtfsb1x", "mtfsfix", "mcrfs", "fmrx", "fnegx", "fabsx", "fnabsx",
+                "frspx", "fctiwx", "fctiwzx", "fcmpu", "fcmpo", "faddx", "fsubx", "fmulx", "fdivx", "fmaddx", "fmsubx",
+                "fnmaddx", "fnmsubx", "faddsx", "fsubsx", "fmulsx", "fdivsx", "fmaddsx", "fmsubsx", "fnmaddsx",
+                "fnmsubsx",
+            ],
+        );
 
     // Generate the instruction type with accessor methods
     builder

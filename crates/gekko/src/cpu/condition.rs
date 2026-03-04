@@ -66,20 +66,28 @@ pub struct ConditionField {
     #[bits(2, alias = ["equal", "vx", "fp_invalid_exception"])]
     pub eq: bool,
     #[bits(3, alias = ["summary_overflow", "ox", "fp_overflow_exception"])]
-    pub so: bool, 
+    pub so: bool,
 }
 
 #[chapa::bitfield(u32, order = msb0)]
 #[derive(Clone, Copy)]
 pub struct ConditionRegister {
-    #[bits(0..=3)] pub cr0: ConditionField,
-    #[bits(4..=7)] pub cr1: ConditionField,
-    #[bits(8..=11)] pub cr2: ConditionField,
-    #[bits(12..=15)] pub cr3: ConditionField,
-    #[bits(16..=19)] pub cr4: ConditionField,
-    #[bits(20..=23)] pub cr5: ConditionField,
-    #[bits(24..=27)] pub cr6: ConditionField,
-    #[bits(28..=31)] pub cr7: ConditionField,
+    #[bits(0..=3)]
+    pub cr0: ConditionField,
+    #[bits(4..=7)]
+    pub cr1: ConditionField,
+    #[bits(8..=11)]
+    pub cr2: ConditionField,
+    #[bits(12..=15)]
+    pub cr3: ConditionField,
+    #[bits(16..=19)]
+    pub cr4: ConditionField,
+    #[bits(20..=23)]
+    pub cr5: ConditionField,
+    #[bits(24..=27)]
+    pub cr6: ConditionField,
+    #[bits(28..=31)]
+    pub cr7: ConditionField,
 }
 
 impl ConditionRegister {
@@ -95,6 +103,26 @@ impl ConditionRegister {
             6 => self.set_cr6(value),
             7 => self.set_cr7(value),
             _ => panic!("Invalid CR field index: {}", index),
+        }
+    }
+
+    #[inline]
+    pub fn get_bit(&self, bit: u8) -> bool {
+        (self.raw() >> (31 - bit)) & 1 != 0
+    }
+
+    #[inline]
+    pub fn set_bit(&mut self, bit: u8, val: bool) {
+        let mask = 1u32 << (31 - bit);
+        let raw = if val { self.raw() | mask } else { self.raw() & !mask };
+        *self = Self::from(raw);
+    }
+
+    pub fn field_from_ord(ord: std::cmp::Ordering) -> ConditionField {
+        match ord {
+            std::cmp::Ordering::Less => ConditionField::new().with_lt(true),
+            std::cmp::Ordering::Equal => ConditionField::new().with_eq(true),
+            std::cmp::Ordering::Greater => ConditionField::new().with_gt(true),
         }
     }
 

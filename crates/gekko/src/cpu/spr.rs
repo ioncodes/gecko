@@ -5,9 +5,22 @@ pub struct Srr0 {
     pub value: u32, // low 2 bits are always 0
 }
 
+#[chapa::bitfield(u32, width = 32, order = msb0)]
+#[derive(Clone, Copy, Default)]
+pub struct Xer {
+    #[bits(0, alias = "so")]
+    pub summary_overflow: bool,
+    #[bits(1, alias = "ov")]
+    pub overflow: bool,
+    #[bits(2, alias = "ca")]
+    pub carry: bool,
+    #[bits(25..=31)]
+    pub byte_count: u8,
+}
+
 #[derive(Default)]
 pub struct Spr {
-    pub xer: u32,
+    pub xer: Xer,
     pub lr: u32,
     pub ctr: u32,
     pub dsisr: u32,
@@ -80,7 +93,7 @@ pub struct Spr {
 impl Spr {
     pub fn read(&self, spr_num: u32) -> u32 {
         match spr_num {
-            1 => self.xer,
+            1 => self.xer.raw(),
             8 => self.lr,
             9 => self.ctr,
             18 => self.dsisr,
@@ -154,7 +167,7 @@ impl Spr {
 
     pub fn write(&mut self, spr_num: u32, value: u32) {
         match spr_num {
-            1 => self.xer = value,
+            1 => self.xer = Xer::from(value),
             8 => self.lr = value,
             9 => self.ctr = value,
             18 => self.dsisr = value,

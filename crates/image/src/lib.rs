@@ -30,36 +30,22 @@ impl Dol {
         let mut data_sections = Vec::new();
 
         for i in 0..=6 {
-            let offset =
-                u32::from_be_bytes(data[0x00 + (i * 4)..0x00 + (i * 4) + 4].try_into().unwrap());
-            let vaddr =
-                u32::from_be_bytes(data[0x48 + (i * 4)..0x48 + (i * 4) + 4].try_into().unwrap());
-            let size =
-                u32::from_be_bytes(data[0x90 + (i * 4)..0x90 + (i * 4) + 4].try_into().unwrap());
+            let offset = u32::from_be_bytes(data[0x00 + (i * 4)..0x00 + (i * 4) + 4].try_into().unwrap());
+            let vaddr = u32::from_be_bytes(data[0x48 + (i * 4)..0x48 + (i * 4) + 4].try_into().unwrap());
+            let size = u32::from_be_bytes(data[0x90 + (i * 4)..0x90 + (i * 4) + 4].try_into().unwrap());
 
             if size > 0 {
-                text_sections.push(Section {
-                    offset,
-                    vaddr,
-                    size,
-                });
+                text_sections.push(Section { offset, vaddr, size });
             }
         }
 
         for i in 0..=10 {
-            let offset =
-                u32::from_be_bytes(data[0x1C + (i * 4)..0x1C + (i * 4) + 4].try_into().unwrap());
-            let vaddr =
-                u32::from_be_bytes(data[0x64 + (i * 4)..0x64 + (i * 4) + 4].try_into().unwrap());
-            let size =
-                u32::from_be_bytes(data[0xAC + (i * 4)..0xAC + (i * 4) + 4].try_into().unwrap());
+            let offset = u32::from_be_bytes(data[0x1C + (i * 4)..0x1C + (i * 4) + 4].try_into().unwrap());
+            let vaddr = u32::from_be_bytes(data[0x64 + (i * 4)..0x64 + (i * 4) + 4].try_into().unwrap());
+            let size = u32::from_be_bytes(data[0xAC + (i * 4)..0xAC + (i * 4) + 4].try_into().unwrap());
 
             if size > 0 {
-                data_sections.push(Section {
-                    offset,
-                    vaddr,
-                    size,
-                });
+                data_sections.push(Section { offset, vaddr, size });
             }
         }
 

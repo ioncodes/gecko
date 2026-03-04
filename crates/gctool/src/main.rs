@@ -17,8 +17,7 @@ fn parse_offset(s: &str) -> Result<usize, String> {
     if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
         usize::from_str_radix(hex, 16).map_err(|e| e.to_string())
     } else {
-        s.parse()
-            .map_err(|e: std::num::ParseIntError| e.to_string())
+        s.parse().map_err(|e: std::num::ParseIntError| e.to_string())
     }
 }
 
