@@ -1,34 +1,10 @@
+pub mod device;
 pub mod regs;
 
+use crate::exi::regs::TransferType;
 use crate::mmio::Mmio;
 use crate::mmio::constants::EXI_BASE;
 use crate::mmio::traits::{MmioAccess, MmioRegister};
-
-pub trait ExiDevice {
-    fn transfer_byte(&mut self, byte: &mut u8);
-
-    fn dma_read(&mut self, buf: &mut [u8]) {
-        for b in buf.iter_mut() {
-            *b = 0;
-            self.transfer_byte(b);
-        }
-    }
-
-    fn dma_write(&mut self, buf: &[u8]) {
-        for b in buf {
-            let mut b = *b;
-            self.transfer_byte(&mut b);
-        }
-    }
-}
-
-pub struct ExiDummy;
-
-impl ExiDevice for ExiDummy {
-    fn transfer_byte(&mut self, byte: &mut u8) {
-        *byte = 0;
-    }
-}
 
 pub struct Exi {
     // Channel 0
@@ -50,7 +26,7 @@ pub struct Exi {
     pub ch2_cr: regs::Channel2Control,
     pub ch2_data: regs::Channel2Data,
     // Devices: [channel][device_slot], 3 channels x 3 slots
-    devices: [[Option<Box<dyn ExiDevice>>; 3]; 3],
+    devices: [[Option<Box<dyn device::ExiDevice>>; 3]; 3],
 }
 
 impl Exi {
@@ -79,13 +55,13 @@ impl Exi {
         let mut exi = Self::new();
         for ch in 0..3 {
             for slot in 0..3 {
-                exi.attach_device(ch, slot, Box::new(ExiDummy));
+                exi.attach_device(ch, slot, Box::new(device::ExiDummy));
             }
         }
         exi
     }
 
-    pub fn attach_device(&mut self, channel: usize, slot: usize, device: Box<dyn ExiDevice>) {
+    pub fn attach_device(&mut self, channel: usize, slot: usize, device: Box<dyn device::ExiDevice>) {
         self.devices[channel][slot] = Some(device);
     }
 
@@ -149,9 +125,10 @@ impl Exi {
         // TODO: idk
         if let Some(device) = &mut self.devices[CHANNEL][slot] {
             for i in 0..size {
-                if transfer_type == 0 {
+                if transfer_type == TransferType::Read {
                     bytes[i] = 0;
                 }
+
                 device.transfer_byte(&mut bytes[i]);
             }
         } else {
@@ -162,7 +139,7 @@ impl Exi {
         self.finish_transfer_for_channel::<CHANNEL>();
     }
 
-    fn pending_dma(&self, channel: usize) -> Option<(u8, u8, u32, u32)> {
+    fn pending_dma(&self, channel: usize) -> Option<(u8, TransferType, u32, u32)> {
         match channel {
             0 => self.pending_dma_for_channel::<0>(),
             1 => self.pending_dma_for_channel::<1>(),
@@ -171,7 +148,7 @@ impl Exi {
         }
     }
 
-    fn pending_dma_for_channel<const CHANNEL: usize>(&self) -> Option<(u8, u8, u32, u32)> {
+    fn pending_dma_for_channel<const CHANNEL: usize>(&self) -> Option<(u8, TransferType, u32, u32)> {
         let (transfer_start, dma_mode, chip_select, transfer_type, address, length) = match CHANNEL {
             0 => (
                 self.ch0_cr.transfer_start(),
@@ -215,6 +192,15 @@ impl Exi {
                 continue;
             };
 
+            tracing::debug!(
+                channel,
+                cs,
+                ?transfer_type,
+                address = format!("{:08X}", address),
+                length,
+                "EXI DMA transfer"
+            );
+
             let slot = match Self::cs_to_slot(cs) {
                 Some(s) => s,
                 None => {
@@ -224,12 +210,13 @@ impl Exi {
                 }
             };
 
-            let len = length as usize;
             if let Some(device) = &mut self.devices[channel][slot] {
                 match transfer_type {
-                    0 => device.dma_read(mmio.phys_slice_mut(address, len)),
-                    1 => device.dma_write(mmio.phys_slice(address, len)),
-                    _ => device.dma_read(mmio.phys_slice_mut(address, len)),
+                    TransferType::Read => device.dma_read(mmio.phys_slice_mut(address, length as usize)),
+                    TransferType::Write => device.dma_write(mmio.phys_slice(address, length as usize)),
+                    TransferType::ReadAndWrite | TransferType::Reserved => {
+                        tracing::error!(channel, cs, "EXI DMA transfer with invalid/unimplemented transfer type");
+                    }
                 }
             }
 

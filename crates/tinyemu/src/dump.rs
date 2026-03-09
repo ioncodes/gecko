@@ -1,4 +1,5 @@
 use colored::Colorize;
+use gekko::exi::regs::TransferType;
 
 use crate::snaptshot::CpuSnapshot;
 
@@ -122,15 +123,6 @@ fn fmt_clock(clk: u8) -> &'static str {
     }
 }
 
-fn fmt_transfer_type(rw: u8) -> &'static str {
-    match rw {
-        0 => "read",
-        1 => "write",
-        2 => "read+write",
-        _ => "undefined",
-    }
-}
-
 fn fmt_enabled(val: bool) -> &'static str {
     if val { "yes" } else { "no" }
 }
@@ -157,7 +149,7 @@ struct ExiChannelView {
     dma_length: u32,
     transfer_start: bool,
     dma_mode: bool,
-    transfer_type: u8,
+    transfer_type: TransferType,
     transfer_length: u8,
     immediate_data: u32,
 }
@@ -195,7 +187,7 @@ fn exi_channel(ch: &ExiChannelView) {
         "    Transfer Mode:        {}",
         if ch.dma_mode { "DMA" } else { "immediate" }
     );
-    println!("    Transfer Direction:   {}", fmt_transfer_type(ch.transfer_type));
+    println!("    Transfer Direction:   {:?}", ch.transfer_type);
     println!("    Transfer Size:        {} byte(s)", ch.transfer_length as u32 + 1);
     println!("    Immediate Data:       0x{:08X}", ch.immediate_data);
 }

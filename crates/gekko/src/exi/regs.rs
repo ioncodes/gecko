@@ -1,3 +1,5 @@
+use chapa::BitEnum;
+
 use super::Exi;
 use crate::mmio::traits::{MmioAccess, MmioRegister};
 
@@ -13,6 +15,26 @@ fn write_csr<T: MmioRegister + Copy>(current: &mut T, new: T) {
     let ro_bits = cur_raw & RO_MASK;
     let rw_bits = new_raw & !(W1C_MASK | RO_MASK);
     *current = T::from_raw(w1c_bits | ro_bits | rw_bits);
+}
+
+/// Used for the RW field in EXI Control registers to specify transfer type
+#[derive(BitEnum, PartialEq, Eq)]
+pub enum TransferType {
+    Read = 0b00,
+    Write = 0b01,
+    ReadAndWrite = 0b10,
+    Reserved = 0b11,
+}
+
+impl std::fmt::Debug for TransferType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TransferType::Read => write!(f, "read"),
+            TransferType::Write => write!(f, "write"),
+            TransferType::ReadAndWrite => write!(f, "read+write"),
+            TransferType::Reserved => write!(f, "reserved"),
+        }
+    }
 }
 
 // --- Channel 0 ---
@@ -65,7 +87,7 @@ crate::mmio_register! {
     Channel0Control: u32 @ 0xCC00680C {
         #[bits(0, alias = "tstart")] pub transfer_start: bool,
         #[bits(1, alias = "dma")] pub dma_mode: bool,
-        #[bits(2..=3, alias = "rw")] pub transfer_type: u8,
+        #[bits(2..=3, alias = "rw")] pub transfer_type: TransferType,
         #[bits(4..=5, alias = "tlen")] pub transfer_length: u8,
     }
 }
@@ -140,7 +162,7 @@ crate::mmio_register! {
     Channel1Control: u32 @ 0xCC006820 {
         #[bits(0, alias = "tstart")] pub transfer_start: bool,
         #[bits(1, alias = "dma")] pub dma_mode: bool,
-        #[bits(2..=3, alias = "rw")] pub transfer_type: u8,
+        #[bits(2..=3, alias = "rw")] pub transfer_type: TransferType,
         #[bits(4..=5, alias = "tlen")] pub transfer_length: u8,
     }
 }
@@ -215,7 +237,7 @@ crate::mmio_register! {
     Channel2Control: u32 @ 0xCC006834 {
         #[bits(0, alias = "tstart")] pub transfer_start: bool,
         #[bits(1, alias = "dma")] pub dma_mode: bool,
-        #[bits(2..=3, alias = "rw")] pub transfer_type: u8,
+        #[bits(2..=3, alias = "rw")] pub transfer_type: TransferType,
         #[bits(4..=5, alias = "tlen")] pub transfer_length: u8,
     }
 }
