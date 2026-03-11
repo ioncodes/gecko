@@ -7,6 +7,6 @@ edition = "2024"
 chipi = "0.5.1"
 
 [dependencies]
-chapa = { git = "https://github.com/ioncodes/chapa" }
+chapa = { git = "https://github.com/ioncodes/chapa.git" }
 tracing = "0.1.44"
 image = { path = "../image" }

@@ -169,13 +169,9 @@ pub fn stwcx_dot(ctx: &mut crate::gekko::Gekko, instr: crate::cpu::semantics::In
     ctx.cpu.reserve_addr = None;
     if store_performed {
         ctx.write_u32(addr, ctx.cpu.read_gpr(instr.rs()));
-        ctx.cpu
-            .cr
-            .set_cr0(ConditionField::new().with_eq(true).with_so(so));
+        ctx.cpu.cr.set_cr0(ConditionField::new().with_eq(true).with_so(so));
     } else {
-        ctx.cpu
-            .cr
-            .set_cr0(ConditionField::new().with_so(so));
+        ctx.cpu.cr.set_cr0(ConditionField::new().with_so(so));
     }
 }
 

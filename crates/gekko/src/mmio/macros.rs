@@ -54,7 +54,6 @@ macro_rules! mmio_register {
             $($body:tt)*
         }
     ) => {
-        #[rustfmt::skip]
         #[chapa::bitfield($raw, order = lsb0)]
         #[derive(Copy, Clone, Debug)]
         $(#[$attr])*
@@ -82,7 +81,6 @@ macro_rules! mmio_register {
             $($body:tt)*
         }
     ) => {
-        #[rustfmt::skip]
         #[chapa::bitfield($raw, order = lsb0)]
         #[derive(Copy, Clone, Debug)]
         $(#[$attr])*

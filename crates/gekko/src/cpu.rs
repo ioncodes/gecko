@@ -4,6 +4,7 @@ pub mod msr;
 pub mod semantics;
 pub mod spr;
 pub mod sr;
+pub mod irq;
 
 use crate::cpu::condition::ConditionRegister;
 
@@ -24,8 +25,8 @@ pub struct Cpu {
     // These are used during instruction execution to track the current
     // and next PC values. In essence, by writing to `next_pc`, instructions
     // can change the flow of execution (e.g. for branches and jumps).
-    pub cia: u32, // Current Instruction Address
-    pub nia: u32, // Next Instruction Address
+    pub cia: u32,                  // Current Instruction Address
+    pub nia: u32,                  // Next Instruction Address
     pub reserve_addr: Option<u32>, // lwarx/stwcx. reservation address
 }
 

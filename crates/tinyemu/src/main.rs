@@ -91,7 +91,7 @@ fn run_emulator(gekko: &mut gekko::gekko::Gekko, args: &Args, symbols: Option<&i
             print_instruction(gekko, &prev_snapshot, args.debug);
         }
 
-        gekko.run_until_event();
+        gekko.step();
 
         let curr_snapshot = CpuSnapshot::from_cpu(&gekko.cpu);
         let curr_pc = gekko.cpu.pc;

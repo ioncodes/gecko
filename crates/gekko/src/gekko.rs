@@ -1,10 +1,13 @@
 use crate::{
     cpu::{self, Cpu, semantics::Instruction},
     exi::Exi,
-    flipper::dsp::Dsp,
-    flipper::vi::Vi,
+    flipper::{
+        dsp::Dsp,
+        pi::{InterruptFlag, Pi},
+        vi::Vi,
+    },
     mmio::Mmio,
-    scheduler::Scheduler,
+    scheduler::{CYCLES_PER_VSYNC, EventKind, Scheduler},
 };
 use image::Executable;
 
@@ -13,6 +16,7 @@ pub struct Gekko {
     pub scheduler: Scheduler,
     pub mmio: Mmio,
     pub vi: Vi,
+    pub pi: Pi,
     pub dsp: Dsp,
     pub exi: Exi,
 }
@@ -46,49 +50,40 @@ impl Gekko {
             let addr = bss_start + i;
             mmio.virt_write_u8(addr, 0);
         }
+
         Gekko {
             cpu: Cpu::new(exe.entry_point()),
-            scheduler: Scheduler { cycles: 0 },
+            scheduler: Scheduler::new(),
             mmio,
             vi: Vi::new(),
+            pi: Pi::new(),
             dsp: Dsp::new(),
             exi: Exi::dummy(),
         }
     }
 
-    /// Load a 64-bit double from memory
-    #[inline]
-    pub fn read_f64(&mut self, addr: u32) -> f64 {
-        let hi = self.read_u32(addr) as u64;
-        let lo = self.read_u32(addr.wrapping_add(4)) as u64;
-        f64::from_bits((hi << 32) | lo)
-    }
+    pub fn step(&mut self) {
+        // Fire any events that are due
+        while let Some(event) = self.scheduler.poll() {
+            match event {
+                EventKind::VSync => {
+                    self.pi.assert_interrupt(InterruptFlag::Vi);
+                    let next = self.scheduler.cycles + CYCLES_PER_VSYNC;
+                    self.scheduler.schedule_at(next, EventKind::VSync);
+                }
+            }
+        }
 
-    /// Store a 64-bit double to memory
-    #[inline]
-    pub fn write_f64(&mut self, addr: u32, val: f64) {
-        let bits = val.to_bits();
-        self.write_u32(addr, (bits >> 32) as u32);
-        self.write_u32(addr.wrapping_add(4), bits as u32);
-    }
+        // Deliver external interrupt when EE=1 and any enabled PI interrupt is pending
+        if self.cpu.msr.external_interrupt_enable() && self.pi.interrupt_pending() {
+            self.cause_external_interrupt();
+            self.scheduler.cycles += 1;
+            return;
+        }
 
-    /// Load a 32-bit float from memory, return as f64
-    #[inline]
-    pub fn read_f32(&mut self, addr: u32) -> f64 {
-        f32::from_bits(self.read_u32(addr)) as f64
-    }
-
-    /// Store f64 as 32-bit float to memory
-    #[inline]
-    pub fn write_f32(&mut self, addr: u32, val: f64) {
-        self.write_u32(addr, (val as f32).to_bits());
-    }
-
-    pub fn run_until_event(&mut self) {
+        // Fetch and execute next instruction
         self.cpu.cia = self.cpu.pc;
         self.cpu.nia = self.cpu.cia.wrapping_add(4);
-
-        // Bypass the bus, instructions are always fetched from RAM
         let instr = Instruction(self.mmio.virt_read_u32(self.cpu.cia));
         cpu::lut::dispatch(self, instr);
         self.scheduler.cycles += 1;
