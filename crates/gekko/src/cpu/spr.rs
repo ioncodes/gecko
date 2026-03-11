@@ -102,7 +102,7 @@ impl Spr {
             19 => self.dar,
             22 => self.dec,
             25 => self.sdr1,
-            26 => self.srr0.value(),
+            26 => self.srr0.raw(),
             27 => self.srr1,
             272 => self.sprg0,
             273 => self.sprg1,
