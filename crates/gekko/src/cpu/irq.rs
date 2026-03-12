@@ -49,4 +49,4 @@ impl Gekko {
 
         tracing::debug!(addr = format!("{:08X}", self.cpu.pc), "IRQ triggered");
     }
-} 
+}

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/gctool", "crates/disasm", "crates/gekko", "crates/tinyemu", "crates/image"]
+members = ["crates/gctool", "crates/disasm", "crates/gekko", "crates/tinyemu", "crates/image", "crates/tinyapp"]
 
 [profile.release]
 lto = "fat"

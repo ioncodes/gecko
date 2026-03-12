@@ -3,9 +3,9 @@ mod tests;
 
 pub mod bus;
 pub mod constants;
+pub mod fp;
 pub mod macros;
 pub mod traits;
-pub mod fp;
 
 use constants::*;
 

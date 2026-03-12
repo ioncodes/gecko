@@ -12,6 +12,7 @@ use crate::{
 use image::Executable;
 
 pub struct Gekko {
+    pub vsync_pending: bool,
     pub cpu: Cpu,
     pub scheduler: Scheduler,
     pub mmio: Mmio,
@@ -52,6 +53,7 @@ impl Gekko {
         }
 
         Gekko {
+            vsync_pending: false,
             cpu: Cpu::new(exe.entry_point()),
             scheduler: Scheduler::new(),
             mmio,
@@ -67,6 +69,7 @@ impl Gekko {
         while let Some(event) = self.scheduler.poll() {
             match event {
                 EventKind::VSync => {
+                    self.vsync_pending = true;
                     self.pi.assert_interrupt(InterruptFlag::Vi);
                     let next = self.scheduler.cycles + CYCLES_PER_VSYNC;
                     self.scheduler.schedule_at(next, EventKind::VSync);
@@ -89,5 +92,17 @@ impl Gekko {
         self.scheduler.cycles += 1;
 
         self.cpu.pc = self.cpu.nia;
+    }
+
+    pub fn run_until_vsync(&mut self) {
+        self.vsync_pending = false;
+        while !self.vsync_pending {
+            self.step();
+        }
+    }
+
+    pub fn frame_size(&self) -> (usize, usize) {
+        let fmt = self.vi.dcr.video_format();
+        (fmt.columns(), fmt.lines())
     }
 }
