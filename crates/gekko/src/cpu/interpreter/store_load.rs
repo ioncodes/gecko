@@ -252,16 +252,3 @@ pub fn store_load_fp<const OP: u32>(ctx: &mut crate::gekko::Gekko, instr: crate:
         _ => todo!("FP Store/Load instruction with OP = {OP:#x}"),
     }
 }
-
-pub fn store_load_psq<const OP: u32>(ctx: &mut crate::gekko::Gekko, instr: crate::cpu::semantics::Instruction) {
-    match OP {
-        crate::cpu::lut::OP_PSQ_L => {
-            let addr = ctx
-                .cpu
-                .read_gpr_or_zero(instr.ra())
-                .wrapping_add_signed(instr.disp_psq());
-            
-        }
-        _ => todo!("PSQ Store/Load instruction with OP = {OP:#x}"),
-    }
-}

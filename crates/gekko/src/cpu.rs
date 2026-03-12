@@ -15,7 +15,8 @@ pub mod lut {
 
 pub struct Cpu {
     pub gprs: [u32; 32],
-    pub fprs: [f64; 32],
+    pub fprs: [f64; 32],  // PS0
+    pub ps1s: [f64; 32],  // PS1 (paired single slot 1)
     pub pc: u32,
     pub cr: ConditionRegister,
     pub fpscr: u32, // TODO: FP Status and Control Register
@@ -35,6 +36,7 @@ impl Cpu {
         Cpu {
             gprs: [0; 32],
             fprs: [0.0; 32],
+            ps1s: [1.0; 32],
             pc: initial_pc,
             cia: initial_pc,
             nia: initial_pc.wrapping_add(4),
@@ -65,6 +67,16 @@ impl Cpu {
     #[inline(always)]
     pub fn write_fpr(&mut self, index: u8, value: f64) {
         self.fprs[index as usize] = value;
+    }
+
+    #[inline(always)]
+    pub fn read_ps1(&self, index: u8) -> f64 {
+        self.ps1s[index as usize]
+    }
+
+    #[inline(always)]
+    pub fn write_ps1(&mut self, index: u8, value: f64) {
+        self.ps1s[index as usize] = value;
     }
 
     #[inline]

@@ -93,6 +93,20 @@ pub struct Spr {
 }
 
 impl Spr {
+    pub fn read_gqr(&self, index: u8) -> u32 {
+        match index {
+            0 => self.gqr0,
+            1 => self.gqr1,
+            2 => self.gqr2,
+            3 => self.gqr3,
+            4 => self.gqr4,
+            5 => self.gqr5,
+            6 => self.gqr6,
+            7 => self.gqr7,
+            _ => unreachable!(),
+        }
+    }
+
     pub fn read(&self, spr_num: u32) -> u32 {
         match spr_num {
             1 => self.xer.raw(),
