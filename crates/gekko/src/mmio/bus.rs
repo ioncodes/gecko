@@ -2,7 +2,9 @@ use crate::{
     gekko::Gekko,
     mmio::{
         Mmio,
-        constants::{DSP_BASE, DSP_END, EXI_BASE, EXI_END, PI_BASE, PI_END, VI_BASE, VI_END},
+        constants::{
+            DSP_BASE, DSP_END, EXI_BASE, EXI_END, GX_FIFO_END, GX_FIFO_BASE, PI_BASE, PI_END, VI_BASE, VI_END,
+        },
     },
 };
 
@@ -11,17 +13,19 @@ enum BusTarget {
     Pi,
     Dsp,
     Exi,
+    Gx,
     Fallback,
 }
 
 #[rustfmt::skip]
 fn route(phys: u32) -> (BusTarget, u32) {
     match phys {
-        VI_BASE..=VI_END   => (BusTarget::Vi,  phys - VI_BASE),
-        PI_BASE..=PI_END   => (BusTarget::Pi,  phys - PI_BASE),
-        DSP_BASE..=DSP_END => (BusTarget::Dsp, phys - DSP_BASE),
-        EXI_BASE..=EXI_END => (BusTarget::Exi, phys - EXI_BASE),
-        _                  => (BusTarget::Fallback, phys),
+        VI_BASE..=VI_END            => (BusTarget::Vi,  phys - VI_BASE),
+        PI_BASE..=PI_END            => (BusTarget::Pi,  phys - PI_BASE),
+        DSP_BASE..=DSP_END          => (BusTarget::Dsp, phys - DSP_BASE),
+        EXI_BASE..=EXI_END          => (BusTarget::Exi, phys - EXI_BASE),
+        GX_FIFO_BASE..=GX_FIFO_END  => (BusTarget::Gx,  phys - GX_FIFO_BASE),
+        _                           => (BusTarget::Fallback, phys),
     }
 }
 
@@ -34,6 +38,10 @@ impl Gekko {
             BusTarget::Pi       => self.pi.mmio_read_u8(offset),
             BusTarget::Dsp      => self.dsp.mmio_read_u8(offset),
             BusTarget::Exi      => self.exi.mmio_read_u8(offset),
+            BusTarget::Gx       => {
+                tracing::error!(addr = format!("{:08X}", addr), "Invalid GX FIFO read");
+                0
+            }
             BusTarget::Fallback => self.mmio.phys_read_u8(offset),
         }
     }
@@ -46,6 +54,10 @@ impl Gekko {
             BusTarget::Pi       => self.pi.mmio_read_u16(offset),
             BusTarget::Dsp      => self.dsp.mmio_read_u16(offset),
             BusTarget::Exi      => self.exi.mmio_read_u16(offset),
+            BusTarget::Gx       => {
+                tracing::error!(addr = format!("{:08X}", addr), "Invalid GX FIFO read");
+                0
+            }
             BusTarget::Fallback => self.mmio.phys_read_u16(offset),
         }
     }
@@ -58,6 +70,10 @@ impl Gekko {
             BusTarget::Pi       => self.pi.mmio_read_u32(offset),
             BusTarget::Dsp      => self.dsp.mmio_read_u32(offset),
             BusTarget::Exi      => self.exi.mmio_read_u32(offset),
+            BusTarget::Gx       => {
+                tracing::error!(addr = format!("{:08X}", addr), "Invalid GX FIFO read");
+                0
+            }
             BusTarget::Fallback => self.mmio.phys_read_u32(offset),
         }
     }
@@ -75,6 +91,10 @@ impl Gekko {
             BusTarget::Exi      => {
                 self.exi.mmio_write_u8(offset, val);
                 self.exi.process_dma_transfers(&mut self.mmio);
+            }
+            BusTarget::Gx       => {
+                self.gx.mmio_write_u8(val);
+                self.check_gx_pe_finish();
             }
             BusTarget::Fallback => self.mmio.phys_write_u8(offset, val),
         }
@@ -94,6 +114,10 @@ impl Gekko {
                 self.exi.mmio_write_u16(offset, val);
                 self.exi.process_dma_transfers(&mut self.mmio);
             }
+            BusTarget::Gx       => {
+                self.gx.mmio_write_u16(val);
+                self.check_gx_pe_finish();
+            }
             BusTarget::Fallback => self.mmio.phys_write_u16(offset, val),
         }
     }
@@ -111,6 +135,10 @@ impl Gekko {
             BusTarget::Exi      => {
                 self.exi.mmio_write_u32(offset, val);
                 self.exi.process_dma_transfers(&mut self.mmio);
+            }
+            BusTarget::Gx       => {
+                self.gx.mmio_write_u32(val);
+                self.check_gx_pe_finish();
             }
             BusTarget::Fallback => self.mmio.phys_write_u32(offset, val),
         }

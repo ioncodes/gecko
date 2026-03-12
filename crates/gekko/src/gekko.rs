@@ -3,6 +3,7 @@ use crate::{
     exi::Exi,
     flipper::{
         dsp::Dsp,
+        gx::Gx,
         pi::{InterruptFlag, Pi},
         vi::Vi,
     },
@@ -20,6 +21,7 @@ pub struct Gekko {
     pub pi: Pi,
     pub dsp: Dsp,
     pub exi: Exi,
+    pub gx: Gx,
 }
 
 impl Gekko {
@@ -61,6 +63,7 @@ impl Gekko {
             pi: Pi::new(),
             dsp: Dsp::new(),
             exi: Exi::dummy(),
+            gx: Gx::new(),
         }
     }
 
