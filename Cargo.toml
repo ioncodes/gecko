@@ -4,6 +4,7 @@ members = ["crates/gctool", "crates/disasm", "crates/gekko", "crates/tinyemu", "
 
 [profile.release]
 lto = "fat"
+debug = true
 
 [profile.dev]
 opt-level = 3
