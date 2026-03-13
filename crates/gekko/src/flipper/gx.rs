@@ -5,8 +5,11 @@ pub mod regs;
 use super::pi::InterruptFlag;
 use crate::{
     flipper::gx::{
-        constants::{BP_REG_SIZE, CP_REG_SIZE, VAT_REG, VCD_LO_REG, XF_MEM_SIZE},
-        regs::{AttributeType, VatA, VcdLo},
+        constants::{
+            ARRAY_BASE_REG, ARRAY_CLR0, ARRAY_POS, ARRAY_STRIDE_REG, BP_REG_SIZE, CP_REG_SIZE,
+            VATA_REG, VCD_LO_REG, XF_MEM_SIZE,
+        },
+        regs::{VatA, VcdLo},
     },
     gekko::Gekko,
     mmio::Mmio,
@@ -60,21 +63,45 @@ impl Gx {
 
     fn create_draw_call(&mut self, mmio: &mut Mmio, cmd: FifoCmd) {
         if let FifoCmd::DrawTriangles(cmd, data) = cmd {
-            let vertex_format_index = cmd & 0b111;
-            let (pos_attr, color0_attr) = self.vcd_attr_type(vertex_format_index as usize);
-            tracing::debug!(
-                data = format!("{:02X?}", data),
-                ?pos_attr,
-                ?color0_attr,
-                vertex_format_index,
-                "DrawTriangles"
-            );
-        }
-    }
+            let fmt = (cmd & 0b111) as usize;
+            let vcd_lo = VcdLo::from_raw(self.cp_regs[VCD_LO_REG]);
+            let vat_a = VatA::from_raw(self.cp_regs[VATA_REG + fmt]);
 
-    fn vcd_attr_type(&self, vertex_format_index: usize) -> (AttributeType, AttributeType) {
-        let vcd_lo = VcdLo::from_raw(self.cp_regs[VCD_LO_REG + vertex_format_index]);
-        (vcd_lo.pos_attr(), vcd_lo.color0_attr())
+            let pos_base = self.cp_regs[ARRAY_BASE_REG + ARRAY_POS] as usize;
+            let pos_stride = self.cp_regs[ARRAY_STRIDE_REG + ARRAY_POS] as usize;
+            let clr0_base = self.cp_regs[ARRAY_BASE_REG + ARRAY_CLR0] as usize;
+            let clr0_stride = self.cp_regs[ARRAY_STRIDE_REG + ARRAY_CLR0] as usize;
+
+            let vertex_stride = vcd_lo.position().size() + vcd_lo.color0().size();
+            let vertex_count = data.len() / vertex_stride;
+
+            for i in 0..vertex_count {
+                let offset = i * vertex_stride;
+                let mut cursor = offset;
+
+                // Read position index and look up from RAM
+                let pos_index = data[cursor] as usize;
+                cursor += vcd_lo.position().size();
+                let pos_addr = pos_base + pos_index * pos_stride;
+                let pos_size = vat_a.pos_data_size();
+                let pos_data = &mmio.ram[pos_addr..pos_addr + pos_size];
+
+                // Read color0 index and look up from RAM
+                let clr0_index = data[cursor] as usize;
+                let clr0_addr = clr0_base + clr0_index * clr0_stride;
+                let clr0_size = vat_a.clr0_data_size();
+                let clr0_data = &mmio.ram[clr0_addr..clr0_addr + clr0_size];
+
+                tracing::debug!(
+                    vertex = i,
+                    pos_index,
+                    pos_data = format!("{:02X?}", pos_data),
+                    clr0_index,
+                    clr0_data = format!("{:02X?}", clr0_data),
+                    "Vertex"
+                );
+            }
+        }
     }
 
     fn load_bp(&mut self, data: &[u8]) {

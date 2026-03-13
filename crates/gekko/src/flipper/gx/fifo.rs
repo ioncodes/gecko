@@ -96,7 +96,7 @@ impl Gx {
 
     fn vertex_stride(&self, vertex_format_index: usize) -> usize {
         let vcd_lo = VcdLo::from_raw(self.cp_regs[VCD_LO_REG + vertex_format_index]);
-        vcd_lo.pos_attr().size() + vcd_lo.color0_attr().size()
+        vcd_lo.position().size() + vcd_lo.color0().size()
     }
 }
 
