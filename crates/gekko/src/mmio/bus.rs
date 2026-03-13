@@ -93,7 +93,7 @@ impl Gekko {
                 self.exi.process_dma_transfers(&mut self.mmio);
             }
             BusTarget::Gx       => {
-                self.gx.mmio_write_u8(val);
+                self.gx.mmio_write_u8(&mut self.mmio, val);
                 self.check_gx_pe_finish();
             }
             BusTarget::Fallback => self.mmio.phys_write_u8(offset, val),
@@ -115,7 +115,7 @@ impl Gekko {
                 self.exi.process_dma_transfers(&mut self.mmio);
             }
             BusTarget::Gx       => {
-                self.gx.mmio_write_u16(val);
+                self.gx.mmio_write_u16(&mut self.mmio, val);
                 self.check_gx_pe_finish();
             }
             BusTarget::Fallback => self.mmio.phys_write_u16(offset, val),
@@ -137,7 +137,7 @@ impl Gekko {
                 self.exi.process_dma_transfers(&mut self.mmio);
             }
             BusTarget::Gx       => {
-                self.gx.mmio_write_u32(val);
+                self.gx.mmio_write_u32(&mut self.mmio, val);
                 self.check_gx_pe_finish();
             }
             BusTarget::Fallback => self.mmio.phys_write_u32(offset, val),
