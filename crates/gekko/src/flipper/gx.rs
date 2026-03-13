@@ -1,4 +1,5 @@
 pub mod constants;
+pub mod fifo;
 pub mod regs;
 
 use super::pi::InterruptFlag;
@@ -6,13 +7,14 @@ use crate::{
     flipper::gx::constants::{BP_REG_SIZE, CP_REG_SIZE, XF_MEM_SIZE},
     gekko::Gekko,
 };
+use fifo::{Fifo, FifoCmd};
 
 pub struct Gx {
     pub raise_interrupt: bool,
     bp_regs: Vec<u32>,
     cp_regs: Vec<u32>,
     xf_mem: Vec<u32>,
-    fifo: Vec<u8>,
+    fifo: Fifo,
 }
 
 impl Gx {
@@ -22,86 +24,39 @@ impl Gx {
             bp_regs: vec![0; BP_REG_SIZE],
             cp_regs: vec![0; CP_REG_SIZE],
             xf_mem: vec![0; XF_MEM_SIZE],
-            fifo: Vec::with_capacity(256),
+            fifo: Fifo::new(),
         }
     }
 
     pub fn mmio_write_u8(&mut self, val: u8) {
-        self.fifo.push(val);
+        self.fifo.push_u8(val);
         self.drain_fifo();
     }
 
     pub fn mmio_write_u16(&mut self, val: u16) {
-        self.fifo.extend_from_slice(&val.to_be_bytes());
+        self.fifo.push_u16(val);
         self.drain_fifo();
     }
 
     pub fn mmio_write_u32(&mut self, val: u32) {
-        self.fifo.extend_from_slice(&val.to_be_bytes());
+        self.fifo.push_u32(val);
         self.drain_fifo();
     }
 
     fn drain_fifo(&mut self) {
-        let mut pos = 0;
-
-        loop {
-            let remaining = self.fifo.len() - pos;
-            if remaining == 0 {
-                break;
-            }
-
-            let cmd = self.fifo[pos];
+        for cmd in self.fifo.drain() {
             match cmd {
-                constants::CP_CMD_BYTE => {
-                    // 1 cmd + 1 addr + 4 data = 6 bytes
-                    if remaining < 6 {
-                        break;
-                    }
-                    let data: [u8; 5] = self.fifo[pos + 1..pos + 6].try_into().unwrap();
-                    self.load_cp(&data);
-                    pos += 6;
-                }
-                constants::XF_CMD_BYTE => {
-                    // 1 cmd + 2 length + 2 addr = 5 byte header minimum
-                    if remaining < 5 {
-                        break;
-                    }
-                    let length = u16::from_be_bytes([self.fifo[pos + 1], self.fifo[pos + 2]]) as usize;
-                    let n = length + 1;
-                    let total = 5 + n * 4;
-                    if remaining < total {
-                        break;
-                    }
-                    let addr = u16::from_be_bytes([self.fifo[pos + 3], self.fifo[pos + 4]]);
-                    tracing::debug!(
-                        length = length,
-                        n = n,
-                        addr = format!("{addr:04X}"),
-                        total_bytes = total,
-                        "XF command parsed"
-                    );
-                    let data = self.fifo[pos + 1..pos + total].to_vec();
-                    self.load_xf(&data);
-                    pos += total;
-                }
-                constants::BP_CMD_BYTE => {
-                    // 1 cmd + 4 data = 5 bytes
-                    if remaining < 5 {
-                        break;
-                    }
-                    let data: [u8; 4] = self.fifo[pos + 1..pos + 5].try_into().unwrap();
-                    self.load_bp(&data);
-                    pos += 5;
-                }
-                _ => {
-                    tracing::error!(cmd = format!("{cmd:02X}"), "unknown FIFO command");
-                    pos += 1;
-                }
+                FifoCmd::Cp(data) => self.load_cp(&data),
+                FifoCmd::Xf(data) => self.load_xf(&data),
+                FifoCmd::Bp(data) => self.load_bp(&data),
+                _ => self.create_draw_call(cmd),
             }
         }
+    }
 
-        if pos > 0 {
-            self.fifo.drain(..pos);
+    fn create_draw_call(&mut self, cmd: FifoCmd) {
+        if let FifoCmd::DrawTriangles(data) = cmd {
+            tracing::debug!(data = format!("{:02X?}", data), "DrawTriangles");
         }
     }
 
