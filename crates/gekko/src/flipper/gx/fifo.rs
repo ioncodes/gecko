@@ -1,5 +1,9 @@
-use crate::flipper::gx::{Gx, constants::{DRAW_TRIANGLES_CMD, VCD_LO_REG}, regs::VcdLo};
 use super::constants::{BP_CMD, CP_CMD, XF_CMD};
+use crate::flipper::gx::{
+    Gx,
+    constants::{DRAW_COMMANDS_END, DRAW_COMMANDS_START, VATA_REG, VCD_HI_REG, VCD_LO_REG},
+    regs::{AttributeType, VatA, VcdHi, VcdLo},
+};
 
 impl Gx {
     pub fn push_u8(&mut self, val: u8) {
@@ -60,7 +64,7 @@ impl Gx {
                     cmds.push(FifoCmd::Bp(data));
                     pos += 5;
                 }
-                DRAW_TRIANGLES_CMD => {
+                DRAW_COMMANDS_START..=DRAW_COMMANDS_END => {
                     // 1 command + minimum 2 vertex count
                     // [cmd_byte] [count_hi] [count_lo] [vertex_0_data...] [vertex_1_data...] ...
                     if remaining < 3 {
@@ -75,7 +79,7 @@ impl Gx {
                     }
 
                     let vertex_data = self.fifo[pos + 3..pos + total].to_vec();
-                    cmds.push(FifoCmd::DrawTriangles(cmd, vertex_data));
+                    cmds.push(FifoCmd::DrawCall(cmd, vertex_data));
 
                     pos += total;
                 }
@@ -95,7 +99,17 @@ impl Gx {
 
     fn vertex_stride(&self, vertex_format_index: usize) -> usize {
         let vcd_lo = VcdLo::from_raw(self.cp_regs[VCD_LO_REG + vertex_format_index]);
-        vcd_lo.position().size() + vcd_lo.color0().size()
+        let vcd_hi = VcdHi::from_raw(self.cp_regs[VCD_HI_REG + vertex_format_index]);
+        let vat_a = VatA::from_raw(self.cp_regs[VATA_REG + vertex_format_index]);
+
+        let tex0_size = match vcd_hi.tex0() {
+            AttributeType::Direct => vat_a.tex0_data_size(),
+            AttributeType::Index8 => 1,
+            AttributeType::Index16 => 2,
+            AttributeType::None => 0,
+        };
+
+        vcd_lo.position().size() + vcd_lo.color0().size() + tex0_size
     }
 }
 
@@ -104,5 +118,5 @@ pub enum FifoCmd {
     Cp([u8; 5]),
     Xf(Vec<u8>),
     Bp([u8; 4]),
-    DrawTriangles(u8, Vec<u8>),
+    DrawCall(u8, Vec<u8>),
 }

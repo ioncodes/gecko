@@ -1,14 +1,26 @@
-use crate::flipper::gx::constants::DRAW_TRIANGLES_CMD;
-
 #[derive(Debug)]
 pub enum Primitive {
-    Triangles
+    Quads,
+    Triangles,
+    TriangleStrip,
+    TriangleFan,
+    Lines,
+    LineStrip,
+    Points,
 }
 
 impl Primitive {
     pub fn from_cmd(cmd: u8) -> Option<Self> {
+        use super::constants::*;
+
         match cmd & !0b111 {
+            DRAW_QUADS_CMD => Some(Primitive::Quads),
             DRAW_TRIANGLES_CMD => Some(Primitive::Triangles),
+            DRAW_TRIANGLE_STRIP_CMD => Some(Primitive::TriangleStrip),
+            DRAW_TRIANGLE_FAN_CMD => Some(Primitive::TriangleFan),
+            DRAW_LINES_CMD => Some(Primitive::Lines),
+            DRAW_LINE_STRIP_CMD => Some(Primitive::LineStrip),
+            DRAW_POINTS_CMD => Some(Primitive::Points),
             _ => {
                 tracing::error!(cmd = format!("{:02X}", cmd), "unknown primitive command");
                 None
@@ -45,10 +57,8 @@ impl std::ops::Mul for Matrix4 {
         let mut out = [[0.0f32; 4]; 4];
         for col in 0..4 {
             for row in 0..4 {
-                out[col][row] = a[0][row] * b[col][0]
-                    + a[1][row] * b[col][1]
-                    + a[2][row] * b[col][2]
-                    + a[3][row] * b[col][3];
+                out[col][row] =
+                    a[0][row] * b[col][0] + a[1][row] * b[col][1] + a[2][row] * b[col][2] + a[3][row] * b[col][3];
             }
         }
         Matrix4(out)

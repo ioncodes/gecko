@@ -1,6 +1,21 @@
 use chapa::BitEnum;
 
 #[derive(Debug, PartialEq, BitEnum)]
+pub enum TexCount {
+    S,  // 1D coordinate
+    St, // 2D coordinate
+}
+
+impl TexCount {
+    pub fn components(&self) -> usize {
+        match self {
+            TexCount::S => 1,
+            TexCount::St => 2,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, BitEnum)]
 pub enum PosCount {
     Xy,
     Xyz,
@@ -78,7 +93,7 @@ impl AttributeType {
             AttributeType::None => 0,
             AttributeType::Index8 => 1,
             AttributeType::Index16 => 2,
-            AttributeType::Direct => unimplemented!("from VAT?"),
+            AttributeType::Direct => unimplemented!("illegal?"),
         }
     }
 }
@@ -101,6 +116,15 @@ pub struct VatA {
 
     #[bits(14..=16)]
     pub clr0_fmt: ColorFormat,
+
+    #[bits(21)]
+    pub tex0_cnt: TexCount,
+
+    #[bits(22..=24)]
+    pub tex0_fmt: ComponentFormat,
+
+    #[bits(25..=29)]
+    pub tex0_shift: u8,
 }
 
 impl VatA {
@@ -111,6 +135,18 @@ impl VatA {
     pub fn clr0_data_size(&self) -> usize {
         self.clr0_fmt().data_size(self.clr0_cnt())
     }
+
+    pub fn tex0_data_size(&self) -> usize {
+        self.tex0_cnt().components() * self.tex0_fmt().size()
+    }
+}
+
+// CP 0x60-0x67 (one per vertex format)
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy)]
+pub struct VcdHi {
+    #[bits(0..=1)]
+    pub tex0: AttributeType,
 }
 
 // CP 0x50

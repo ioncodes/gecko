@@ -263,6 +263,40 @@ fn triangulate(draw_calls: &[DrawCall]) -> Vec<GpuVertex> {
                     });
                 }
             }
+            Primitive::Quads => {
+                for quad in dc.vertices.chunks(4) {
+                    if quad.len() < 4 {
+                        println!("quad with less than 4 vertices");
+                        continue;
+                    }
+
+                    out.push(GpuVertex {
+                        position: quad[0].position,
+                        color: quad[0].color0,
+                    });
+                    out.push(GpuVertex {
+                        position: quad[1].position,
+                        color: quad[1].color0,
+                    });
+                    out.push(GpuVertex {
+                        position: quad[2].position,
+                        color: quad[2].color0,
+                    });
+                    out.push(GpuVertex {
+                        position: quad[0].position,
+                        color: quad[0].color0,
+                    });
+                    out.push(GpuVertex {
+                        position: quad[2].position,
+                        color: quad[2].color0,
+                    });
+                    out.push(GpuVertex {
+                        position: quad[3].position,
+                        color: quad[3].color0,
+                    });
+                }
+            }
+            _ => unimplemented!("triangulation for {:?}", dc.primitive),
         }
     }
     out

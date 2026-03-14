@@ -3,7 +3,7 @@ use crate::{
     mmio::{
         Mmio,
         constants::{
-            DSP_BASE, DSP_END, EXI_BASE, EXI_END, GX_FIFO_END, GX_FIFO_BASE, PI_BASE, PI_END, VI_BASE, VI_END,
+            DSP_BASE, DSP_END, EXI_BASE, EXI_END, GX_FIFO_BASE, GX_FIFO_END, PI_BASE, PI_END, VI_BASE, VI_END,
         },
     },
 };

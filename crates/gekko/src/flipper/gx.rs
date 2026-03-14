@@ -7,12 +7,11 @@ use super::pi::InterruptFlag;
 use crate::{
     flipper::gx::{
         constants::{
-            ARRAY_BASE_REG, ARRAY_CLR0, ARRAY_POS, ARRAY_STRIDE_REG, BP_REG_SIZE, CP_REG_SIZE,
-            VATA_REG, VCD_LO_REG, XF_MEM_SIZE, XF_MODELVIEW_BASE, XF_MODELVIEW_END,
-            XF_PROJECTION_BASE, XF_PROJECTION_END,
+            ARRAY_BASE_REG, ARRAY_CLR0, ARRAY_POS, ARRAY_STRIDE_REG, BP_REG_SIZE, CP_REG_SIZE, VATA_REG, VCD_HI_REG,
+            VCD_LO_REG, XF_MEM_SIZE, XF_MODELVIEW_BASE, XF_MODELVIEW_END, XF_PROJECTION_BASE, XF_PROJECTION_END,
         },
         draw::DrawCommands,
-        regs::{VatA, VcdLo},
+        regs::{VatA, VcdHi, VcdLo},
     },
     gekko::Gekko,
     mmio::Mmio,
@@ -67,9 +66,10 @@ impl Gx {
     }
 
     fn create_draw_call(&mut self, mmio: &mut Mmio, cmd: FifoCmd) {
-        if let FifoCmd::DrawTriangles(cmd, data) = cmd {
+        if let FifoCmd::DrawCall(cmd, data) = cmd {
             let fmt = (cmd & 0b111) as usize;
-            let vcd_lo = VcdLo::from_raw(self.cp_regs[VCD_LO_REG]);
+            let vcd_lo = VcdLo::from_raw(self.cp_regs[VCD_LO_REG + fmt]);
+            let vcd_hi = VcdHi::from_raw(self.cp_regs[VCD_HI_REG + fmt]);
             let vat_a = VatA::from_raw(self.cp_regs[VATA_REG + fmt]);
 
             let pos_base = self.cp_regs[ARRAY_BASE_REG + ARRAY_POS] as usize;
@@ -77,27 +77,34 @@ impl Gx {
             let clr0_base = self.cp_regs[ARRAY_BASE_REG + ARRAY_CLR0] as usize;
             let clr0_stride = self.cp_regs[ARRAY_STRIDE_REG + ARRAY_CLR0] as usize;
 
-            let vertex_stride = vcd_lo.position().size() + vcd_lo.color0().size();
+            let tex0_size = match vcd_hi.tex0() {
+                regs::AttributeType::Direct => vat_a.tex0_data_size(),
+                regs::AttributeType::Index8 => 1,
+                regs::AttributeType::Index16 => 2,
+                regs::AttributeType::None => 0,
+            };
+
+            let vertex_stride = vcd_lo.position().size() + vcd_lo.color0().size() + tex0_size;
             let vertex_count = data.len() / vertex_stride;
 
             let mut vertices: Vec<draw::Vertex> = Vec::with_capacity(vertex_count);
+            let mut cursor = 0;
 
             for i in 0..vertex_count {
-                let offset = i * vertex_stride;
-                let mut cursor = offset;
-
-                // Read position index and look up from RAM
-                let pos_index = data[cursor] as usize;
-                cursor += vcd_lo.position().size();
+                // Read position index
+                let pos_index = read_index(&data, &mut cursor, vcd_lo.position());
                 let pos_addr = pos_base + pos_index * pos_stride;
                 let pos_size = vat_a.pos_data_size();
                 let pos_data = &mmio.ram[pos_addr..pos_addr + pos_size];
 
-                // Read color0 index and look up from RAM
-                let clr0_index = data[cursor] as usize;
+                // Read color0 index
+                let clr0_index = read_index(&data, &mut cursor, vcd_lo.color0());
                 let clr0_addr = clr0_base + clr0_index * clr0_stride;
                 let clr0_size = vat_a.clr0_data_size();
                 let clr0_data = &mmio.ram[clr0_addr..clr0_addr + clr0_size];
+
+                // Skip tex0 bytes
+                cursor += tex0_size;
 
                 tracing::debug!(
                     vertex = i,
@@ -226,8 +233,8 @@ impl Gx {
     fn rebuild_modelview(&mut self) {
         let b = XF_MODELVIEW_BASE;
         self.draw_commands.modelview = draw::Matrix4([
-            [self.xf_f32(b),     self.xf_f32(b + 4), self.xf_f32(b + 8),  0.0],
-            [self.xf_f32(b + 1), self.xf_f32(b + 5), self.xf_f32(b + 9),  0.0],
+            [self.xf_f32(b), self.xf_f32(b + 4), self.xf_f32(b + 8), 0.0],
+            [self.xf_f32(b + 1), self.xf_f32(b + 5), self.xf_f32(b + 9), 0.0],
             [self.xf_f32(b + 2), self.xf_f32(b + 6), self.xf_f32(b + 10), 0.0],
             [self.xf_f32(b + 3), self.xf_f32(b + 7), self.xf_f32(b + 11), 1.0],
         ]);
@@ -319,6 +326,22 @@ impl Gx {
         if addr <= XF_PROJECTION_END && end > XF_PROJECTION_BASE {
             self.rebuild_projection();
         }
+    }
+}
+
+fn read_index(data: &[u8], cursor: &mut usize, attr: regs::AttributeType) -> usize {
+    match attr {
+        regs::AttributeType::Index8 => {
+            let idx = data[*cursor] as usize;
+            *cursor += 1;
+            idx
+        }
+        regs::AttributeType::Index16 => {
+            let idx = u16::from_be_bytes([data[*cursor], data[*cursor + 1]]) as usize;
+            *cursor += 2;
+            idx
+        }
+        _ => 0,
     }
 }
 
