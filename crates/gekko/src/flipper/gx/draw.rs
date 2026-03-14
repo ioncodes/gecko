@@ -29,3 +29,10 @@ pub struct DrawCall {
 }
 
 pub type Matrix4 = [[f32; 4]; 4];
+
+#[derive(Default)]
+pub struct DrawCommands {
+    pub modelview: Matrix4,         // where is this triangle relative to the camera?
+    pub projection: Matrix4,        // how is the 3D scene projected onto the 2D screen?
+    pub commands: Vec<DrawCall>,    // the actual draw calls to execute
+}

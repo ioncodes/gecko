@@ -7,10 +7,11 @@ use super::pi::InterruptFlag;
 use crate::{
     flipper::gx::{
         constants::{
-            ARRAY_BASE_REG, ARRAY_CLR0, ARRAY_POS, ARRAY_STRIDE_REG, BP_REG_SIZE, CP_REG_SIZE, VATA_REG, VCD_LO_REG,
-            XF_MEM_SIZE,
+            ARRAY_BASE_REG, ARRAY_CLR0, ARRAY_POS, ARRAY_STRIDE_REG, BP_REG_SIZE, CP_REG_SIZE,
+            VATA_REG, VCD_LO_REG, XF_MEM_SIZE, XF_MODELVIEW_BASE, XF_MODELVIEW_END,
+            XF_PROJECTION_BASE, XF_PROJECTION_END,
         },
-        draw::DrawCall,
+        draw::DrawCommands,
         regs::{VatA, VcdLo},
     },
     gekko::Gekko,
@@ -20,7 +21,7 @@ use fifo::FifoCmd;
 
 pub struct Gx {
     pub raise_interrupt: bool,
-    pub draw_commands: Vec<DrawCall>,
+    pub draw_commands: DrawCommands,
     bp_regs: Vec<u32>,
     cp_regs: Vec<u32>,
     xf_mem: Vec<u32>,
@@ -35,7 +36,7 @@ impl Gx {
             cp_regs: vec![0; CP_REG_SIZE],
             xf_mem: vec![0; XF_MEM_SIZE],
             fifo: Vec::with_capacity(256),
-            draw_commands: Vec::new(),
+            draw_commands: DrawCommands::default(),
         }
     }
 
@@ -117,9 +118,11 @@ impl Gx {
                 tracing::debug!(
                     primitive = format!("{:?}", primitive),
                     vertices = format!("{:?}", vertices),
+                    modelview = format!("{:?}", self.draw_commands.modelview),
+                    projection = format!("{:?}", self.draw_commands.projection),
                     "draw call created"
                 );
-                self.draw_commands.push(draw::DrawCall { primitive, vertices });
+                self.draw_commands.commands.push(draw::DrawCall { primitive, vertices });
             }
         }
     }
@@ -216,6 +219,49 @@ impl Gx {
         }
     }
 
+    fn xf_f32(&self, reg: usize) -> f32 {
+        f32::from_bits(self.xf_mem[reg])
+    }
+
+    fn rebuild_modelview(&mut self) {
+        let b = XF_MODELVIEW_BASE;
+        self.draw_commands.modelview = [
+            [self.xf_f32(b),     self.xf_f32(b + 4), self.xf_f32(b + 8),  0.0],
+            [self.xf_f32(b + 1), self.xf_f32(b + 5), self.xf_f32(b + 9),  0.0],
+            [self.xf_f32(b + 2), self.xf_f32(b + 6), self.xf_f32(b + 10), 0.0],
+            [self.xf_f32(b + 3), self.xf_f32(b + 7), self.xf_f32(b + 11), 1.0],
+        ];
+    }
+
+    fn rebuild_projection(&mut self) {
+        let b = XF_PROJECTION_BASE;
+        let pm1 = self.xf_f32(b);
+        let pm2 = self.xf_f32(b + 1);
+        let pm3 = self.xf_f32(b + 2);
+        let pm4 = self.xf_f32(b + 3);
+        let pm5 = self.xf_f32(b + 4);
+        let pm6 = self.xf_f32(b + 5);
+        let proj_type = self.xf_mem[XF_PROJECTION_END];
+
+        self.draw_commands.projection = if proj_type == 0 {
+            // Perspective
+            [
+                [pm1, 0.0, 0.0, 0.0],
+                [0.0, pm3, 0.0, 0.0],
+                [pm2, pm4, pm5, -1.0],
+                [0.0, 0.0, pm6, 0.0],
+            ]
+        } else {
+            // Orthographic
+            [
+                [pm1, 0.0, 0.0, 0.0],
+                [0.0, pm3, 0.0, 0.0],
+                [0.0, 0.0, pm5, 0.0],
+                [pm2, pm4, pm6, 1.0],
+            ]
+        };
+    }
+
     fn load_bp(&mut self, data: &[u8]) {
         let idx = data[0] as usize;
         let val = u32::from_be_bytes([0, data[1], data[2], data[3]]);
@@ -249,6 +295,7 @@ impl Gx {
         let length = u16::from_be_bytes([data[0], data[1]]) as usize;
         let addr = u16::from_be_bytes([data[2], data[3]]) as usize;
         let n = length + 1;
+        let end = addr + n;
 
         for i in 0..n {
             let offset = 4 + i * 4;
@@ -263,6 +310,14 @@ impl Gx {
                 value = format!("{val:08X}"),
                 "XF register write"
             );
+        }
+
+        // Rebuild matrices if the write touched their address ranges
+        if addr <= XF_MODELVIEW_END && end > XF_MODELVIEW_BASE {
+            self.rebuild_modelview();
+        }
+        if addr <= XF_PROJECTION_END && end > XF_PROJECTION_BASE {
+            self.rebuild_projection();
         }
     }
 }
