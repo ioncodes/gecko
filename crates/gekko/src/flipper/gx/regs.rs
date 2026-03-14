@@ -388,6 +388,41 @@ pub struct TevColorEnv {
     pub dest: TevRegId,
 }
 
+// TEV color register type
+#[derive(Debug, PartialEq, BitEnum)]
+pub enum TevRegType {
+    Color = 0,
+    Constant = 1,
+}
+
+// BP 0xE0/0xE2/0xE4/0xE6 TEV_REGISTERL
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TevRegisterL {
+    #[bits(0..=10)]
+    pub r: u16,
+
+    #[bits(12..=22)]
+    pub a: u16,
+
+    #[bits(23)]
+    pub reg_type: TevRegType,
+}
+
+// BP 0xE1/0xE3/0xE5/0xE7 TEV_REGISTERH
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TevRegisterH {
+    #[bits(0..=10)]
+    pub b: u16,
+
+    #[bits(12..=22)]
+    pub g: u16,
+
+    #[bits(23)]
+    pub reg_type: TevRegType,
+}
+
 // BP 0x00 GEN_MODE
 #[chapa::bitfield(u32, order = lsb0)]
 #[derive(Debug, Clone, Copy, Default)]

@@ -58,6 +58,7 @@ pub const BP_PE_DONE_FINISH_BIT: u32 = 0x02;
 // BP TEV (Texture Environment) registers
 pub const BP_GEN_MODE: usize = 0x00;
 pub const BP_RAS1_TREF0: usize = 0x28; // ..0x2F, order registers
+pub const BP_RAS1_TREF_COUNT: usize = 8;
 pub const BP_TEV_COLOR_ENV_0: usize = 0xC0; // stage N color = 0xC0 + N*2
 pub const BP_TEV_ALPHA_ENV_0: usize = 0xC1; // stage N alpha = 0xC1 + N*2
 // lo = 0xE0 + N*2 (R,A), hi = 0xE1 + N*2 (G,B)

@@ -1,4 +1,4 @@
-use super::regs::{AlphaCompare, BlendMode, ZMode};
+use super::regs::{AlphaCompare, BlendMode, TevColorEnv, TevRegisterH, TevRegisterL, ZMode};
 use chapa::BitEnum;
 
 #[derive(Debug)]
@@ -65,6 +65,7 @@ pub struct TextureDescriptor {
 pub struct DrawCall {
     pub primitive: Primitive,
     pub vertices: Vec<Vertex>,
+    pub modelview: Matrix4,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -98,6 +99,20 @@ pub struct DrawCommands {
     pub projection: Matrix4,
     pub commands: Vec<DrawCall>,
     pub textures: [Option<TextureDescriptor>; 8],
+
+    // TEV state
+    pub tev_color_env: [TevColorEnv; 16],
+    pub tev_alpha_env: [u32; 16],
+
+    // RGBA for each TEV register
+    pub tev_color_regs_lo: [TevRegisterL; 4],
+    pub tev_color_regs_hi: [TevRegisterH; 4],
+    pub tev_const_regs_lo: [TevRegisterL; 4],
+    pub tev_const_regs_hi: [TevRegisterH; 4],
+    pub tev_orders: [u32; 8],
+    pub num_tev_stages: u8,
+
+    // BP state
     pub bp_zmode: ZMode,
     pub bp_blend_mode: BlendMode,
     pub bp_alpha_compare: AlphaCompare,

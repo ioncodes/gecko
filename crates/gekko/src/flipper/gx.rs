@@ -7,13 +7,17 @@ use super::pi::InterruptFlag;
 use crate::{
     flipper::gx::{
         constants::{
-            ARRAY_BASE_REG, ARRAY_CLR0, ARRAY_POS, ARRAY_STRIDE_REG, BP_PE_ALPHA_COMPARE, BP_PE_CMODE0, BP_PE_DONE,
-            BP_PE_DONE_FINISH_BIT, BP_PE_ZMODE, BP_REG_SIZE, BP_TX_SETIMAGE0_I0, BP_TX_SETIMAGE0_I4,
-            BP_TX_SETIMAGE3_I0, BP_TX_SETIMAGE3_I4, CP_REG_SIZE, VATA_REG, VCD_HI_REG, VCD_LO_REG, XF_MEM_SIZE,
-            XF_MODELVIEW_BASE, XF_MODELVIEW_END, XF_PROJECTION_BASE, XF_PROJECTION_END,
+            ARRAY_BASE_REG, ARRAY_CLR0, ARRAY_POS, ARRAY_STRIDE_REG, BP_GEN_MODE, BP_PE_ALPHA_COMPARE, BP_PE_CMODE0,
+            BP_PE_DONE, BP_PE_DONE_FINISH_BIT, BP_PE_ZMODE, BP_RAS1_TREF_COUNT, BP_RAS1_TREF0, BP_REG_SIZE,
+            BP_TEV_COLOR_ENV_0, BP_TEV_REGISTERL_0, BP_TX_SETIMAGE0_I0, BP_TX_SETIMAGE0_I4, BP_TX_SETIMAGE3_I0,
+            BP_TX_SETIMAGE3_I4, CP_REG_SIZE, VATA_REG, VCD_HI_REG, VCD_LO_REG, XF_MEM_SIZE, XF_MODELVIEW_BASE,
+            XF_MODELVIEW_END, XF_PROJECTION_BASE, XF_PROJECTION_END,
         },
         draw::DrawCommands,
-        regs::{AlphaCompare, BlendMode, TxSetImage0, TxSetImage3, VatA, VcdHi, VcdLo, ZMode},
+        regs::{
+            AlphaCompare, BlendMode, GenMode, TevColorEnv, TevRegType, TevRegisterH, TevRegisterL, TxSetImage0,
+            TxSetImage3, VatA, VcdHi, VcdLo, ZMode,
+        },
     },
     gekko::Gekko,
     mmio::Mmio,
@@ -114,25 +118,27 @@ impl Gx {
 
             for i in 0..vertex_count {
                 // Read position
-                let pos_slice = if pos_attr == regs::AttributeType::Direct {
+                let position = if pos_attr == regs::AttributeType::Direct {
                     let start = cur.position() as usize;
                     cur.set_position(cur.position() + pos_data_size as u64);
-                    &data[start..start + pos_data_size]
+                    Self::decode_position(&data[start..start + pos_data_size], &vat_a)
                 } else {
                     let pos_index = read_index(&mut cur, pos_attr);
                     let pos_addr = pos_base + pos_index * pos_stride;
-                    &mmio.ram[pos_addr..pos_addr + pos_data_size]
+                    Self::decode_position(&mmio.ram[pos_addr..pos_addr + pos_data_size], &vat_a)
                 };
 
                 // Read color0
-                let clr0_slice = if clr0_attr == regs::AttributeType::Direct {
+                let color0 = if regs::AttributeType::None == clr0_attr {
+                    [1.0, 1.0, 1.0, 1.0]
+                } else if clr0_attr == regs::AttributeType::Direct {
                     let start = cur.position() as usize;
                     cur.set_position(cur.position() + clr0_data_size as u64);
-                    &data[start..start + clr0_data_size]
+                    Self::decode_color(&data[start..start + clr0_data_size], &vat_a)
                 } else {
                     let clr0_index = read_index(&mut cur, clr0_attr);
                     let clr0_addr = clr0_base + clr0_index * clr0_stride;
-                    &mmio.ram[clr0_addr..clr0_addr + clr0_data_size]
+                    Self::decode_color(&mmio.ram[clr0_addr..clr0_addr + clr0_data_size], &vat_a)
                 };
 
                 // Read tex0
@@ -149,13 +155,10 @@ impl Gx {
 
                 tracing::debug!(
                     vertex = i,
-                    pos_data = format!("{:02X?}", pos_slice),
-                    clr0_data = format!("{:02X?}", clr0_slice),
+                    position = format!("{:02X?}", position),
+                    color0 = format!("{:?}", color0),
                     "Vertex"
                 );
-
-                let position = Self::decode_position(pos_slice, &vat_a);
-                let color0 = Self::decode_color(clr0_slice, &vat_a);
 
                 vertices.push(draw::Vertex { position, color0, tex0 });
             }
@@ -168,7 +171,11 @@ impl Gx {
                     projection = format!("{:?}", self.draw_commands.projection),
                     "draw call created"
                 );
-                self.draw_commands.commands.push(draw::DrawCall { primitive, vertices });
+                self.draw_commands.commands.push(draw::DrawCall {
+                    primitive,
+                    vertices,
+                    modelview: self.draw_commands.modelview,
+                });
             }
         }
     }
@@ -371,6 +378,46 @@ impl Gx {
             BP_PE_CMODE0 => self.draw_commands.bp_blend_mode = BlendMode::from_raw(val),
             BP_PE_ALPHA_COMPARE => self.draw_commands.bp_alpha_compare = AlphaCompare::from_raw(val),
             _ => {}
+        }
+
+        // TEV color/alpha environment registers (0xC0-0xDF)
+        // Even addresses = color env, odd = alpha env
+        if idx >= BP_TEV_COLOR_ENV_0 && idx < BP_TEV_COLOR_ENV_0 + 32 {
+            let stage = (idx - BP_TEV_COLOR_ENV_0) / 2;
+            if idx % 2 == 0 {
+                self.draw_commands.tev_color_env[stage] = TevColorEnv::from_raw(val);
+            } else {
+                self.draw_commands.tev_alpha_env[stage] = val;
+            }
+        }
+
+        // TEV rasterizer order registers (RAS1_TREF0-7, 0x28-0x2F)
+        if idx >= BP_RAS1_TREF0 && idx < BP_RAS1_TREF0 + BP_RAS1_TREF_COUNT {
+            self.draw_commands.tev_orders[idx - BP_RAS1_TREF0] = val;
+        }
+
+        // TEV color registers (0xE0-0xE7): pairs of lo/hi writes
+        if idx >= BP_TEV_REGISTERL_0 && idx <= BP_TEV_REGISTERL_0 + 7 {
+            let reg_idx = (idx - BP_TEV_REGISTERL_0) / 2;
+            if idx % 2 == 0 {
+                let reg = TevRegisterL::from_raw(val);
+                match reg.reg_type() {
+                    TevRegType::Color => self.draw_commands.tev_color_regs_lo[reg_idx] = reg,
+                    TevRegType::Constant => self.draw_commands.tev_const_regs_lo[reg_idx] = reg,
+                }
+            } else {
+                let reg = TevRegisterH::from_raw(val);
+                match reg.reg_type() {
+                    TevRegType::Color => self.draw_commands.tev_color_regs_hi[reg_idx] = reg,
+                    TevRegType::Constant => self.draw_commands.tev_const_regs_hi[reg_idx] = reg,
+                }
+            }
+        }
+
+        // GEN_MODE, extract num TEV stages
+        if idx == BP_GEN_MODE {
+            let gen_mode = GenMode::from_raw(val);
+            self.draw_commands.num_tev_stages = gen_mode.num_tev_stages() + 1;
         }
     }
 
