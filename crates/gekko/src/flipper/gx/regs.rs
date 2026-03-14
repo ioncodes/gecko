@@ -309,3 +309,89 @@ impl TxSetImage3 {
         self.image_base() as usize * 32
     }
 }
+
+
+// TEV color combiner input select (SELA-SELD)
+#[derive(Debug, PartialEq, BitEnum)]
+pub enum TevColorIn {
+    CPrev = 0x0,
+    APrev = 0x1,
+    C0 = 0x2,
+    A0 = 0x3,
+    C1 = 0x4,
+    A1 = 0x5,
+    C2 = 0x6,
+    A2 = 0x7,
+    TexC = 0x8,
+    TexA = 0x9,
+    RasC = 0xA,
+    RasA = 0xB,
+    One = 0xC,
+    Half = 0xD,
+    Konst = 0xE,
+    Zero = 0xF,
+}
+
+#[derive(Debug, PartialEq, BitEnum)]
+pub enum TevBias {
+    Zero = 0,
+    AddHalf = 1,
+    SubHalf = 2,
+}
+
+#[derive(Debug, PartialEq, BitEnum)]
+pub enum TevScale {
+    Scale1 = 0,
+    Scale2 = 1,
+    Scale4 = 2,
+    Divide2 = 3,
+}
+
+#[derive(Debug, PartialEq, BitEnum)]
+pub enum TevRegId {
+    TevPrev = 0,
+    TevReg0 = 1,
+    TevReg1 = 2,
+    TevReg2 = 3,
+}
+
+// BP 0xC0+stage*2 TEV
+
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TevColorEnv {
+    #[bits(0..=3)]
+    pub d: TevColorIn,
+
+    #[bits(4..=7)]
+    pub c: TevColorIn,
+
+    #[bits(8..=11)]
+    pub b: TevColorIn,
+
+    #[bits(12..=15)]
+    pub a: TevColorIn,
+
+    #[bits(16..=17)]
+    pub bias: TevBias,
+
+    #[bits(18)]
+    pub sub: bool,
+
+    #[bits(19)]
+    pub clamp: bool,
+
+    #[bits(20..=21)]
+    pub scale: TevScale,
+
+    #[bits(22..=23)]
+    pub dest: TevRegId,
+}
+
+// BP 0x00 GEN_MODE
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GenMode {
+    #[bits(10..=13)]
+    pub num_tev_stages: u8, // num stages - 1
+}
