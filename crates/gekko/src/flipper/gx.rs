@@ -130,6 +130,7 @@ impl Gx {
 
                 // Read color0
                 let color0 = if regs::AttributeType::None == clr0_attr {
+                    tracing::warn!("color0 attribute is None, using default white");
                     [1.0, 1.0, 1.0, 1.0]
                 } else if clr0_attr == regs::AttributeType::Direct {
                     let start = cur.position() as usize;
