@@ -606,6 +606,26 @@ fn triangulate_into(dc: &DrawCall, out: &mut Vec<GpuVertex>) {
                 out.push((&quad[3]).into());
             }
         }
+        Primitive::TriangleStrip => {
+            for i in 2..dc.vertices.len() {
+                if i % 2 == 0 {
+                    out.push((&dc.vertices[i - 2]).into());
+                    out.push((&dc.vertices[i - 1]).into());
+                    out.push((&dc.vertices[i]).into());
+                } else {
+                    out.push((&dc.vertices[i - 1]).into());
+                    out.push((&dc.vertices[i - 2]).into());
+                    out.push((&dc.vertices[i]).into());
+                }
+            }
+        }
+        Primitive::TriangleFan => {
+            for i in 2..dc.vertices.len() {
+                out.push((&dc.vertices[0]).into());
+                out.push((&dc.vertices[i - 1]).into());
+                out.push((&dc.vertices[i]).into());
+            }
+        }
         _ => unimplemented!("triangulation for {:?}", dc.primitive),
     }
 }
