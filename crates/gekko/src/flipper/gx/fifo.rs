@@ -1,4 +1,4 @@
-use super::constants::{BP_CMD, CP_CMD, XF_CMD};
+use super::constants::{BP_CMD, CALL_DL_CMD, CP_CMD, INV_VTX_CACHE_CMD, NOP_CMD, XF_CMD};
 use crate::flipper::gx::{
     Gx,
     constants::{DRAW_COMMANDS_END, DRAW_COMMANDS_START, VATA_REG, VCD_HI_REG, VCD_LO_REG},
@@ -36,6 +36,23 @@ impl Gx {
             let cmd = cmd_buf[0];
 
             match cmd {
+                NOP_CMD | INV_VTX_CACHE_CMD => {
+                    // NOP / vertex cache invalidate, skip
+                }
+                CALL_DL_CMD => {
+                    // 4-byte physical address + 4-byte size = 8 bytes payload
+                    if remaining < 9 {
+                        cur.set_position(pos as u64);
+                        break;
+                    }
+                    let mut addr_buf = [0u8; 4];
+                    let mut size_buf = [0u8; 4];
+                    cur.read_exact(&mut addr_buf).unwrap();
+                    cur.read_exact(&mut size_buf).unwrap();
+                    let phys_addr = u32::from_be_bytes(addr_buf);
+                    let nbytes = u32::from_be_bytes(size_buf);
+                    cmds.push(FifoCmd::CallDisplayList { phys_addr, nbytes });
+                }
                 CP_CMD => {
                     // 1 addr + 4 data = 5 bytes
                     if remaining < 6 {
@@ -152,5 +169,6 @@ pub enum FifoCmd {
     Cp([u8; 5]),
     Xf(Vec<u8>),
     Bp([u8; 4]),
+    CallDisplayList { phys_addr: u32, nbytes: u32 },
     DrawCall(u8, Vec<u8>),
 }

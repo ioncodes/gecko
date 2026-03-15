@@ -93,8 +93,14 @@ impl Gekko {
                 self.exi.process_dma_transfers(&mut self.mmio);
             }
             BusTarget::Gx       => {
-                self.gx.mmio_write_u8(&mut self.mmio, val);
-                self.check_gx_pe_finish();
+                if self.pi.is_fifo_redirected() {
+                    let wptr = self.pi.fifo_wptr as usize;
+                    self.mmio.ram[wptr] = val;
+                    self.pi.fifo_wptr = self.pi.fifo_wptr.wrapping_add(1);
+                } else {
+                    self.gx.mmio_write_u8(&mut self.mmio, val);
+                    self.check_gx_pe_finish();
+                }
             }
             BusTarget::Fallback => self.mmio.phys_write_u8(offset, val),
         }
@@ -115,8 +121,15 @@ impl Gekko {
                 self.exi.process_dma_transfers(&mut self.mmio);
             }
             BusTarget::Gx       => {
-                self.gx.mmio_write_u16(&mut self.mmio, val);
-                self.check_gx_pe_finish();
+                if self.pi.is_fifo_redirected() {
+                    let wptr = self.pi.fifo_wptr as usize;
+                    let bytes = val.to_be_bytes();
+                    self.mmio.ram[wptr..wptr + 2].copy_from_slice(&bytes);
+                    self.pi.fifo_wptr = self.pi.fifo_wptr.wrapping_add(2);
+                } else {
+                    self.gx.mmio_write_u16(&mut self.mmio, val);
+                    self.check_gx_pe_finish();
+                }
             }
             BusTarget::Fallback => self.mmio.phys_write_u16(offset, val),
         }
@@ -137,8 +150,15 @@ impl Gekko {
                 self.exi.process_dma_transfers(&mut self.mmio);
             }
             BusTarget::Gx       => {
-                self.gx.mmio_write_u32(&mut self.mmio, val);
-                self.check_gx_pe_finish();
+                if self.pi.is_fifo_redirected() {
+                    let wptr = self.pi.fifo_wptr as usize;
+                    let bytes = val.to_be_bytes();
+                    self.mmio.ram[wptr..wptr + 4].copy_from_slice(&bytes);
+                    self.pi.fifo_wptr = self.pi.fifo_wptr.wrapping_add(4);
+                } else {
+                    self.gx.mmio_write_u32(&mut self.mmio, val);
+                    self.check_gx_pe_finish();
+                }
             }
             BusTarget::Fallback => self.mmio.phys_write_u32(offset, val),
         }

@@ -1,5 +1,8 @@
+pub const NOP_CMD: u8 = 0x00;
 pub const CP_CMD: u8 = 0x08;
 pub const XF_CMD: u8 = 0x10;
+pub const CALL_DL_CMD: u8 = 0x40;
+pub const INV_VTX_CACHE_CMD: u8 = 0x48;
 pub const BP_CMD: u8 = 0x61;
 
 pub const DRAW_COMMANDS_START: u8 = 0x80;

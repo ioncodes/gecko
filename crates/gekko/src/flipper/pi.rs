@@ -3,9 +3,22 @@ pub mod regs;
 use crate::mmio::constants::PI_BASE;
 use crate::mmio::traits::{MmioAccess, MmioRegister};
 
+// PI FIFO register offsets (from PI_BASE 0xCC003000)
+const PI_FIFO_BASE_OFFSET: u32 = 0x0C;
+const PI_FIFO_END_OFFSET: u32 = 0x10;
+const PI_FIFO_WPTR_OFFSET: u32 = 0x14;
+
 pub struct Pi {
     pub intsr: regs::InterruptCause,
     pub intmr: regs::InterruptMask,
+    /// CPU FIFO base address in physical memory
+    pub fifo_base: u32,
+    /// CPU FIFO end address in physical memory
+    pub fifo_end: u32,
+    /// CPU FIFO write pointer (32-byte aligned)
+    pub fifo_wptr: u32,
+    /// The initial FIFO base set by GX_Init (0 = not yet set)
+    initial_fifo_base: u32,
 }
 
 /// Bitmask constants for each PI interrupt source
@@ -32,7 +45,16 @@ impl Pi {
         Pi {
             intsr: regs::InterruptCause::default(),
             intmr: regs::InterruptMask::from_raw(0),
+            fifo_base: 0,
+            fifo_end: 0,
+            fifo_wptr: 0,
+            initial_fifo_base: 0,
         }
+    }
+
+    /// Returns true when the CPU FIFO is redirected to a display list buffer
+    pub fn is_fifo_redirected(&self) -> bool {
+        self.initial_fifo_base != 0 && self.fifo_base != self.initial_fifo_base
     }
 
     pub fn assert_interrupt(&mut self, flag: InterruptFlag) {
@@ -85,8 +107,25 @@ impl Pi {
     }
 
     pub fn mmio_write_u32(&mut self, offset: u32, val: u32) {
-        if !self.write_raw(PI_BASE + offset, 4, val) {
-            tracing::error!(offset = format!("{offset:08X}"), "unhandled PI write_u32");
+        match offset {
+            PI_FIFO_BASE_OFFSET => {
+                self.fifo_base = val;
+                // Record the first FIFO base as the "normal" GX FIFO
+                if self.initial_fifo_base == 0 {
+                    self.initial_fifo_base = val;
+                }
+            }
+            PI_FIFO_END_OFFSET => {
+                self.fifo_end = val;
+            }
+            PI_FIFO_WPTR_OFFSET => {
+                self.fifo_wptr = val & 0x1FFF_FFE0; // 32-byte aligned
+            }
+            _ => {
+                if !self.write_raw(PI_BASE + offset, 4, val) {
+                    tracing::error!(offset = format!("{offset:08X}"), "unhandled PI write_u32");
+                }
+            }
         }
     }
 }

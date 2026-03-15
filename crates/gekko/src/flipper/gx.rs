@@ -71,9 +71,21 @@ impl Gx {
                 FifoCmd::Cp(data) => self.load_cp(&data),
                 FifoCmd::Xf(data) => self.load_xf(&data),
                 FifoCmd::Bp(data) => self.load_bp(&data),
+                FifoCmd::CallDisplayList { phys_addr, nbytes } => {
+                    let addr = phys_addr as usize;
+                    let len = nbytes as usize;
+                    self.execute_display_list(mmio, &mmio.ram[addr..addr + len].to_vec());
+                }
                 FifoCmd::DrawCall(cmd, data) => self.create_draw_call(mmio, cmd, data),
             }
         }
+    }
+
+    fn execute_display_list(&mut self, mmio: &mut Mmio, data: &[u8]) {
+        let saved = std::mem::take(&mut self.fifo);
+        self.fifo = data.to_vec();
+        self.drain_fifo(mmio);
+        self.fifo = saved;
     }
 
     fn create_draw_call(&mut self, mmio: &mut Mmio, cmd: u8, data: Vec<u8>) {

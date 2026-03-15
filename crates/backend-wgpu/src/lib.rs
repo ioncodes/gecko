@@ -106,10 +106,7 @@ impl GxRenderer {
         height: u32,
     ) -> Self {
         let uniform_size = std::mem::size_of::<Uniforms>() as u64;
-        let uniform_stride = align_up(
-            uniform_size,
-            device.limits().min_uniform_buffer_offset_alignment as u64,
-        );
+        let uniform_stride = align_up(uniform_size, device.limits().min_uniform_buffer_offset_alignment as u64);
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gx_shader"),
@@ -462,8 +459,7 @@ impl GxRenderer {
             };
             let start = self.scratch_draws.len() * stride;
             self.scratch_uniform_bytes.resize(start + stride, 0);
-            self.scratch_uniform_bytes[start..start + uniform_size]
-                .copy_from_slice(bytemuck::bytes_of(&uniform));
+            self.scratch_uniform_bytes[start..start + uniform_size].copy_from_slice(bytemuck::bytes_of(&uniform));
             self.scratch_draws.push((prev_len as u32, added as u32));
         }
 
