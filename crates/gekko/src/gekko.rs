@@ -69,6 +69,7 @@ impl Gekko {
         }
     }
 
+    #[inline]
     pub fn step(&mut self) {
         // Fire any events that are due
         while let Some(event) = self.scheduler.poll() {

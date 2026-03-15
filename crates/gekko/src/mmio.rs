@@ -26,6 +26,7 @@ impl Mmio {
 
     /// Resolve a physical address to a `(backing_slice, offset)` pair
     /// This is the one place that maps physical addresses to memory regions
+    #[inline]
     fn resolve(&self, phys: u32) -> (&[u8], usize) {
         match phys {
             RAM_BASE..=RAM_END => (&self.ram, phys as usize),
@@ -44,6 +45,7 @@ impl Mmio {
     /// Resolve a physical address to a `(backing_slice, offset)` pair
     /// This is the one place that maps physical addresses to memory regions
     /// Returns a mutable slice for write operations
+    #[inline]
     fn resolve_mut(&mut self, phys: u32) -> (&mut [u8], usize) {
         match phys {
             RAM_BASE..=RAM_END => (&mut self.ram, phys as usize),
@@ -59,6 +61,7 @@ impl Mmio {
         }
     }
 
+    #[inline]
     pub fn phys_read_u8(&self, addr: u32) -> u8 {
         let (slice, offset) = self.resolve(addr);
         tracing::trace!(
@@ -69,6 +72,7 @@ impl Mmio {
         slice[offset]
     }
 
+    #[inline]
     pub fn phys_read_u16(&self, addr: u32) -> u16 {
         let (slice, offset) = self.resolve(addr);
         let value = u16::from_be_bytes(slice[offset..offset + 2].try_into().unwrap());
@@ -80,6 +84,7 @@ impl Mmio {
         value
     }
 
+    #[inline]
     pub fn phys_read_u32(&self, addr: u32) -> u32 {
         let (slice, offset) = self.resolve(addr);
         let value = u32::from_be_bytes(slice[offset..offset + 4].try_into().unwrap());
@@ -91,6 +96,7 @@ impl Mmio {
         value
     }
 
+    #[inline]
     pub fn phys_write_u8(&mut self, addr: u32, value: u8) {
         let (slice, offset) = self.resolve_mut(addr);
         tracing::trace!(
@@ -101,6 +107,7 @@ impl Mmio {
         slice[offset] = value;
     }
 
+    #[inline]
     pub fn phys_write_u16(&mut self, addr: u32, value: u16) {
         let (slice, offset) = self.resolve_mut(addr);
         let bytes = value.to_be_bytes();
@@ -112,6 +119,7 @@ impl Mmio {
         slice[offset..offset + 2].copy_from_slice(&bytes);
     }
 
+    #[inline]
     pub fn phys_write_u32(&mut self, addr: u32, value: u32) {
         let (slice, offset) = self.resolve_mut(addr);
         let bytes = value.to_be_bytes();
@@ -123,37 +131,45 @@ impl Mmio {
         slice[offset..offset + 4].copy_from_slice(&bytes);
     }
 
+    #[inline]
     pub fn virt_read_u8(&self, addr: u32) -> u8 {
         self.phys_read_u8(Self::virt_to_phys(addr))
     }
 
+    #[inline]
     pub fn virt_read_u16(&self, addr: u32) -> u16 {
         self.phys_read_u16(Self::virt_to_phys(addr))
     }
 
+    #[inline]
     pub fn virt_read_u32(&self, addr: u32) -> u32 {
         self.phys_read_u32(Self::virt_to_phys(addr))
     }
 
+    #[inline]
     pub fn virt_write_u8(&mut self, addr: u32, value: u8) {
         self.phys_write_u8(Self::virt_to_phys(addr), value);
     }
 
+    #[inline]
     pub fn virt_write_u16(&mut self, addr: u32, value: u16) {
         self.phys_write_u16(Self::virt_to_phys(addr), value);
     }
 
+    #[inline]
     pub fn virt_write_u32(&mut self, addr: u32, value: u32) {
         self.phys_write_u32(Self::virt_to_phys(addr), value);
     }
 
     /// Return a slice of physical memory starting at `addr` with length `len`
     /// Useful for bulk reads (e.g. disassembler)
+    #[inline]
     pub fn phys_slice(&self, addr: u32, len: usize) -> &[u8] {
         let (slice, offset) = self.resolve(addr);
         &slice[offset..offset + len]
     }
 
+    #[inline]
     pub fn phys_slice_mut(&mut self, addr: u32, len: usize) -> &mut [u8] {
         let (slice, offset) = self.resolve_mut(addr);
         &mut slice[offset..offset + len]
@@ -161,6 +177,7 @@ impl Mmio {
 
     /// Return a slice of virtual memory starting at `addr` with length `len`
     /// This is just a thin wrapper around `phys_slice` that applies virtual-to-physical translation
+    #[inline]
     pub fn virt_slice(&self, addr: u32, len: usize) -> &[u8] {
         self.phys_slice(Self::virt_to_phys(addr), len)
     }
@@ -188,6 +205,7 @@ impl Mmio {
     }
 
     // Simple virtual to physical translation that ignores caching and other MMIO features
+    #[inline]
     pub const fn virt_to_phys(addr: u32) -> u32 {
         addr & 0x3FFFFFFF
     }

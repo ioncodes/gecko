@@ -8,5 +8,5 @@ chipi = "0.5.3"
 
 [dependencies]
 chapa = { git = "https://github.com/ioncodes/chapa.git" }
-tracing = "0.1.44"
+tracing = { version = "0.1.44", features = ["release_max_level_off"] }
 image = { path = "../image" }
