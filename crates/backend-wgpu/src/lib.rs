@@ -384,25 +384,12 @@ impl GxRenderer {
     ) {
         self.ensure_depth_texture(device, target_width, target_height);
 
-        let mvp = commands.projection * commands.modelview;
-        let tev_color_source = commands.textures[0].is_some() as u32;
+        if commands.commands.is_empty() {
+            return;
+        }
 
         let alpha_cmp = commands.bp_alpha_compare;
-
-        queue.write_buffer(
-            &self.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&Uniforms {
-                mvp: mvp.0,
-                tev_color_source,
-                alpha_ref0: alpha_cmp.ref0() as f32 / 255.0,
-                alpha_ref1: alpha_cmp.ref1() as f32 / 255.0,
-                alpha_comp0: alpha_cmp.comp0() as u32,
-                alpha_comp1: alpha_cmp.comp1() as u32,
-                alpha_op: alpha_cmp.op() as u32,
-                _padding: [0; 2],
-            }),
-        );
+        let tev_color_source = commands.textures[0].is_some() as u32;
 
         // Get or create the pipeline for current blend/z state
         let pipeline_key = PipelineKey::from_draw_commands(commands);
@@ -410,7 +397,6 @@ impl GxRenderer {
             let pipeline = self.create_pipeline(device, &pipeline_key);
             self.pipeline_cache.insert(pipeline_key, pipeline);
         }
-        let pipeline = &self.pipeline_cache[&pipeline_key];
 
         // Upload texture slot 0 if present, using cache to avoid redundant uploads
         let tex_view = if let Some(desc) = &commands.textures[0] {
@@ -443,55 +429,86 @@ impl GxRenderer {
             ],
         });
 
-        let vertices = triangulate(&commands.commands);
-        if vertices.is_empty() {
-            return;
-        }
+        let pipeline = &self.pipeline_cache[&pipeline_key];
 
-        if vertices.len() > self.vertex_capacity {
-            self.vertex_capacity = vertices.len().next_power_of_two();
-            self.vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("gx_vertices"),
-                size: (self.vertex_capacity * std::mem::size_of::<GpuVertex>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-        }
+        for (i, dc) in commands.commands.iter().enumerate() {
+            let vertices = triangulate(dc);
+            if vertices.is_empty() {
+                continue;
+            }
 
-        queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
+            let mvp = commands.projection * dc.modelview;
 
-        let mut encoder = device.create_command_encoder(&Default::default());
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("gx_render_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
+            queue.write_buffer(
+                &self.uniform_buffer,
+                0,
+                bytemuck::bytes_of(&Uniforms {
+                    mvp: mvp.0,
+                    tev_color_source,
+                    alpha_ref0: alpha_cmp.ref0() as f32 / 255.0,
+                    alpha_ref1: alpha_cmp.ref1() as f32 / 255.0,
+                    alpha_comp0: alpha_cmp.comp0() as u32,
+                    alpha_comp1: alpha_cmp.comp1() as u32,
+                    alpha_op: alpha_cmp.op() as u32,
+                    _padding: [0; 2],
                 }),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-                multiview_mask: None,
-            });
-            rpass.set_pipeline(pipeline);
-            rpass.set_bind_group(0, &self.bind_group, &[]);
-            rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            rpass.draw(0..vertices.len() as u32, 0..1);
-        }
+            );
 
-        queue.submit([encoder.finish()]);
+            if vertices.len() > self.vertex_capacity {
+                self.vertex_capacity = vertices.len().next_power_of_two();
+                self.vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("gx_vertices"),
+                    size: (self.vertex_capacity * std::mem::size_of::<GpuVertex>()) as u64,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+            }
+
+            queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
+
+            let color_load = if i == 0 {
+                wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+            } else {
+                wgpu::LoadOp::Load
+            };
+            let depth_load = if i == 0 {
+                wgpu::LoadOp::Clear(1.0)
+            } else {
+                wgpu::LoadOp::Load
+            };
+
+            let mut encoder = device.create_command_encoder(&Default::default());
+            {
+                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("gx_render_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: target,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: color_load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: depth_load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                    multiview_mask: None,
+                });
+                rpass.set_pipeline(pipeline);
+                rpass.set_bind_group(0, &self.bind_group, &[]);
+                rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                rpass.draw(0..vertices.len() as u32, 0..1);
+            }
+            queue.submit([encoder.finish()]);
+        }
     }
 }
 
@@ -513,30 +530,29 @@ fn create_depth_texture(device: &wgpu::Device, w: u32, h: u32) -> (wgpu::Texture
     let view = tex.create_view(&Default::default());
     (tex, view)
 }
-fn triangulate(draw_calls: &[DrawCall]) -> Vec<GpuVertex> {
+
+fn triangulate(dc: &DrawCall) -> Vec<GpuVertex> {
     let mut out = Vec::new();
-    for dc in draw_calls {
-        match dc.primitive {
-            Primitive::Triangles => {
-                for v in &dc.vertices {
-                    out.push(v.into());
-                }
+    match dc.primitive {
+        Primitive::Triangles => {
+            for v in &dc.vertices {
+                out.push(v.into());
             }
-            Primitive::Quads => {
-                for quad in dc.vertices.chunks(4) {
-                    if quad.len() < 4 {
-                        continue;
-                    }
-                    out.push((&quad[0]).into());
-                    out.push((&quad[1]).into());
-                    out.push((&quad[2]).into());
-                    out.push((&quad[0]).into());
-                    out.push((&quad[2]).into());
-                    out.push((&quad[3]).into());
-                }
-            }
-            _ => unimplemented!("triangulation for {:?}", dc.primitive),
         }
+        Primitive::Quads => {
+            for quad in dc.vertices.chunks(4) {
+                if quad.len() < 4 {
+                    continue;
+                }
+                out.push((&quad[0]).into());
+                out.push((&quad[1]).into());
+                out.push((&quad[2]).into());
+                out.push((&quad[0]).into());
+                out.push((&quad[2]).into());
+                out.push((&quad[3]).into());
+            }
+        }
+        _ => unimplemented!("triangulation for {:?}", dc.primitive),
     }
     out
 }
