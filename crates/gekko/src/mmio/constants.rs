@@ -32,3 +32,7 @@ pub const AI_END: u32 = 0x0C00_6FFF;
 // GX Write Gather Pipe
 pub const GX_FIFO_BASE: u32 = 0x0C00_8000;
 pub const GX_FIFO_END: u32 = 0x0C00_801F;
+
+// IPL / Bootrom
+pub const IPL_BASE: u32 = 0x3FF0_0000;
+pub const IPL_END: u32 = 0x3FFF_FFFF;

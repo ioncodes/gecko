@@ -481,7 +481,7 @@ fn main() {
 
     let rom_data = std::fs::read(&args[1]).expect("failed to read ROM");
     let dol = Dol::parse(rom_data);
-    let emulator = Gekko::new(&dol, idle_skip);
+    let emulator = Gekko::with_image(&dol, idle_skip);
 
     let event_loop = EventLoop::new().unwrap();
     let mut app = App {

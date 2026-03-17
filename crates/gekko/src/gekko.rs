@@ -1,5 +1,5 @@
 use crate::{
-    cpu::{self, Cpu, semantics::Instruction},
+    cpu::{self, Cpu, IPL_RESET_VECTOR, semantics::Instruction},
     exi::Exi,
     flipper::{
         dsp::Dsp,
@@ -26,8 +26,23 @@ pub struct Gekko {
 }
 
 impl Gekko {
-    pub fn new(exe: &impl Executable, idle_skip: bool) -> Self {
-        let mut mmio = Mmio::new();
+    pub fn new(entrypoint: u32, idle_skip: bool) -> Self {
+        Gekko {
+            vsync_pending: false,
+            cpu: Cpu::new(entrypoint),
+            scheduler: Scheduler::new(),
+            mmio: Mmio::new(),
+            vi: Vi::new(),
+            pi: Pi::new(),
+            dsp: Dsp::new(),
+            exi: Exi::dummy(),
+            gx: Gx::new(),
+            idle_skip,
+        }
+    }
+
+    pub fn with_image(exe: &impl Executable, idle_skip: bool) -> Self {
+        let mut gekko = Gekko::new(exe.entry_point(), idle_skip);
         let data = exe.data();
 
         // Copy TEXT sections to memory
@@ -35,7 +50,7 @@ impl Gekko {
             for i in 0..section.size {
                 let addr = section.vaddr + i;
                 let value = data[(section.offset + i) as usize];
-                mmio.virt_write_u8(addr, value);
+                gekko.mmio.virt_write_u8(addr, value);
             }
         }
 
@@ -44,7 +59,7 @@ impl Gekko {
             for i in 0..section.size {
                 let addr = section.vaddr + i;
                 let value = data[(section.offset + i) as usize];
-                mmio.virt_write_u8(addr, value);
+                gekko.mmio.virt_write_u8(addr, value);
             }
         }
 
@@ -52,21 +67,42 @@ impl Gekko {
         let (bss_start, bss_size) = exe.bss();
         for i in 0..bss_size {
             let addr = bss_start + i;
-            mmio.virt_write_u8(addr, 0);
+            gekko.mmio.virt_write_u8(addr, 0);
         }
 
-        Gekko {
-            vsync_pending: false,
-            cpu: Cpu::new(exe.entry_point()),
-            scheduler: Scheduler::new(),
-            mmio,
-            vi: Vi::new(),
-            pi: Pi::new(),
-            dsp: Dsp::new(),
-            exi: Exi::dummy(),
-            gx: Gx::new(),
-            idle_skip,
+        gekko
+    }
+
+    pub fn with_ipl(ipl: &[u8], idle_skip: bool) -> Self {
+        // Text Sections (1):
+        // | idx | offset     | vaddr      | size       | end        |
+        // |-----|------------|------------|------------|------------|
+        // | 0   | 0x00000100 | 0x81300000 | 0x001FF7E0 | 0x814FF7E0 |
+        // Data Sections (0):
+        // | idx | offset | vaddr | size | end |
+        // |-----|--------|-------|------|-----|
+        // Entry point: 0x81300000
+        // BSS: 0x00000000 - 0x00000000 (size: 0x00000000)
+
+        let dol = image::Dol::parse(ipl.to_vec());
+        let mut gekko = Gekko::new(IPL_RESET_VECTOR, idle_skip);
+        let data = dol.data();
+
+        for section in dol.text_sections().iter().chain(dol.data_sections()) {
+            for i in 0..section.size {
+                let addr = section.vaddr + i;
+                let value = data[(section.offset + i) as usize];
+                gekko.mmio.virt_write_u8(addr, value);
+            }
         }
+
+        let (bss_start, bss_size) = dol.bss();
+        for i in 0..bss_size {
+            gekko.mmio.virt_write_u8(bss_start + i, 0);
+        }
+
+        gekko.mmio.ipl = ipl.to_vec();
+        gekko
     }
 
     #[inline]

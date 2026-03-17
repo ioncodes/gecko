@@ -12,7 +12,12 @@ use snaptshot::CpuSnapshot;
 #[command(about = "Gekko CPU emulator / debugger")]
 struct Args {
     /// Path to the ROM/DOL file
-    rom: String,
+    #[arg(long)]
+    rom: Option<String>,
+
+    /// Path to an IPL file
+    #[arg(long)]
+    ipl: Option<String>,
 
     /// Print decoded instructions and register diffs after each step
     #[arg(long)]
@@ -46,9 +51,16 @@ fn main() {
         )
         .init();
 
-    let rom_data = std::fs::read(&args.rom).expect("failed to read ROM");
-    let dol = image::Dol::parse(rom_data);
-    let mut gekko = gekko::gekko::Gekko::new(&dol, false);
+    let mut gekko = if let Some(rom_path) = &args.rom {
+        let rom_data = std::fs::read(rom_path).expect("failed to read ROM");
+        let dol = image::Dol::parse(rom_data);
+        gekko::gekko::Gekko::with_image(&dol, false)
+    } else if let Some(ipl_path) = &args.ipl {
+        let ipl_data = std::fs::read(ipl_path).expect("failed to read IPL");
+        gekko::gekko::Gekko::with_ipl(&ipl_data, false)
+    } else {
+        panic!("Either --rom or --ipl must be provided");
+    };
 
     let symbols = args.elf.as_ref().map(|path| {
         let elf_data = std::fs::read(path).expect("failed to read ELF file");

@@ -13,6 +13,7 @@ pub struct Mmio {
     pub ram: Vec<u8>,
     pub efb: Vec<u8>,
     pub hwr: Vec<u8>,
+    pub ipl: Vec<u8>,
 }
 
 impl Mmio {
@@ -21,6 +22,7 @@ impl Mmio {
             ram: vec![0; RAM_SIZE],
             efb: vec![0; EFB_SIZE],
             hwr: vec![0; HW_REG_SIZE],
+            ipl: vec![0; 0],
         }
     }
 
@@ -35,6 +37,7 @@ impl Mmio {
                 tracing::warn!(phys_addr = format!("{:08X}", phys), "read from mmio");
                 (&self.hwr, (phys - HW_REG_BASE) as usize)
             }
+            IPL_BASE..=IPL_END => (&self.ipl, (phys - IPL_BASE) as usize),
             _ => {
                 tracing::error!(phys_addr = format!("{:08X}", phys), "unmapped physical read");
                 (&self.ram, 0)
@@ -54,6 +57,7 @@ impl Mmio {
                 tracing::warn!(phys_addr = format!("{:08X}", phys), "write to mmio");
                 (&mut self.hwr, (phys - HW_REG_BASE) as usize)
             }
+            IPL_BASE..=IPL_END => (&mut self.ipl, (phys - IPL_BASE) as usize),
             _ => {
                 tracing::error!(phys_addr = format!("{:08X}", phys), "unmapped physical write");
                 (&mut self.ram, 0)

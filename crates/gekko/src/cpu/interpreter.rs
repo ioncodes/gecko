@@ -20,4 +20,4 @@ pub use psq::store_load_psq;
 pub use rotate::rotate;
 pub use store_load::{lwarx, store_load, store_load_fp, stwcx_dot};
 pub use stubs::*;
-pub use system::{mftb, msr, nop, segment, spr};
+pub use system::{mftb, msr, nop, sc, segment, spr};

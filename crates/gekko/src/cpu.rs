@@ -13,6 +13,8 @@ pub mod lut {
     include!(concat!(env!("OUT_DIR"), "/gekko_lut.rs"));
 }
 
+pub const IPL_RESET_VECTOR: u32 = 0xFFF0_0100;
+
 pub struct Cpu {
     pub gprs: [u32; 32],
     pub fprs: [f64; 32], // PS0

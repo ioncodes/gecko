@@ -1,4 +1,4 @@
-use crate::cpu::sr::Sr;
+use crate::cpu::{irq, spr::Srr0, sr::Sr};
 
 pub fn msr<const OP: u32>(ctx: &mut crate::gekko::Gekko, instr: crate::cpu::semantics::Instruction) {
     match OP {
@@ -53,3 +53,29 @@ pub fn mftb(ctx: &mut crate::gekko::Gekko, instr: crate::cpu::semantics::Instruc
 }
 
 pub fn nop<const OP: u32>(_ctx: &mut crate::gekko::Gekko, _instr: crate::cpu::semantics::Instruction) {}
+
+pub fn sc(ctx: &mut crate::gekko::Gekko, _instr: crate::cpu::semantics::Instruction) {
+    let base: u32 = if ctx.cpu.msr.exception_prefix() { 0xFFF0_0000 } else { 0 };
+
+    ctx.cpu.spr.srr0 = Srr0::from(ctx.cpu.cia.wrapping_add(4));
+    ctx.cpu.spr.srr1 = chapa::extract_bits!(ctx.cpu.msr; 0, 5..=9, 16..=31).raw();
+
+    ctx.cpu.msr = ctx
+        .cpu
+        .msr
+        .with_pow(false)
+        .with_fp(false)
+        .with_be(false)
+        .with_dr(false)
+        .with_fe1(false)
+        .with_pm(false)
+        .with_ee(false)
+        .with_fe0(false)
+        .with_ri(false)
+        .with_pr(false)
+        .with_se(false)
+        .with_ir(false)
+        .with_le(ctx.cpu.msr.ile());
+
+    ctx.cpu.nia = base | irq::IRQ_SYSTEM_CALL;
+}
