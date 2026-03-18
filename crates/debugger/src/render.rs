@@ -176,12 +176,18 @@ impl RenderState {
     pub fn render(&mut self, emulator: &mut Gekko, debugger_ui: &mut DebuggerUi, window: &Window) {
         match debugger_ui.emulator_state {
             EmulatorState::Running => emulator.run_until_vsync(),
-            EmulatorState::StepOne => {
+            EmulatorState::Step => {
                 emulator.step();
                 debugger_ui.emulator_state = EmulatorState::Paused;
             }
             EmulatorState::RunUntilVsync => {
                 emulator.run_until_vsync();
+                debugger_ui.emulator_state = EmulatorState::Paused;
+            }
+            EmulatorState::RunUntilAddress(addr) => {
+                while emulator.cpu.pc != addr {
+                    emulator.step();
+                }
                 debugger_ui.emulator_state = EmulatorState::Paused;
             }
             EmulatorState::Paused => {}
@@ -239,7 +245,7 @@ impl RenderState {
                             .add_enabled(is_paused, egui::Button::new(format!("{} Step", icons::ICON_SKIP_NEXT)))
                             .clicked()
                         {
-                            debugger_ui.emulator_state = EmulatorState::StepOne;
+                            debugger_ui.emulator_state = EmulatorState::Step;
                             ui.close();
                         }
                         if ui
@@ -255,12 +261,18 @@ impl RenderState {
                         ui.checkbox(&mut debugger_ui.show_cpu, "CPU");
                         ui.checkbox(&mut debugger_ui.show_gx_state, "GX");
                         ui.checkbox(&mut debugger_ui.show_mmio, "MMIO");
+                        ui.checkbox(&mut debugger_ui.show_exi, "EXI");
+                        ui.checkbox(&mut debugger_ui.show_irqs, "IRQ");
+                        ui.checkbox(&mut debugger_ui.show_controls, "Controls");
                     });
                 });
             });
 
             if debugger_ui.show_cpu {
                 windows::cpu::show_cpu(&ctx, &mut debugger_ui.show_cpu, cpu, mmio);
+            }
+            if debugger_ui.show_controls {
+                windows::controls::show_controls(&ctx, &mut debugger_ui.show_controls, &mut debugger_ui.emulator_state);
             }
             if debugger_ui.show_gx_state {
                 windows::gx::show_gx(&ctx, &mut debugger_ui.show_gx_state, gx, mmio);
@@ -273,6 +285,12 @@ impl RenderState {
                     &mut debugger_ui.memory_addr_input,
                     mmio,
                 );
+            }
+            if debugger_ui.show_exi {
+                windows::exi::show_exi(&ctx, &mut debugger_ui.show_exi, &emulator.exi);
+            }
+            if debugger_ui.show_irqs {
+                windows::irq::show_irq(&ctx, &mut debugger_ui.show_irqs, &emulator.cpu, &emulator.pi);
             }
         });
 

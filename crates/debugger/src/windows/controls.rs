@@ -3,7 +3,7 @@ use egui_material_icons::icons;
 
 use crate::debugger::EmulatorState;
 
-pub fn show_controls(ctx: &Context, open: &mut bool, state: &mut EmulatorState, run_until_addr_input: &mut String) {
+pub fn show_controls(ctx: &Context, open: &mut bool, state: &mut EmulatorState) {
     egui::Window::new("Controls")
         .open(open)
         .resizable(false)
@@ -56,9 +56,10 @@ pub fn show_controls(ctx: &Context, open: &mut bool, state: &mut EmulatorState, 
             ui.separator();
 
             ui.horizontal(|ui| {
+                let mut run_until_addr_input = "";
                 let resp = ui.add_enabled(
                     is_paused,
-                    egui::TextEdit::singleline(run_until_addr_input)
+                    egui::TextEdit::singleline(&mut run_until_addr_input)
                         .hint_text("address")
                         .desired_width(80.0)
                         .font(egui::TextStyle::Monospace),
