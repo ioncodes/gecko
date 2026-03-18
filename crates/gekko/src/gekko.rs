@@ -84,6 +84,7 @@ impl Gekko {
         // => BS2 DOL, does not apply to the actual IPL here!!
 
         let mut gekko = Gekko::new(IPL_RESET_VECTOR, idle_skip);
+        gekko.cpu.msr.set_ip(true);
         gekko.mmio.ipl = ipl.to_vec();
         gekko.exi.attach_device(
             ExiMacronix::CHANNEL,
