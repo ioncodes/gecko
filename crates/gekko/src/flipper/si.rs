@@ -263,7 +263,7 @@ impl Si {
             match cmd {
                 // return 3-byte device ID
                 0x00 | 0xFF => {
-                    self.io_buffer[0] = (GC_CONTROLLER_ID) as u8;
+                    self.io_buffer[0] = (GC_CONTROLLER_ID >> 24) as u8;
                     self.io_buffer[1] = (GC_CONTROLLER_ID >> 16) as u8;
                     self.io_buffer[2] = (GC_CONTROLLER_ID >> 8) as u8;
                 }
