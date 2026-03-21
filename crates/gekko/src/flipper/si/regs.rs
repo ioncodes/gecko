@@ -154,25 +154,57 @@ impl MmioAccess<Si> for SiStatusRegister {
     fn write(self, si: &mut Si) {
         let mut status = si.status;
 
-        if self.norep0() { status = status.with_norep0(false); }
-        if self.coll0() { status = status.with_coll0(false); }
-        if self.ovrun0() { status = status.with_ovrun0(false); }
-        if self.unrun0() { status = status.with_unrun0(false); }
+        if self.norep0() {
+            status = status.with_norep0(false);
+        }
+        if self.coll0() {
+            status = status.with_coll0(false);
+        }
+        if self.ovrun0() {
+            status = status.with_ovrun0(false);
+        }
+        if self.unrun0() {
+            status = status.with_unrun0(false);
+        }
 
-        if self.norep1() { status = status.with_norep1(false); }
-        if self.coll1() { status = status.with_coll1(false); }
-        if self.ovrun1() { status = status.with_ovrun1(false); }
-        if self.unrun1() { status = status.with_unrun1(false); }
+        if self.norep1() {
+            status = status.with_norep1(false);
+        }
+        if self.coll1() {
+            status = status.with_coll1(false);
+        }
+        if self.ovrun1() {
+            status = status.with_ovrun1(false);
+        }
+        if self.unrun1() {
+            status = status.with_unrun1(false);
+        }
 
-        if self.norep2() { status = status.with_norep2(false); }
-        if self.coll2() { status = status.with_coll2(false); }
-        if self.ovrun2() { status = status.with_ovrun2(false); }
-        if self.unrun2() { status = status.with_unrun2(false); }
+        if self.norep2() {
+            status = status.with_norep2(false);
+        }
+        if self.coll2() {
+            status = status.with_coll2(false);
+        }
+        if self.ovrun2() {
+            status = status.with_ovrun2(false);
+        }
+        if self.unrun2() {
+            status = status.with_unrun2(false);
+        }
 
-        if self.norep3() { status = status.with_norep3(false); }
-        if self.coll3() { status = status.with_coll3(false); }
-        if self.ovrun3() { status = status.with_ovrun3(false); }
-        if self.unrun3() { status = status.with_unrun3(false); }
+        if self.norep3() {
+            status = status.with_norep3(false);
+        }
+        if self.coll3() {
+            status = status.with_coll3(false);
+        }
+        if self.ovrun3() {
+            status = status.with_ovrun3(false);
+        }
+        if self.unrun3() {
+            status = status.with_unrun3(false);
+        }
 
         if self.wr() {
             si.status = status;

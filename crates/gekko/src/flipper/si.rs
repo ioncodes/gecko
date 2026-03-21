@@ -52,11 +52,7 @@ impl Si {
             || (self.comcsr.rdst_interrupt() && self.comcsr.rdst_interrupt_mask())
     }
 
-    crate::impl_mmio_dispatch!(
-        regs::SiPoll,
-        regs::SiComcsr,
-        regs::SiStatusRegister,
-    );
+    crate::impl_mmio_dispatch!(regs::SiPoll, regs::SiComcsr, regs::SiStatusRegister,);
 
     pub fn mmio_read_u32(&mut self, offset: u32) -> u32 {
         match offset {
@@ -253,10 +249,7 @@ impl Si {
         }
 
         // Update RDST interrupt in COMCSR
-        let any_rdst = self.status.rdst0()
-            || self.status.rdst1()
-            || self.status.rdst2()
-            || self.status.rdst3();
+        let any_rdst = self.status.rdst0() || self.status.rdst1() || self.status.rdst2() || self.status.rdst3();
         self.comcsr = self.comcsr.with_rdst_interrupt(any_rdst);
     }
 

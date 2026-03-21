@@ -1,4 +1,4 @@
-use crate::cpu::{irq, spr::Srr0, sr::Sr};
+use crate::cpu::sr::Sr;
 
 pub fn msr<const OP: u32>(ctx: &mut crate::gekko::Gekko, instr: crate::cpu::semantics::Instruction) {
     match OP {

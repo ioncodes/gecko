@@ -544,14 +544,14 @@ fn update_pad(pad: &mut PadStatus, key: KeyCode, pressed: bool) {
         KeyCode::ArrowDown => pad.stick_y = if pressed { 0 } else { STICK_CENTER },
         KeyCode::ArrowLeft => pad.stick_x = if pressed { 0 } else { STICK_CENTER },
         KeyCode::ArrowRight => pad.stick_x = if pressed { 255 } else { STICK_CENTER },
-        
+
         // Face buttons
         KeyCode::KeyX => set_button(&mut pad.buttons, pad::A, pressed),
         KeyCode::KeyZ => set_button(&mut pad.buttons, pad::B, pressed),
         KeyCode::KeyC => set_button(&mut pad.buttons, pad::X, pressed),
         KeyCode::KeyV => set_button(&mut pad.buttons, pad::Y, pressed),
         KeyCode::Enter => set_button(&mut pad.buttons, pad::START, pressed),
-        
+
         // Triggers
         KeyCode::KeyA => {
             set_button(&mut pad.buttons, pad::L, pressed);
@@ -562,13 +562,13 @@ fn update_pad(pad: &mut PadStatus, key: KeyCode, pressed: bool) {
             pad.trigger_right = if pressed { 255 } else { 0 };
         }
         KeyCode::KeyD => set_button(&mut pad.buttons, pad::Z, pressed),
-        
+
         // D-pad
         KeyCode::KeyI => set_button(&mut pad.buttons, pad::DPAD_UP, pressed),
         KeyCode::KeyK => set_button(&mut pad.buttons, pad::DPAD_DOWN, pressed),
         KeyCode::KeyJ => set_button(&mut pad.buttons, pad::DPAD_LEFT, pressed),
         KeyCode::KeyL => set_button(&mut pad.buttons, pad::DPAD_RIGHT, pressed),
-        
+
         _ => {}
     }
 }

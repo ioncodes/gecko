@@ -51,7 +51,11 @@ impl Gekko {
     }
 
     pub fn cause_syscall_interrupt(&mut self) {
-        let base: u32 = if self.cpu.msr.exception_prefix() { 0xFFF0_0000 } else { 0 };
+        let base: u32 = if self.cpu.msr.exception_prefix() {
+            0xFFF0_0000
+        } else {
+            0
+        };
 
         self.cpu.spr.srr0 = Srr0::from(self.cpu.cia.wrapping_add(4));
         self.cpu.spr.srr1 = chapa::extract_bits!(self.cpu.msr; 0, 5..=9, 16..=31).raw();

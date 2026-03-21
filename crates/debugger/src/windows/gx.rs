@@ -81,10 +81,9 @@ pub fn show_gx(ctx: &Context, open: &mut bool, gx: &Gx, mmio: &Mmio) {
                                         let alpha = call.tev_alpha_env[stage];
 
                                         ui.collapsing(format!("Stage {stage}"), |ui| {
-                                            Grid::new(format!("tev_{i}_{stage}"))
-                                                .num_columns(2)
-                                                .striped(true)
-                                                .show(ui, |ui| {
+                                            Grid::new(format!("tev_{i}_{stage}")).num_columns(2).striped(true).show(
+                                                ui,
+                                                |ui| {
                                                     ui.label("Color A");
                                                     ui.monospace(format!("{}", color.a()));
                                                     ui.end_row();
@@ -116,7 +115,8 @@ pub fn show_gx(ctx: &Context, open: &mut bool, gx: &Gx, mmio: &Mmio) {
                                                     ui.label("Alpha Dest");
                                                     ui.monospace(format!("{}", alpha.dest()));
                                                     ui.end_row();
-                                                });
+                                                },
+                                            );
                                         });
                                     }
                                 });

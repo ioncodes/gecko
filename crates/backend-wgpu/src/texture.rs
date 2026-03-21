@@ -123,7 +123,9 @@ fn decode_i4(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], width: usize
                     };
 
                     let intensity = expand_to_8bit(nibble as u16, 15);
-                    put_pixel(rgba, width, pixel_x, pixel_y, intensity, intensity, intensity, intensity);
+                    put_pixel(
+                        rgba, width, pixel_x, pixel_y, intensity, intensity, intensity, intensity,
+                    );
                 }
             }
         }
@@ -156,7 +158,9 @@ fn decode_i8(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], width: usize
                     }
 
                     let intensity = ram[byte_offset];
-                    put_pixel(rgba, width, pixel_x, pixel_y, intensity, intensity, intensity, intensity);
+                    put_pixel(
+                        rgba, width, pixel_x, pixel_y, intensity, intensity, intensity, intensity,
+                    );
                 }
             }
         }

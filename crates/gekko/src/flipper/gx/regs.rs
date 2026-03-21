@@ -298,10 +298,18 @@ impl VatA {
             AttributeType::None => 0,
             AttributeType::Direct => self.nrm_data_size(),
             AttributeType::Index8 => {
-                if self.nrm_index3() && self.nrm_cnt() == NrmCount::Nbt { 3 } else { 1 }
+                if self.nrm_index3() && self.nrm_cnt() == NrmCount::Nbt {
+                    3
+                } else {
+                    1
+                }
             }
             AttributeType::Index16 => {
-                if self.nrm_index3() && self.nrm_cnt() == NrmCount::Nbt { 6 } else { 2 }
+                if self.nrm_index3() && self.nrm_cnt() == NrmCount::Nbt {
+                    6
+                } else {
+                    2
+                }
             }
         }
     }

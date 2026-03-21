@@ -490,8 +490,7 @@ impl GxRenderer {
             let draw_uniform = DrawUniforms { mvp: mvp.0 };
             let start = self.scratch_draws.len() * draw_stride;
             self.scratch_uniform_bytes.resize(start + draw_stride, 0);
-            self.scratch_uniform_bytes[start..start + draw_size]
-                .copy_from_slice(bytemuck::bytes_of(&draw_uniform));
+            self.scratch_uniform_bytes[start..start + draw_size].copy_from_slice(bytemuck::bytes_of(&draw_uniform));
 
             let alpha_cmp = dc.bp_alpha_compare;
             let frame_uniform = FrameUniforms {
@@ -509,8 +508,7 @@ impl GxRenderer {
             };
             let fstart = self.scratch_draws.len() * frame_stride;
             frame_uniform_bytes.resize(fstart + frame_stride, 0);
-            frame_uniform_bytes[fstart..fstart + frame_size]
-                .copy_from_slice(bytemuck::bytes_of(&frame_uniform));
+            frame_uniform_bytes[fstart..fstart + frame_size].copy_from_slice(bytemuck::bytes_of(&frame_uniform));
 
             self.scratch_draws.push((prev_len as u32, added as u32));
             draw_call_indices.push(dc_idx);
@@ -545,11 +543,7 @@ impl GxRenderer {
 
         queue.write_buffer(&self.frame_uniform_buffer, 0, &frame_uniform_bytes);
         queue.write_buffer(&self.draw_uniform_buffer, 0, &self.scratch_uniform_bytes);
-        queue.write_buffer(
-            &self.vertex_buffer,
-            0,
-            bytemuck::cast_slice(&self.scratch_vertices),
-        );
+        queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.scratch_vertices));
 
         let mut encoder = device.create_command_encoder(&Default::default());
         {
@@ -578,9 +572,7 @@ impl GxRenderer {
             });
             rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
-            for (index, (first_vertex, vertex_count)) in
-                self.scratch_draws.iter().copied().enumerate()
-            {
+            for (index, (first_vertex, vertex_count)) in self.scratch_draws.iter().copied().enumerate() {
                 let dc = &commands.commands[draw_call_indices[index]];
                 let pipeline_key = PipelineKey::from_draw_call(dc);
                 let pipeline = &self.pipeline_cache[&pipeline_key];
@@ -588,18 +580,13 @@ impl GxRenderer {
 
                 let (tex_view, sampler) = if let Some(desc) = &dc.textures[0] {
                     let tex_key = (desc.ram_addr, desc.width, desc.height, desc.format);
-                    let sampler_key =
-                        (desc.wrap_s, desc.wrap_t, desc.mag_filter, desc.min_filter);
-                    (
-                        &self.texture_cache[&tex_key].1,
-                        &self.sampler_cache[&sampler_key],
-                    )
+                    let sampler_key = (desc.wrap_s, desc.wrap_t, desc.mag_filter, desc.min_filter);
+                    (&self.texture_cache[&tex_key].1, &self.sampler_cache[&sampler_key])
                 } else {
                     (&self.fallback_view, &self.sampler_cache[&fallback_sampler_key])
                 };
 
-                let frame_offset =
-                    (index as u64 * frame_stride as u64) as wgpu::BufferAddress;
+                let frame_offset = (index as u64 * frame_stride as u64) as wgpu::BufferAddress;
                 let draw_offset = (index as u64 * self.draw_uniform_stride) as u32;
 
                 let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -611,9 +598,7 @@ impl GxRenderer {
                             resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                                 buffer: &self.frame_uniform_buffer,
                                 offset: frame_offset,
-                                size: wgpu::BufferSize::new(
-                                    std::mem::size_of::<FrameUniforms>() as u64,
-                                ),
+                                size: wgpu::BufferSize::new(std::mem::size_of::<FrameUniforms>() as u64),
                             }),
                         },
                         wgpu::BindGroupEntry {
@@ -621,9 +606,7 @@ impl GxRenderer {
                             resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                                 buffer: &self.draw_uniform_buffer,
                                 offset: 0,
-                                size: wgpu::BufferSize::new(
-                                    std::mem::size_of::<DrawUniforms>() as u64,
-                                ),
+                                size: wgpu::BufferSize::new(std::mem::size_of::<DrawUniforms>() as u64),
                             }),
                         },
                         wgpu::BindGroupEntry {
