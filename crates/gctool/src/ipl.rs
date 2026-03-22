@@ -118,5 +118,5 @@ pub fn process_ipl(file: &str, output: Option<&str>, action: IplAction) {
     });
 
     let state = if is_encoded(&data) { "encoded" } else { "decoded" };
-    eprintln!("  output ({state}): {out_path}");
+    println!("  output ({state}): {out_path}");
 }
