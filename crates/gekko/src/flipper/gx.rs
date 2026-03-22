@@ -847,7 +847,7 @@ impl Gx {
 
         // Dual texgen post-transform (normalization + post-matrix multiply)
         let dual_tex_enabled = self.xf_mem[XF_DUAL_TEX_ENABLE] != 0;
-        if dual_tex_enabled {
+        let (s, t, q) = if dual_tex_enabled {
             let post_base = XF_POST_MTX_BASE + dt.post_mtx_idx() as usize * 4;
             // Normalize (s, t, q) only if dt.normalize() is set
             let (ns, nt, nq) = if dt.normalize() {
@@ -865,9 +865,17 @@ impl Gx {
                 + self.xf_f32(post_base + 5) * nt
                 + self.xf_f32(post_base + 6) * nq
                 + self.xf_f32(post_base + 7);
-            [ps, pt]
-        } else if q.abs() < f32::EPSILON {
-            // Weird quirk from Dolphin (VertexShaderGen.cpp), affects neheGX lesson 8
+            let pq = self.xf_f32(post_base + 8) * ns
+                + self.xf_f32(post_base + 9) * nt
+                + self.xf_f32(post_base + 10) * nq
+                + self.xf_f32(post_base + 11);
+            (ps, pt, pq)
+        } else {
+            (s, t, q)
+        };
+
+        // When q is 0, the GameCube has a special case (Dolphin VertexShaderGen.cpp)
+        if q.abs() < f32::EPSILON {
             [(s / 2.0).clamp(-1.0, 1.0), (t / 2.0).clamp(-1.0, 1.0)]
         } else {
             [s / q, t / q]
