@@ -52,6 +52,9 @@ pub enum Command {
     Iso {
         /// Input ISO file
         file: String,
+        /// Extract files from the ISO to an "output" directory
+        #[arg(long)]
+        extract: bool,
     },
 }
 

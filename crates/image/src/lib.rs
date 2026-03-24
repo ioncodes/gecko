@@ -65,6 +65,17 @@ impl Dol {
     }
 }
 
+impl Dol {
+    pub fn size(&self) -> usize {
+        self.text_sections
+            .iter()
+            .chain(self.data_sections.iter())
+            .map(|s| (s.offset + s.size) as usize)
+            .max()
+            .unwrap_or(0)
+    }
+}
+
 impl Executable for Dol {
     fn text_sections(&self) -> &[Section] {
         &self.text_sections

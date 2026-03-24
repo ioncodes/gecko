@@ -1,6 +1,8 @@
 use zerocopy::byteorder::big_endian::U32;
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
+use crate::{Dol, Executable, Section};
+
 pub const DVD_HEADER_SIZE: usize = 0x440;
 pub const DVD_HEADER_INFO_SIZE: usize = 0x2000;
 pub const DVD_APPLOADER_SIZE: usize = 0x2000;
@@ -55,11 +57,11 @@ pub struct Apploader {
     pub size: U32,
     pub trailer_size: U32,
     _unused1: [u8; 4],
-    pub apploader_code: [u8; DVD_APPLOADER_SIZE - 0x20],
+    pub code: [u8; DVD_APPLOADER_SIZE - 0x20],
 }
 
 pub enum FstNode {
-    File { name: String, dvd_offset: u32, size: u32 },
+    File { name: String, offset: u32, size: u32 },
     Directory { name: String, children: Vec<FstNode> },
 }
 
@@ -91,7 +93,7 @@ impl FstNode {
             if flags == 0 {
                 entries.push(Self::File {
                     name,
-                    dvd_offset: offset,
+                    offset,
                     size: length,
                 });
             } else {
@@ -126,6 +128,8 @@ pub struct Dvd {
     pub header_info: HeaderInfo,
     pub apploader: Apploader,
     pub filesystem: FstNode,
+    data: Vec<u8>,
+    sections: Vec<Section>,
 }
 
 impl Dvd {
@@ -141,11 +145,48 @@ impl Dvd {
         let fst_end = fst_start + header.filesystem_size.get() as usize;
         let filesystem = FstNode::parse(&data[fst_start..fst_end]);
 
+        let apploader_section = Section {
+            offset: DVD_APPLOADER_OFFSET as u32,
+            vaddr: 0x81200000,
+            size: apploader.size.get(),
+        };
+
+        let main_dol = Dol::parse(data[header.offset_main_executable.get() as usize..].to_vec());
+        let main_section = Section {
+            offset: header.offset_main_executable.get(),
+            vaddr: main_dol.entry_point(),
+            size: main_dol.size() as u32,
+        };
+
         Dvd {
             header,
             header_info,
             apploader,
             filesystem,
+            data,
+            sections: vec![apploader_section, main_section],
         }
+    }
+}
+
+impl Executable for Dvd {
+    fn entry_point(&self) -> u32 {
+        self.apploader.entrypoint.get()
+    }
+
+    fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    fn text_sections(&self) -> &[crate::Section] {
+        &self.sections
+    }
+
+    fn data_sections(&self) -> &[crate::Section] {
+        &[]
+    }
+
+    fn bss(&self) -> (u32, u32) {
+        (0, 0)
     }
 }

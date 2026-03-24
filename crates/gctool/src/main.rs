@@ -46,8 +46,12 @@ fn main() {
         Command::Ipl { action, file, output } => {
             ipl::process(file, output.as_deref(), *action);
         }
-        Command::Iso { file } => {
-            iso::info(read_file_or_exit(file));
+        Command::Iso { file, extract } => {
+            if *extract {
+                iso::extract(read_file_or_exit(file));
+            } else {
+                iso::info(read_file_or_exit(file));
+            }
         }
     }
 }
