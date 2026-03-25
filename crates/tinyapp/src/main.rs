@@ -489,6 +489,8 @@ fn main() {
         .position(|a| a == "--rom")
         .map(|i| &args[i + 1])
         .or_else(|| args.get(1).filter(|a| !a.starts_with("--")));
+    #[cfg(feature = "scripting")]
+    let script_path = args.iter().position(|a| a == "--script").map(|i| &args[i + 1]);
 
     let no_ansi = std::env::args().any(|arg| arg == "--no-ansi");
 
@@ -515,6 +517,12 @@ fn main() {
         );
         std::process::exit(1);
     };
+
+    #[cfg(feature = "scripting")]
+    if let Some(path) = script_path {
+        let host = scripting::LuaScriptHost::from_file(path).expect("failed to load script");
+        emulator.set_script_host(Box::new(host));
+    }
 
     // Channel 0 always has a controller connected
     emulator.add_primary_controller(PadStatus {

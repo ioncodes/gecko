@@ -1,4 +1,7 @@
-use image::{Executable, dvd::{DVD_APPLOADER_OFFSET, FstNode}};
+use image::{
+    Executable,
+    dvd::{DVD_APPLOADER_OFFSET, FstNode},
+};
 use owo_colors::OwoColorize;
 use termtree::Tree;
 

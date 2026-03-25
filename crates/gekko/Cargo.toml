@@ -3,6 +3,10 @@ name = "gekko"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+scripting = []
+scripting-mut-traps = ["scripting"]
+
 [build-dependencies]
 chipi = "0.5.3"
 

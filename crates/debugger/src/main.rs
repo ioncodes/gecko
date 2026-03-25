@@ -88,6 +88,7 @@ fn main() {
         .position(|a| a == "--rom")
         .map(|i| &args[i + 1])
         .or_else(|| args.get(1).filter(|a| !a.starts_with("--")));
+    let script_path = args.iter().position(|a| a == "--script").map(|i| &args[i + 1]);
 
     let mut emulator = if let Some(ipl) = ipl_path {
         let ipl_data = std::fs::read(ipl).expect("failed to read IPL");
@@ -103,6 +104,11 @@ fn main() {
         );
         std::process::exit(1);
     };
+
+    if let Some(path) = script_path {
+        let host = scripting::LuaScriptHost::from_file(path).expect("failed to load script");
+        emulator.set_script_host(Box::new(host));
+    }
 
     emulator.add_primary_controller(PadStatus {
         connected: true,

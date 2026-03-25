@@ -1,0 +1,12 @@
+[package]
+name = "scripting"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+scripting-mut-traps = ["gekko/scripting-mut-traps"]
+
+[dependencies]
+gekko = { path = "../gekko", features = ["scripting"] }
+mlua = { version = "0.10", features = ["lua54", "send"] }
+tracing = "0.1"

@@ -9,6 +9,7 @@ members = [
     "crates/tinyapp",
     "crates/backend-wgpu",
     "crates/debugger",
+    "crates/scripting",
 ]
 
 [patch.crates-io]
@@ -24,6 +25,15 @@ lto = "fat"
 codegen-units = 1
 debug = false
 opt-level = 3
+debug-assertions = false
 
 [profile.dev]
+debug = true
 opt-level = 3
+debug-assertions = false
+
+[profile.fast]
+inherits = "dev"
+debug-assertions = true
+opt-level = 3
+lto = false

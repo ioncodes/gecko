@@ -1,3 +1,5 @@
+#[cfg(feature = "scripting")]
+use crate::scripting::{HookFlags, ScriptHookFilters, ScriptHookState, ScriptHost};
 use crate::{
     cpu::{self, Cpu, IPL_RESET_VECTOR, semantics::Instruction},
     exi::{Exi, macronix::ExiMacronix},
@@ -36,9 +38,37 @@ pub struct Gekko {
     pub ai: Ai,
     pub mi: Mi,
     idle: IdleDetector,
+
+    #[cfg(feature = "scripting")]
+    pub script_host: Option<Box<dyn ScriptHost>>,
+    #[cfg(feature = "scripting")]
+    pub script_hook_flags: HookFlags,
+    #[cfg(feature = "scripting")]
+    pub script_hook_filters: ScriptHookFilters,
 }
 
 impl Gekko {
+    #[cfg(feature = "scripting")]
+    #[inline(always)]
+    pub(crate) fn apply_script_hook_state(&mut self, state: ScriptHookState) {
+        self.script_hook_flags = state.flags;
+        self.script_hook_filters = state.filters;
+    }
+
+    #[cfg(feature = "scripting")]
+    #[inline(always)]
+    pub(crate) fn sync_pending_script_hook_state(&mut self, host: &mut dyn ScriptHost) {
+        #[cfg(feature = "scripting-mut-traps")]
+        match host.take_pending_hook_state() {
+            Ok(Some(state)) => self.apply_script_hook_state(state),
+            Ok(None) => {}
+            Err(err) => tracing::error!(target: "script", error = %err, "failed to refresh script traps"),
+        }
+
+        #[cfg(not(feature = "scripting-mut-traps"))]
+        let _ = host;
+    }
+
     pub fn new(entrypoint: u32, idle_skip: bool) -> Self {
         Gekko {
             vsync_pending: false,
@@ -57,6 +87,13 @@ impl Gekko {
             ai: Ai::new(),
             mi: Mi::new(),
             idle: IdleDetector::new(idle_skip),
+
+            #[cfg(feature = "scripting")]
+            script_host: None,
+            #[cfg(feature = "scripting")]
+            script_hook_flags: HookFlags::empty(),
+            #[cfg(feature = "scripting")]
+            script_hook_filters: ScriptHookFilters::default(),
         }
     }
 
@@ -153,12 +190,38 @@ impl Gekko {
         //     self.cpu.pc += 4;
         // }
 
+        // CPU pre-hook
+        #[cfg(feature = "scripting")]
+        if self.script_hook_flags.contains(HookFlags::CPU_PRE) {
+            let pc = self.cpu.pc;
+            if self.script_hook_filters.cpu_pre.matches(pc) {
+                if let Some(mut host) = self.script_host.take() {
+                    host.on_cpu_pre(self);
+                    self.sync_pending_script_hook_state(host.as_mut());
+                    self.script_host = Some(host);
+                }
+            }
+        }
+
         // Fetch and execute next instruction
         self.cpu.cia = self.cpu.pc;
         self.cpu.nia = self.cpu.cia.wrapping_add(4);
         let instr = Instruction(self.mmio.fetch_instruction(self.cpu.cia));
         cpu::lut::dispatch(self, instr);
         self.scheduler.cycles += 1;
+
+        // CPU post-hook
+        #[cfg(feature = "scripting")]
+        if self.script_hook_flags.contains(HookFlags::CPU_POST) {
+            let pc = self.cpu.cia;
+            if self.script_hook_filters.cpu_post.matches(pc) {
+                if let Some(mut host) = self.script_host.take() {
+                    host.on_cpu_post(self);
+                    self.sync_pending_script_hook_state(host.as_mut());
+                    self.script_host = Some(host);
+                }
+            }
+        }
 
         match self.idle.check(self.cpu.cia, self.cpu.nia) {
             IdleCheck::Skip => {
@@ -200,6 +263,32 @@ impl Gekko {
             buf[i] = self.mmio.fetch_instruction(start + (i as u32) * 4);
         }
         crate::idle::validate_polling_loop(&buf[..count.min(buf.len())], &self.cpu.gprs)
+    }
+
+    #[cfg(feature = "scripting")]
+    pub fn set_script_host(&mut self, host: Box<dyn ScriptHost>) {
+        self.apply_script_hook_state(host.hook_state());
+        self.script_host = Some(host);
+    }
+
+    #[cfg(all(feature = "scripting", feature = "scripting-mut-traps"))]
+    pub fn refresh_script_traps(&mut self) -> Result<(), String> {
+        let Some(mut host) = self.script_host.take() else {
+            return Ok(());
+        };
+
+        let refresh_result = host.force_refresh_traps();
+        match refresh_result {
+            Ok(state) => {
+                self.apply_script_hook_state(state);
+                self.script_host = Some(host);
+                Ok(())
+            }
+            Err(err) => {
+                self.script_host = Some(host);
+                Err(err)
+            }
+        }
     }
 
     pub fn frame_size(&self) -> (usize, usize) {
