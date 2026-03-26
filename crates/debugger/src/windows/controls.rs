@@ -1,5 +1,5 @@
 use egui::Context;
-use egui_material_icons::icons;
+use egui_phosphor::regular as icons;
 
 use crate::debugger::EmulatorState;
 
@@ -9,6 +9,9 @@ pub fn show_controls(
     state: &mut EmulatorState,
     run_until_addr_input: &mut String,
     dvd_cover_open: &mut Option<bool>,
+    tracing: bool,
+    start_trace: &mut bool,
+    stop_trace: &mut bool,
 ) {
     egui::Window::new("Controls")
         .open(open)
@@ -25,7 +28,7 @@ pub fn show_controls(
             if ui
                 .add_enabled(
                     is_paused,
-                    egui::Button::new(format!("{} Continue", icons::ICON_PLAY_ARROW)).min_size(btn_size),
+                    egui::Button::new(format!("{} Continue", icons::PLAY)).min_size(btn_size),
                 )
                 .clicked()
             {
@@ -35,7 +38,7 @@ pub fn show_controls(
             if ui
                 .add_enabled(
                     is_running,
-                    egui::Button::new(format!("{} Pause", icons::ICON_PAUSE)).min_size(btn_size),
+                    egui::Button::new(format!("{} Pause", icons::PAUSE)).min_size(btn_size),
                 )
                 .clicked()
             {
@@ -45,7 +48,7 @@ pub fn show_controls(
             if ui
                 .add_enabled(
                     is_paused,
-                    egui::Button::new(format!("{} Step", icons::ICON_SKIP_NEXT)).min_size(btn_size),
+                    egui::Button::new(format!("{} Step", icons::SKIP_FORWARD)).min_size(btn_size),
                 )
                 .clicked()
             {
@@ -53,7 +56,7 @@ pub fn show_controls(
             }
 
             if ui
-                .add(egui::Button::new(format!("{} Run Until VSync", icons::ICON_FAST_FORWARD)).min_size(btn_size))
+                .add(egui::Button::new(format!("{} Run Until VSync", icons::FAST_FORWARD)).min_size(btn_size))
                 .clicked()
             {
                 *state = EmulatorState::RunUntilVsync;
@@ -69,7 +72,7 @@ pub fn show_controls(
                     .show(ui);
 
                 if ui
-                    .add(egui::Button::new(format!("{} Run", icons::ICON_PLAY_ARROW)))
+                    .add(egui::Button::new(format!("{} Run", icons::PLAY)))
                     .clicked()
                 {
                     let s = run_until_addr_input.trim().trim_start_matches("0x");
@@ -82,17 +85,38 @@ pub fn show_controls(
             ui.separator();
 
             if ui
-                .add(egui::Button::new(format!("{} Open Cover", icons::ICON_EJECT)).min_size(btn_size))
+                .add(egui::Button::new(format!("{} Open Cover", icons::EJECT)).min_size(btn_size))
                 .clicked()
             {
                 *dvd_cover_open = Some(true);
             }
 
             if ui
-                .add(egui::Button::new(format!("{} Close Cover", icons::ICON_DISC_FULL)).min_size(btn_size))
+                .add(egui::Button::new(format!("{} Close Cover", icons::DISC)).min_size(btn_size))
                 .clicked()
             {
                 *dvd_cover_open = Some(false);
+            }
+
+            ui.separator();
+
+            if !tracing {
+                if ui
+                    .add(
+                        egui::Button::new(format!("{} Start Trace", icons::RECORD))
+                            .min_size(btn_size),
+                    )
+                    .clicked()
+                {
+                    *start_trace = true;
+                }
+            } else {
+                if ui
+                    .add(egui::Button::new(format!("{} Stop Trace", icons::STOP)).min_size(btn_size))
+                    .clicked()
+                {
+                    *stop_trace = true;
+                }
             }
         });
 }

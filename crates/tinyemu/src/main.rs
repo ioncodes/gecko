@@ -19,6 +19,10 @@ struct Args {
     #[arg(long)]
     ipl: Option<String>,
 
+    /// Path to a GameCube ISO file
+    #[arg(long)]
+    iso: Option<String>,
+
     /// Print decoded instructions and register diffs after each step
     #[arg(long)]
     debug: bool,
@@ -42,6 +46,11 @@ struct Args {
     /// Disable ANSI escape codes
     #[arg(long)]
     no_ansi: bool,
+
+    /// Path to a Lua script for scripting hooks
+    #[cfg(feature = "scripting")]
+    #[arg(long)]
+    script: Option<String>,
 }
 
 fn parse_hex_addr(s: &str) -> Result<u32, String> {
@@ -70,6 +79,21 @@ fn main() {
     } else {
         panic!("Either --rom or --ipl must be provided");
     };
+
+    if let Some(iso_path) = &args.iso {
+        if args.ipl.is_none() {
+            panic!("--iso requires --ipl");
+        }
+        let iso_data = std::fs::read(iso_path).expect("failed to read ISO");
+        let dvd = image::dvd::Dvd::parse(iso_data);
+        emulator.insert_dvd(dvd);
+    }
+
+    #[cfg(feature = "scripting")]
+    if let Some(path) = &args.script {
+        let host = scripting::LuaScriptHost::from_file(path).expect("failed to load script");
+        emulator.set_script_host(Box::new(host));
+    }
 
     let symbols = args.elf.as_ref().map(|path| {
         let elf_data = std::fs::read(path).expect("failed to read ELF file");

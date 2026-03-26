@@ -1,5 +1,4 @@
 use egui::{Context, Grid, RichText, ScrollArea};
-use egui_material_icons::icons;
 use gecko::flipper::gx::GraphicsProcessor;
 use gecko::flipper::gx::draw::TextureDescriptor;
 use gecko::mmio::Mmio;
@@ -182,7 +181,7 @@ pub fn show_gx(ctx: &Context, open: &mut bool, gx: &GraphicsProcessor, mmio: &Mm
                                 if call.vertices.len() > preview {
                                     ui.label(format!(
                                         "{} {} more vertices",
-                                        icons::ICON_MORE_HORIZ,
+                                        egui_phosphor::regular::DOTS_THREE,
                                         call.vertices.len() - preview,
                                     ));
                                 }

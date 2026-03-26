@@ -637,9 +637,9 @@ dependencies = [
  "backend-wgpu",
  "disasm",
  "egui",
+ "egui-phosphor",
  "egui-wgpu",
  "egui-winit",
- "egui_material_icons",
  "gecko",
  "image 0.1.0",
  "pollster",
@@ -740,6 +740,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-phosphor"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3b2838620355debaeb7fa3cc331a1d8ab77e6387d40e65686fa468c229dbf63"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "egui-wgpu"
 version = "0.33.3"
 source = "git+https://github.com/ioncodes/egui.git#5aeebf13a9d68f49766273104fbde0a5ab6e38fc"
@@ -774,15 +783,6 @@ dependencies = [
  "web-time",
  "webbrowser",
  "winit",
-]
-
-[[package]]
-name = "egui_material_icons"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ff7d3715b5ee29fe75afd19420756b3e0a970149b62712af1b3204a68e2012b"
-dependencies = [
- "egui",
 ]
 
 [[package]]
@@ -2769,6 +2769,7 @@ dependencies = [
  "disasm",
  "gecko",
  "image 0.1.0",
+ "scripting",
  "tracing-subscriber",
 ]
 

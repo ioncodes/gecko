@@ -3,7 +3,7 @@ use egui_plot::{Line, Plot, PlotPoints};
 use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER};
 use gecko::flipper::vi::regs::RefreshRate;
 use gecko::gamecube::GameCube;
-use image::Dol;
+use image::{Dol, dvd::Dvd};
 use std::collections::VecDeque;
 use std::env;
 use std::sync::Arc;
@@ -489,6 +489,7 @@ fn main() {
         .position(|a| a == "--rom")
         .map(|i| &args[i + 1])
         .or_else(|| args.get(1).filter(|a| !a.starts_with("--")));
+    let iso_path = args.iter().position(|a| a == "--iso").map(|i| &args[i + 1]);
     #[cfg(feature = "scripting")]
     let script_path = args.iter().position(|a| a == "--script").map(|i| &args[i + 1]);
 
@@ -512,11 +513,21 @@ fn main() {
         GameCube::with_image(&dol, idle_skip)
     } else {
         eprintln!(
-            "usage: {} <path/to/game.dol> | --ipl <path> | --rom <path> [--immediate] [--idle-skip]",
+            "usage: {} <path/to/game.dol> | --ipl <path> | --rom <path> [--iso <path>] [--immediate] [--idle-skip]",
             args[0]
         );
         std::process::exit(1);
     };
+
+    if let Some(iso) = iso_path {
+        if ipl_path.is_none() {
+            eprintln!("--iso requires --ipl");
+            std::process::exit(1);
+        }
+        let iso_data = std::fs::read(iso).expect("failed to read ISO");
+        let dvd = Dvd::parse(iso_data);
+        emulator.insert_dvd(dvd);
+    }
 
     #[cfg(feature = "scripting")]
     if let Some(path) = script_path {

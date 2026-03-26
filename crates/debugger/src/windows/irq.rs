@@ -1,5 +1,4 @@
 use egui::{Align, Color32, Context, Grid, Layout, RichText};
-use egui_material_icons::icons;
 use gecko::cpu::Cpu;
 use gecko::flipper::pi::ProcessorInterface;
 
@@ -17,15 +16,15 @@ fn interrupt_row(ui: &mut egui::Ui, name: &str, pending: bool, masked: bool) {
     };
 
     let (pending_icon, pending_color) = if pending {
-        (icons::ICON_RADIO_BUTTON_CHECKED, Color32::from_rgb(255, 180, 60))
+        (egui_phosphor::regular::CHECK_CIRCLE, Color32::from_rgb(255, 180, 60))
     } else {
-        (icons::ICON_RADIO_BUTTON_UNCHECKED, Color32::from_rgb(70, 70, 70))
+        (egui_phosphor::regular::CIRCLE, Color32::from_rgb(70, 70, 70))
     };
 
     let (mask_icon, mask_color) = if masked {
-        (icons::ICON_CHECK_BOX, Color32::from_rgb(100, 180, 255))
+        (egui_phosphor::regular::CHECK_SQUARE, Color32::from_rgb(100, 180, 255))
     } else {
-        (icons::ICON_CHECK_BOX_OUTLINE_BLANK, Color32::from_rgb(70, 70, 70))
+        (egui_phosphor::regular::SQUARE, Color32::from_rgb(70, 70, 70))
     };
 
     ui.label(RichText::new(name).color(name_color));
@@ -48,9 +47,9 @@ pub fn show_irq(ctx: &Context, open: &mut bool, cpu: &Cpu, pi: &ProcessorInterfa
                 ui.label("MSR.EE");
                 ui.horizontal(|ui| {
                     let (icon, color) = if ee {
-                        (icons::ICON_CHECK_CIRCLE, Color32::from_rgb(80, 220, 80))
+                        (egui_phosphor::regular::CHECK_CIRCLE, Color32::from_rgb(80, 220, 80))
                     } else {
-                        (icons::ICON_CANCEL, Color32::from_rgb(200, 60, 60))
+                        (egui_phosphor::regular::X_CIRCLE, Color32::from_rgb(200, 60, 60))
                     };
                     ui.label(RichText::new(icon).color(color));
                     ui.label(if ee {

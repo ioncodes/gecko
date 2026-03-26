@@ -271,6 +271,7 @@ impl GameCube {
                 }
                 BusTarget::Di       => {
                     self.di.mmio_write_u8(offset, val);
+                    self.start_dvd_transfer();
                     self.check_di_interrupts();
                 }
                 BusTarget::Si       => {
@@ -336,6 +337,7 @@ impl GameCube {
                 }
                 BusTarget::Di       => {
                     self.di.mmio_write_u16(offset, val);
+                    self.start_dvd_transfer();
                     self.check_di_interrupts();
                 }
                 BusTarget::Si       => {
@@ -402,6 +404,7 @@ impl GameCube {
                 }
                 BusTarget::Di       => {
                     self.di.mmio_write_u32(offset, val);
+                    self.start_dvd_transfer();
                     self.check_di_interrupts();
                 }
                 BusTarget::Si       => {

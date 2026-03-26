@@ -249,8 +249,7 @@ impl GameCube {
             let ticks_per_hl = self.vi.ticks_per_half_line();
             if ticks_per_hl > 0 {
                 self.vi.half_line_scheduled = true;
-                let next = self.scheduler.cycles + ticks_per_hl;
-                self.scheduler.schedule_at(next, EventKind::ViHalfLine);
+                self.scheduler.schedule_in(ticks_per_hl, EventKind::ViHalfLine);
             }
         }
     }

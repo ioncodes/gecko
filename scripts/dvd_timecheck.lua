@@ -10,5 +10,10 @@ end
 traps = {
     cpu_pre = {
         [0x81300BD8] = timebase_log,
-    }
+    },
+    bus_write_pre = {
+        virt = {
+             [0x8145d548] = timebase_log,
+        },
+    },
 }

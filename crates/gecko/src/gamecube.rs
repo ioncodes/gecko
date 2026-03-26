@@ -155,21 +155,23 @@ impl GameCube {
         emulator
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn step(&mut self) {
         // Fire any events that are due
         while let Some(event) = self.scheduler.poll() {
             match event {
                 EventKind::VSync => {
                     self.vsync_pending = true;
-                    let next = self.scheduler.cycles + CYCLES_PER_VSYNC;
-                    self.scheduler.schedule_at(next, EventKind::VSync);
+                    self.scheduler.schedule_in(CYCLES_PER_VSYNC, EventKind::VSync);
                 }
                 EventKind::ViHalfLine => {
                     self.vi.on_half_line(self.scheduler.cycles);
                     self.vi.half_line_scheduled = false;
                     self.maybe_schedule_vi_half_line();
                     self.check_vi_interrupts();
+                }
+                EventKind::DiTransferComplete => {
+                    self.complete_dvd_transfer();
                 }
             }
         }
@@ -180,15 +182,6 @@ impl GameCube {
             self.scheduler.cycles += 1;
             return;
         }
-
-        // TODO: hack IPL state machine
-        // if self.cpu.pc == 0x81301284 {
-        //     self.cpu.pc += 4;
-        // }
-
-        // if self.cpu.pc == 0x81300BD8 {
-        //     self.cpu.pc += 4;
-        // }
 
         // CPU pre-hook
         #[cfg(feature = "scripting")]
@@ -244,11 +237,15 @@ impl GameCube {
         self.cpu.pc = self.cpu.nia;
     }
 
-    pub fn run_until_vsync(&mut self) {
+    #[inline(always)]
+    pub fn prepare_frame(&mut self) {
         self.vsync_pending = false;
-        // Update SI controller input at the start of each frame
         self.si.update_polling();
         self.check_si_interrupts();
+    }
+
+    pub fn run_until_vsync(&mut self) {
+        self.prepare_frame();
         while !self.vsync_pending {
             self.step();
         }
@@ -256,6 +253,7 @@ impl GameCube {
 
     /// Read the instructions in `[start, end]` and check whether the loop is a
     /// side effect free MMIO polling loop that can safely be skipped.
+    #[inline(always)]
     fn is_polling_loop(&self, start: u32, end: u32) -> bool {
         let count = ((end - start) / 4 + 1) as usize;
         let mut buf = [0u32; IDLE_LOOP_MAX_INSTRS];

@@ -8,6 +8,7 @@ pub const TIMEBASE_DIVISOR: u64 = 12;
 pub enum EventKind {
     VSync,
     ViHalfLine,
+    DiTransferComplete,
 }
 
 pub struct Scheduler {
@@ -53,6 +54,11 @@ impl Scheduler {
 
     pub fn schedule_at(&mut self, deadline: u64, kind: EventKind) {
         self.events.push(Reverse((deadline, kind)));
+    }
+
+    pub fn schedule_in(&mut self, delay: u64, kind: EventKind) {
+        let deadline = self.cycles + delay;
+        self.schedule_at(deadline, kind);
     }
 
     pub fn poll(&mut self) -> Option<EventKind> {

@@ -10,7 +10,7 @@ use winit::{
 
 use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER};
 use gecko::gamecube::GameCube;
-use image::Dol;
+use image::{Dol, dvd::Dvd};
 
 use crate::debugger::DebuggerUi;
 use crate::render::RenderState;
@@ -95,6 +95,7 @@ fn main() {
         .position(|a| a == "--rom")
         .map(|i| &args[i + 1])
         .or_else(|| args.get(1).filter(|a| !a.starts_with("--")));
+    let iso_path = args.iter().position(|a| a == "--iso").map(|i| &args[i + 1]);
     let script_path = args.iter().position(|a| a == "--script").map(|i| &args[i + 1]);
 
     let mut emulator = if let Some(ipl) = ipl_path {
@@ -106,11 +107,22 @@ fn main() {
         GameCube::with_image(&dol, idle_skip)
     } else {
         eprintln!(
-            "usage: {} <path/to/game.dol> | --ipl <path> | --rom <path> [--immediate] [--idle-skip]",
+            "usage: {} <path/to/game.dol> | --ipl <path> | --rom <path> [--iso <path>] [--immediate] [--idle-skip]",
             args[0]
         );
         std::process::exit(1);
     };
+
+    if let Some(iso) = iso_path {
+        if ipl_path.is_none() {
+            eprintln!("--iso requires --ipl");
+            std::process::exit(1);
+        }
+
+        let iso_data = std::fs::read(iso).expect("failed to read ISO");
+        let dvd = Dvd::parse(iso_data);
+        emulator.insert_dvd(dvd);
+    }
 
     if let Some(path) = script_path {
         let host = scripting::LuaScriptHost::from_file(path).expect("failed to load script");

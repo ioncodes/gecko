@@ -1,5 +1,4 @@
 use egui::{Context, Grid, ScrollArea};
-use egui_material_icons::icons;
 use gecko::mmio::Mmio;
 
 pub fn show_mmio(ctx: &Context, open: &mut bool, base: &mut u32, addr_input: &mut String, mmio: &Mmio) {
@@ -18,11 +17,11 @@ pub fn show_mmio(ctx: &Context, open: &mut bool, base: &mut u32, addr_input: &mu
                     *base = addr & !0xF;
                 }
             }
-            if ui.button(icons::ICON_CHEVRON_LEFT).clicked() {
+            if ui.button(egui_phosphor::regular::CARET_LEFT).clicked() {
                 *base = base.saturating_sub(256);
                 *addr_input = format!("{:08X}", base);
             }
-            if ui.button(icons::ICON_CHEVRON_RIGHT).clicked() {
+            if ui.button(egui_phosphor::regular::CARET_RIGHT).clicked() {
                 *base = base.saturating_add(256);
                 *addr_input = format!("{:08X}", base);
             }

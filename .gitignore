@@ -5,3 +5,4 @@ perf.*
 profile.json.gz
 out*.txt
 private/
+*.log

@@ -1,3 +1,5 @@
+use chapa::BitEnum;
+
 use super::DvdInterface;
 use crate::mmio::traits::MmioAccess;
 
@@ -90,5 +92,84 @@ impl MmioAccess<DvdInterface> for DiCoverRegister {
         cvr = cvr.with_cover_interrupt_mask(self.cover_interrupt_mask());
 
         di.cover = cvr;
+    }
+}
+
+// 0xCC006014  4  R/W  DIMAR - DMA Memory Address Register
+
+crate::mmio_register! {
+    DiDmaAddressRegister: u32 @ 0xCC006014 {
+        #[bits(0..=25)]
+        pub address: u32,
+    }
+}
+
+impl MmioAccess<DvdInterface> for DiDmaAddressRegister {
+    fn read(di: &DvdInterface) -> Self {
+        di.dma_address
+    }
+
+    fn write(self, di: &mut DvdInterface) {
+        di.dma_address = self;
+    }
+}
+
+// 0xCC006018  4  R/W  DILENGTH - DI DMA Transfer Length Register
+
+crate::mmio_register! {
+    DiDmaLengthRegister: u32 @ 0xCC006018 {
+        #[bits(0..=25)]
+        pub length: u32,
+    }
+}
+
+impl MmioAccess<DvdInterface> for DiDmaLengthRegister {
+    fn read(di: &DvdInterface) -> Self {
+        di.dma_length
+    }
+
+    fn write(self, di: &mut DvdInterface) {
+        di.dma_length = self;
+    }
+}
+
+// 0xCC00601C  4  R/W  DICR - DI Control Register
+
+#[derive(BitEnum, Debug, PartialEq, Eq)]
+pub enum TransferMode {
+    Immediate = 0,
+    Dma = 1,
+}
+
+#[derive(BitEnum, Debug, PartialEq, Eq)]
+pub enum AccessMode {
+    Read = 0,
+    Write = 1,
+}
+
+crate::mmio_register! {
+    DiControlRegister: u32 @ 0xCC00601C {
+        #[bits(0)]
+        pub tstart: bool,
+
+        #[bits(1)]
+        pub dma: TransferMode,
+
+        #[bits(2)]
+        pub access_mode: AccessMode,
+    }
+}
+
+impl MmioAccess<DvdInterface> for DiControlRegister {
+    fn read(di: &DvdInterface) -> Self {
+        di.control
+    }
+
+    fn write(self, di: &mut DvdInterface) {
+        di.control = self;
+
+        if self.tstart() {
+            di.transfer_started = true;
+        }
     }
 }

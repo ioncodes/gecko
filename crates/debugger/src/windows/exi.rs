@@ -1,15 +1,7 @@
-use egui::{Color32, Context, Grid, RichText};
-use egui_material_icons::icons;
+use egui::{Context, Grid};
 use gecko::flipper::exi::ExternalInterface;
 
-fn flag(ui: &mut egui::Ui, val: bool) {
-    let (icon, color) = if val {
-        (icons::ICON_RADIO_BUTTON_CHECKED, Color32::from_rgb(100, 220, 100))
-    } else {
-        (icons::ICON_RADIO_BUTTON_UNCHECKED, Color32::from_rgb(70, 70, 70))
-    };
-    ui.label(RichText::new(icon).color(color));
-}
+use super::flag;
 
 fn chip_select_str(cs: u8) -> &'static str {
     match cs {

@@ -106,7 +106,7 @@ pub fn show_cpu(ctx: &Context, open: &mut bool, cpu: &Cpu, mmio: &Mmio) {
                                         let indicator_resp = if is_pc {
                                             Some(
                                                 ui.label(
-                                                    RichText::new(egui_material_icons::icons::ICON_PLAY_ARROW)
+                                                    RichText::new(egui_phosphor::regular::PLAY)
                                                         .color(Color32::from_rgb(120, 220, 120)),
                                                 ),
                                             )
