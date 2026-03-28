@@ -1,5 +1,6 @@
 use crate::cpu::condition::ConditionRegister;
 
+#[inline(always)]
 pub fn compare<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
     let field = match OP {
         crate::cpu::lut::OP_CMP => ConditionRegister::field_from_ord(

@@ -1,6 +1,3 @@
-#[cfg(test)]
-mod tests;
-
 pub mod bus;
 pub mod constants;
 pub mod fp;

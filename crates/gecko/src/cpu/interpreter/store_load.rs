@@ -1,5 +1,6 @@
 use crate::cpu::condition::ConditionField;
 
+#[inline(always)]
 pub fn store_load<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
     match OP {
         crate::cpu::lut::OP_STW | crate::cpu::lut::OP_STWU => {
@@ -149,6 +150,7 @@ pub fn store_load<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: cra
     }
 }
 
+#[inline(always)]
 pub fn lwarx(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
     let addr = ctx
         .cpu
@@ -159,6 +161,7 @@ pub fn lwarx(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::
     ctx.cpu.reserve_addr = Some(addr);
 }
 
+#[inline(always)]
 pub fn stwcx_dot(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
     let addr = ctx
         .cpu
@@ -175,6 +178,7 @@ pub fn stwcx_dot(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semanti
     }
 }
 
+#[inline(always)]
 pub fn store_load_fp<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
     match OP {
         crate::cpu::lut::OP_LFD | crate::cpu::lut::OP_LFDU => {

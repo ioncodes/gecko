@@ -1,5 +1,6 @@
 use crate::cpu::condition::BranchControl;
 
+#[inline(always)]
 pub fn branch<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
     // Read LR before potentially overwriting LR with CIA+4 (matters for blrl/bctrl)
     let old_lr = ctx.cpu.spr.lr;

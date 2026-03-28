@@ -8,7 +8,7 @@ scripting = []
 scripting-mut-traps = ["scripting"]
 
 [build-dependencies]
-chipi = "0.5.3"
+chipi-build = "0.7.0"
 
 [dependencies]
 chapa = { git = "https://github.com/ioncodes/chapa.git" }

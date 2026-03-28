@@ -1,4 +1,4 @@
-use disasm::dsp::DspInstruction;
+use disasm::dsp::GcDspInstruction;
 use disasm::gekko::GekkoInstruction;
 
 pub fn disassemble_ppc(data: &[u8], start: usize) {
@@ -22,7 +22,7 @@ pub fn disassemble_dsp(data: &[u8], start: usize) {
         let word = u16::from_be_bytes(data[offset..offset + 2].try_into().unwrap());
         let addr = (offset / 2) as u32;
 
-        match DspInstruction::decode(&data[offset..]) {
+        match GcDspInstruction::decode(&data[offset..]) {
             Some((instr, bytes_consumed)) => {
                 let hex_parts: Vec<_> = data[offset..offset + bytes_consumed]
                     .chunks_exact(2)

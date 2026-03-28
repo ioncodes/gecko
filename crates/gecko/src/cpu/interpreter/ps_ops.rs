@@ -1,5 +1,6 @@
 use crate::cpu::condition::ConditionField;
 
+#[inline(always)]
 pub fn ps_ops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
     match OP {
         crate::cpu::lut::OP_PS_ADD => {

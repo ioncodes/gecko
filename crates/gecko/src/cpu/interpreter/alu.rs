@@ -1,3 +1,4 @@
+#[inline(always)]
 pub fn alu<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
     match OP {
         crate::cpu::lut::OP_ADDX => {
@@ -210,6 +211,7 @@ pub fn alu<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu
     }
 }
 
+#[inline(always)]
 pub fn logical<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
     let rs = ctx.cpu.read_gpr(instr.rs());
     let rb = ctx.cpu.read_gpr(instr.rb());

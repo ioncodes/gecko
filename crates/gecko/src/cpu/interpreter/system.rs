@@ -1,5 +1,6 @@
 use crate::cpu::sr::Sr;
 
+#[inline(always)]
 pub fn msr<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
     match OP {
         crate::cpu::lut::OP_MTMSR => {
@@ -18,6 +19,7 @@ pub fn msr<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu
     }
 }
 
+#[inline(always)]
 pub fn spr<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
     match OP {
         crate::cpu::lut::OP_MTSPR => {
@@ -42,6 +44,7 @@ pub fn spr<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu
     }
 }
 
+#[inline(always)]
 pub fn segment<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
     match OP {
         crate::cpu::lut::OP_MTSR => {
@@ -54,6 +57,7 @@ pub fn segment<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate:
     }
 }
 
+#[inline(always)]
 pub fn mftb(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
     let tbr = instr.spr_swapped();
     let val = match tbr {
@@ -64,8 +68,10 @@ pub fn mftb(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::I
     ctx.cpu.write_gpr(instr.rd(), val);
 }
 
+#[inline(always)]
 pub fn nop<const OP: u32>(_ctx: &mut crate::gamecube::GameCube, _instr: crate::cpu::semantics::Instruction) {}
 
+#[inline(always)]
 pub fn sc(ctx: &mut crate::gamecube::GameCube, _instr: crate::cpu::semantics::Instruction) {
     ctx.cause_syscall_interrupt();
 }
