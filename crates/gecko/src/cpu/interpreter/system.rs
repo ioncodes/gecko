@@ -1,7 +1,7 @@
 use crate::cpu::sr::Sr;
 
 #[inline(always)]
-pub fn msr<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
+pub fn msr<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
     match OP {
         crate::cpu::lut::OP_MTMSR => {
             ctx.cpu.msr = crate::cpu::msr::Msr::from(ctx.cpu.read_gpr(instr.rs()));
@@ -20,7 +20,7 @@ pub fn msr<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu
 }
 
 #[inline(always)]
-pub fn spr<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
+pub fn spr<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
     match OP {
         crate::cpu::lut::OP_MTSPR => {
             let spr_num = instr.spr_swapped();
@@ -45,7 +45,7 @@ pub fn spr<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu
 }
 
 #[inline(always)]
-pub fn segment<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
+pub fn segment<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
     match OP {
         crate::cpu::lut::OP_MTSR => {
             ctx.cpu.sr[instr.sr() as usize] = Sr::from_raw(ctx.cpu.read_gpr(instr.rs()));
@@ -58,7 +58,7 @@ pub fn segment<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate:
 }
 
 #[inline(always)]
-pub fn mftb(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
+pub fn mftb(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
     let tbr = instr.spr_swapped();
     let val = match tbr {
         268 => ctx.scheduler.timebase_lower(),
@@ -69,9 +69,9 @@ pub fn mftb(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::I
 }
 
 #[inline(always)]
-pub fn nop<const OP: u32>(_ctx: &mut crate::gamecube::GameCube, _instr: crate::cpu::semantics::Instruction) {}
+pub fn nop<const OP: u32>(_ctx: &mut crate::gamecube::GameCube, _instr: crate::cpu::instruction::Instruction) {}
 
 #[inline(always)]
-pub fn sc(ctx: &mut crate::gamecube::GameCube, _instr: crate::cpu::semantics::Instruction) {
+pub fn sc(ctx: &mut crate::gamecube::GameCube, _instr: crate::cpu::instruction::Instruction) {
     ctx.cause_syscall_interrupt();
 }

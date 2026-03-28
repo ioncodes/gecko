@@ -384,7 +384,8 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 [[package]]
 name = "chapa"
 version = "0.1.1"
-source = "git+https://github.com/ioncodes/chapa.git#79ae40b94a5823ea59bdcecf0b7a9878cd8accba"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e32c359a2c9fad1bf865975a80e3ffb1384ebae1814268ffd8d657f91af0a0fe"
 dependencies = [
  "chapa-macros",
 ]
@@ -392,7 +393,8 @@ dependencies = [
 [[package]]
 name = "chapa-macros"
 version = "0.1.1"
-source = "git+https://github.com/ioncodes/chapa.git#79ae40b94a5823ea59bdcecf0b7a9878cd8accba"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "158582b06b8a70fbe05a0942bb254c07149ffd88d7ddb29ea2c15a6213309f0c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -401,18 +403,18 @@ dependencies = [
 
 [[package]]
 name = "chipi-build"
-version = "0.7.0"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6adea386dd961a22b3d1243545077aa700c407d522be3c68b3edb4e7ae36cd4"
+checksum = "fa4d92ef9c1c407a60305280f56167c8b27321f2e89a22ad11a211462f5906da"
 dependencies = [
  "chipi-core",
 ]
 
 [[package]]
 name = "chipi-core"
-version = "0.7.0"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c45f19321253fca12a2d8c0a89b09a3b7f0d06e6d7f44e4848444867ec9c1dca"
+checksum = "0bb9fe17b59d9ccb968f4b245484a465855910673d7e935ed2b19ae5ac710748"
 dependencies = [
  "serde",
  "toml",

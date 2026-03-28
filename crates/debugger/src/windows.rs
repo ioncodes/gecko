@@ -1,5 +1,6 @@
 pub mod controls;
 pub mod cpu;
+pub mod dsp;
 pub mod dvd;
 pub mod exi;
 pub mod gx;

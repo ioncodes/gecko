@@ -3,7 +3,7 @@ input = "../../submodules/chipi-spec/gamecube/gekko.chipi"
 output = "$OUT_DIR/gekko_lut.rs"
 handler_mod = "crate::cpu::interpreter"
 ctx_type = "crate::gamecube::GameCube"
-instr_type = "crate::cpu::semantics::Instruction"
+instr_type = "crate::cpu::instruction::Instruction"
 lut_mod = "crate::cpu::lut"
 dispatch = "jump_table"
 instr_type_output = "$OUT_DIR/gekko_instr.rs"
@@ -224,3 +224,13 @@ ps_ops = [
     "ps_nmsub",
     "ps_nmadd",
 ]
+
+[[lut]]
+input = "../../submodules/chipi-spec/gamecube/dsp.chipi"
+output = "$OUT_DIR/dsp_lut.rs"
+handler_mod = "crate::flipper::dsp::interpreter"
+ctx_type = "crate::gamecube::GameCube"
+instr_type = "crate::flipper::dsp::instruction::Instruction"
+lut_mod = "crate::flipper::dsp::lut"
+dispatch = "jump_table"
+instr_type_output = "$OUT_DIR/dsp_instr.rs"

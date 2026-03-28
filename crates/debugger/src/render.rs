@@ -255,10 +255,7 @@ impl RenderState {
 
                         use egui_phosphor::regular as icons;
                         if ui
-                            .add_enabled(
-                                is_paused,
-                                egui::Button::new(format!("{} Continue", icons::PLAY)),
-                            )
+                            .add_enabled(is_paused, egui::Button::new(format!("{} Continue", icons::PLAY)))
                             .clicked()
                         {
                             debugger_ui.emulator_state = EmulatorState::Running;
@@ -278,10 +275,7 @@ impl RenderState {
                             debugger_ui.emulator_state = EmulatorState::Step;
                             ui.close();
                         }
-                        if ui
-                            .button(format!("{} Run Until VSync", icons::FAST_FORWARD))
-                            .clicked()
-                        {
+                        if ui.button(format!("{} Run Until VSync", icons::FAST_FORWARD)).clicked() {
                             debugger_ui.emulator_state = EmulatorState::RunUntilVsync;
                             ui.close();
                         }
@@ -289,6 +283,7 @@ impl RenderState {
 
                     ui.menu_button("Windows", |ui| {
                         ui.checkbox(&mut debugger_ui.show_cpu, "CPU");
+                        ui.checkbox(&mut debugger_ui.show_dsp, "DSP");
                         ui.checkbox(&mut debugger_ui.show_gx_state, "GX");
                         ui.checkbox(&mut debugger_ui.show_mmio, "MMIO");
                         ui.checkbox(&mut debugger_ui.show_dvd, "DVD");
@@ -301,6 +296,9 @@ impl RenderState {
 
             if debugger_ui.show_cpu {
                 windows::cpu::show_cpu(&ctx, &mut debugger_ui.show_cpu, cpu, mmio);
+            }
+            if debugger_ui.show_dsp {
+                windows::dsp::show_dsp(&ctx, &mut debugger_ui.show_dsp, &emulator.dsp);
             }
             if debugger_ui.show_controls {
                 let mut start_trace = false;

@@ -1,5 +1,5 @@
 #[inline(always)]
-pub fn cr_ops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
+pub fn cr_ops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
     match OP {
         crate::cpu::lut::OP_MTCRF => {
             let crm = instr.crm();

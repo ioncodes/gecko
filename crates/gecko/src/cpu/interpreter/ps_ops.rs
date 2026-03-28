@@ -1,7 +1,7 @@
 use crate::cpu::condition::ConditionField;
 
 #[inline(always)]
-pub fn ps_ops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
+pub fn ps_ops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
     match OP {
         crate::cpu::lut::OP_PS_ADD => {
             let ps0 = (ctx.cpu.read_fpr(instr.ra()) + ctx.cpu.read_fpr(instr.rb())) as f32 as f64;
@@ -162,7 +162,7 @@ pub fn ps_ops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::
 }
 
 #[inline(always)]
-fn ps_write(ctx: &mut crate::gamecube::GameCube, instr: &crate::cpu::semantics::Instruction, ps0: f64, ps1: f64) {
+fn ps_write(ctx: &mut crate::gamecube::GameCube, instr: &crate::cpu::instruction::Instruction, ps0: f64, ps1: f64) {
     ctx.cpu.write_fpr(instr.rd(), ps0);
     ctx.cpu.write_ps1(instr.rd(), ps1);
     if instr.rc() {

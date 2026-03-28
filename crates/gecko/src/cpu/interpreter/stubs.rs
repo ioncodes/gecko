@@ -5,7 +5,7 @@ macro_rules! stub {
             #[inline(always)]
             pub fn $name(
                 _ctx: &mut crate::gamecube::GameCube,
-                _instr: crate::cpu::semantics::Instruction,
+                _instr: crate::cpu::instruction::Instruction,
             ) {
                 todo!(stringify!($name))
             }

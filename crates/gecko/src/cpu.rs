@@ -1,8 +1,8 @@
 pub mod condition;
+pub mod instruction;
 pub mod interpreter;
 pub mod irq;
 pub mod msr;
-pub mod semantics;
 pub mod spr;
 pub mod sr;
 

@@ -1,7 +1,7 @@
 use crate::cpu::condition::ConditionField;
 
 #[inline(always)]
-pub fn fp_ops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
+pub fn fp_ops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
     match OP {
         crate::cpu::lut::OP_MTFSFX => {
             let fm = instr.fm();
@@ -187,7 +187,7 @@ pub fn fp_ops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::
 
 /// Write FP result to fD and optionally update CR1
 #[inline(always)]
-fn fp_write(ctx: &mut crate::gamecube::GameCube, instr: &crate::cpu::semantics::Instruction, val: f64) {
+fn fp_write(ctx: &mut crate::gamecube::GameCube, instr: &crate::cpu::instruction::Instruction, val: f64) {
     ctx.cpu.write_fpr(instr.rd(), val);
     if instr.rc() {
         ctx.cpu.update_cr1();
@@ -197,7 +197,7 @@ fn fp_write(ctx: &mut crate::gamecube::GameCube, instr: &crate::cpu::semantics::
 /// Write single-precision FP result to fD.
 /// On Gekko, single-precision instructions duplicate the result into both ps0 and ps1.
 #[inline(always)]
-fn fp_write_single(ctx: &mut crate::gamecube::GameCube, instr: &crate::cpu::semantics::Instruction, val: f64) {
+fn fp_write_single(ctx: &mut crate::gamecube::GameCube, instr: &crate::cpu::instruction::Instruction, val: f64) {
     ctx.cpu.write_fpr(instr.rd(), val);
     ctx.cpu.write_ps1(instr.rd(), val);
     if instr.rc() {

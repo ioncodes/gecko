@@ -1,10 +1,22 @@
+pub mod instruction;
+pub mod interpreter;
 pub mod regs;
 
+#[allow(dead_code, unused_variables, non_upper_case_globals, clippy::all)]
+pub mod lut {
+    include!(concat!(env!("OUT_DIR"), "/dsp_lut.rs"));
+}
+
+use crate::flipper::dsp::instruction::Instruction;
+use crate::gamecube::GameCube;
 use crate::mmio::Mmio;
 use crate::mmio::constants::DSP_BASE;
 use crate::mmio::traits::{MmioAccess, MmioRegister, MmioRw};
 
 pub struct Dsp {
+    // Registers
+    pub pc: u16,
+
     // IMEM = IRAM + IROM
     pub iram: Box<[u8; 0x1000]>, // 0x0000 - 0x0FFF
     pub irom: Box<[u8; 0x1000]>, // 0x8000 - 0x8FFF
@@ -44,6 +56,7 @@ impl Dsp {
         let ifx = unsafe { Box::<[u8; 0x100]>::new_zeroed().assume_init() };
 
         Dsp {
+            pc: 0,
             iram,
             irom,
             dram,
@@ -122,6 +135,18 @@ impl Dsp {
             self.mailbox_to_cpu_hi = regs::MailboxToCpuHi::from_raw(0x8071);
             self.mailbox_to_cpu_lo = regs::MailboxToCpuLo::from_raw(0xFEED);
         }
+    }
+}
+
+impl GameCube {
+    pub fn tick_dsp(&mut self) {
+        if self.dsp.csr.reset() || self.dsp.csr.halt() {
+            return;
+        }
+
+        let instr = Instruction::from_be_bytes(&self.dsp.iram[self.dsp.pc as usize..]);
+        crate::flipper::dsp::lut::dispatch(self, instr);
+        self.dsp.pc += crate::flipper::dsp::lut::instr_size(instr) as u16;
     }
 }
 

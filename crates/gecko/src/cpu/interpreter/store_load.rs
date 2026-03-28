@@ -1,7 +1,7 @@
 use crate::cpu::condition::ConditionField;
 
 #[inline(always)]
-pub fn store_load<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
+pub fn store_load<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
     match OP {
         crate::cpu::lut::OP_STW | crate::cpu::lut::OP_STWU => {
             let addr = ctx.cpu.read_gpr_or_zero(instr.ra()).wrapping_add_signed(instr.disp());
@@ -151,7 +151,7 @@ pub fn store_load<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: cra
 }
 
 #[inline(always)]
-pub fn lwarx(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
+pub fn lwarx(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
     let addr = ctx
         .cpu
         .read_gpr_or_zero(instr.ra())
@@ -162,7 +162,7 @@ pub fn lwarx(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::
 }
 
 #[inline(always)]
-pub fn stwcx_dot(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
+pub fn stwcx_dot(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
     let addr = ctx
         .cpu
         .read_gpr_or_zero(instr.ra())
@@ -179,7 +179,7 @@ pub fn stwcx_dot(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semanti
 }
 
 #[inline(always)]
-pub fn store_load_fp<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
+pub fn store_load_fp<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
     match OP {
         crate::cpu::lut::OP_LFD | crate::cpu::lut::OP_LFDU => {
             let addr = ctx.cpu.read_gpr_or_zero(instr.ra()).wrapping_add_signed(instr.disp());

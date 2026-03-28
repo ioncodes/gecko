@@ -1,7 +1,7 @@
 #[cfg(feature = "scripting")]
 use crate::scripting::{HookFlags, ScriptHookFilters, ScriptHookState, ScriptHost};
 use crate::{
-    cpu::{self, Cpu, IPL_RESET_VECTOR, semantics::Instruction},
+    cpu::{self, Cpu, IPL_RESET_VECTOR, instruction::Instruction},
     dvd::DvdInterface,
     flipper::{
         ai::AudioInterface,
@@ -202,6 +202,9 @@ impl GameCube {
         let instr = Instruction(self.mmio.fetch_instruction(self.cpu.cia));
         cpu::lut::dispatch(self, instr);
         self.scheduler.cycles += 1;
+
+        // Tick the DSP
+        self.tick_dsp();
 
         // CPU post-hook
         #[cfg(feature = "scripting")]

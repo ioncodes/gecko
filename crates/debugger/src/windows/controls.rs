@@ -71,10 +71,7 @@ pub fn show_controls(
                     .font(egui::TextStyle::Monospace)
                     .show(ui);
 
-                if ui
-                    .add(egui::Button::new(format!("{} Run", icons::PLAY)))
-                    .clicked()
-                {
+                if ui.add(egui::Button::new(format!("{} Run", icons::PLAY))).clicked() {
                     let s = run_until_addr_input.trim().trim_start_matches("0x");
                     if let Ok(addr) = u32::from_str_radix(s, 16) {
                         *state = EmulatorState::RunUntilAddress(addr);
@@ -102,10 +99,7 @@ pub fn show_controls(
 
             if !tracing {
                 if ui
-                    .add(
-                        egui::Button::new(format!("{} Start Trace", icons::RECORD))
-                            .min_size(btn_size),
-                    )
+                    .add(egui::Button::new(format!("{} Start Trace", icons::RECORD)).min_size(btn_size))
                     .clicked()
                 {
                     *start_trace = true;

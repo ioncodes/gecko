@@ -62,10 +62,10 @@ impl DvdInterface {
         let sub2 = self.cmdbuf0 & 0xFFFF;
 
         match (cmd, sub1, sub2) {
-            (0xA8, _, 0x0000)   => Some(Command::ReadSectorData),
-            (0xA8, _, 0x0040)   => Some(Command::ReadDiskId),
-            (0xE4, 0x00, _)     => Some(Command::AudioToggle(false)),
-            (0xE4, 0x01, _)     => Some(Command::AudioToggle(true)),
+            (0xA8, _, 0x0000) => Some(Command::ReadSectorData),
+            (0xA8, _, 0x0040) => Some(Command::ReadDiskId),
+            (0xE4, 0x00, _) => Some(Command::AudioToggle(false)),
+            (0xE4, 0x01, _) => Some(Command::AudioToggle(true)),
             _ => {
                 tracing::error!(
                     cmd = format!("{cmd:02X}"),

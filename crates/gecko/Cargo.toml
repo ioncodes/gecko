@@ -8,9 +8,9 @@ scripting = []
 scripting-mut-traps = ["scripting"]
 
 [build-dependencies]
-chipi-build = "0.7.0"
+chipi-build = "0.7.2"
 
 [dependencies]
-chapa = { git = "https://github.com/ioncodes/chapa.git" }
+chapa = "0.1.0"
 tracing = { version = "0.1.44", features = ["release_max_level_off"] }
 image = { path = "../image" }

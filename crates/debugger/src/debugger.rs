@@ -19,6 +19,7 @@ pub enum EmulatorState {
 pub struct DebuggerUi {
     pub emulator_state: EmulatorState,
     pub show_cpu: bool,
+    pub show_dsp: bool,
     pub show_gx_state: bool,
     pub show_mmio: bool,
     pub show_dvd: bool,
@@ -37,6 +38,7 @@ impl Default for DebuggerUi {
         DebuggerUi {
             emulator_state: EmulatorState::Paused,
             show_cpu: true,
+            show_dsp: false,
             show_controls: true,
             show_gx_state: false,
             show_mmio: false,

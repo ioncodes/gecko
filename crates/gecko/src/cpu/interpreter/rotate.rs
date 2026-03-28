@@ -6,7 +6,7 @@ fn mask(mb: u32, me: u32) -> u32 {
 }
 
 #[inline(always)]
-pub fn rotate<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::semantics::Instruction) {
+pub fn rotate<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
     let rs = ctx.cpu.read_gpr(instr.rs());
     let mb = instr.mb() as u32;
     let me = instr.me() as u32;
