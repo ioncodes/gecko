@@ -67,6 +67,7 @@ macro_rules! bus_read_hooks {
             }
         }
 
+        #[allow(unused_mut)]
         let mut result = $body;
 
         #[cfg(feature = "scripting")]
