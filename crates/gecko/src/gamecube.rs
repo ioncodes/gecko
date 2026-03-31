@@ -206,9 +206,6 @@ impl GameCube {
         cpu::lut::dispatch(self, instr);
         self.scheduler.cycles += 1;
 
-        // Tick the DSP
-        self.tick_dsp();
-
         // CPU post-hook
         #[cfg(feature = "scripting")]
         if self.script_hook_flags.contains(HookFlags::CPU_POST) {
@@ -255,6 +252,12 @@ impl GameCube {
         self.prepare_frame();
         while !self.vsync_pending {
             self.step();
+        }
+
+        // Run DSP in batches at 1:6 ratio
+        let dsp_ticks = CYCLES_PER_VSYNC / 6;
+        for _ in 0..dsp_ticks {
+            self.tick_dsp();
         }
     }
 

@@ -101,12 +101,13 @@ fn main() {
         let pc = emu.dsp.registers.pc;
 
         if args.trace {
-            let bytes = &emu.dsp.iram[pc as usize * 2..];
-            if let Some((insn, _)) = GcDspInstruction::decode(bytes) {
+            let w0 = emu.dsp.read_imem(pc);
+            let w1 = emu.dsp.read_imem(pc.wrapping_add(1));
+            let bytes = [(w0 >> 8) as u8, w0 as u8, (w1 >> 8) as u8, w1 as u8];
+            if let Some((insn, _)) = GcDspInstruction::decode(&bytes) {
                 println!("{pc:04X}  {insn}");
             } else {
-                let w = u16::from_be_bytes([bytes[0], bytes[1]]);
-                println!("{pc:04X}  .word {w:#06x}");
+                println!("{pc:04X}  .word {w0:#06x}");
             }
         }
 

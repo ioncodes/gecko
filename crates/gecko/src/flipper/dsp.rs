@@ -143,6 +143,7 @@ impl Dsp {
 }
 
 impl GameCube {
+    #[inline(always)]
     pub fn tick_dsp(&mut self) {
         if self.dsp.csr.reset() || self.dsp.csr.halt() {
             return;
