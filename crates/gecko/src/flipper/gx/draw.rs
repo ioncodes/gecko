@@ -1,4 +1,6 @@
-use super::regs::{AlphaCompare, BlendMode, MagFilter, MinFilter, TevAlphaEnv, TevColorEnv, TevStageOrder, WrapMode, ZMode};
+use super::regs::{
+    AlphaCompare, BlendMode, MagFilter, MinFilter, TevAlphaEnv, TevColorEnv, TevStageOrder, WrapMode, ZMode,
+};
 use chapa::BitEnum;
 
 #[derive(Debug)]

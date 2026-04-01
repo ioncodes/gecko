@@ -20,9 +20,9 @@ winit = { version = "0.30.13", features = ["rwh_06"] }
 egui = "0.33.3"
 egui-wgpu = "0.33.3"
 egui-winit = { version = "0.33.3", default-features = false, features = ["links"] }
-wasm-bindgen = "0.2.116"
-wasm-bindgen-futures = "0.4.66"
-web-sys = { version = "0.3.93", features = [
+wasm-bindgen = "0.2.117"
+wasm-bindgen-futures = "0.4.67"
+web-sys = { version = "0.3.94", features = [
     "Document",
     "Window",
     "Element",
@@ -35,6 +35,6 @@ web-sys = { version = "0.3.93", features = [
     "Performance",
     "console",
 ] }
-js-sys = "0.3.93"
+js-sys = "0.3.94"
 console_error_panic_hook = "0.1.7"
 tracing = "0.1.44"

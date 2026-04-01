@@ -5,4 +5,4 @@ edition = "2024"
 
 [dependencies]
 object = { version = "0.36.7", default-features = false, features = ["elf", "read"] }
-zerocopy = { version = "0.8.47", features = ["derive"] }
+zerocopy = { version = "0.8.48", features = ["derive"] }
