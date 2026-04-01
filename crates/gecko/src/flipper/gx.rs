@@ -428,6 +428,7 @@ impl GraphicsProcessor {
             vertices,
             modelview,
             textures: self.cur_textures,
+            tev_orders: self.resolve_tev_orders(),
             tev_color_env: self.cur_tev_color_env,
             tev_alpha_env: self.cur_tev_alpha_env,
             tev_color_regs,
@@ -900,6 +901,22 @@ impl GraphicsProcessor {
     }
 
     /// Resolve TEV color registers (lo+hi) into [r,g,b,a] float arrays
+    fn resolve_tev_orders(&self) -> [regs::TevStageOrder; 16] {
+        let mut orders = [regs::TevStageOrder::default(); 16];
+        for i in 0..8 {
+            let reg = self.cur_tev_orders[i];
+            orders[2 * i] = regs::TevStageOrder::default()
+                .with_texmap(reg.texmap0())
+                .with_texcoord(reg.texcoord0())
+                .with_tex_enable(reg.tex_enable0());
+            orders[2 * i + 1] = regs::TevStageOrder::default()
+                .with_texmap(reg.texmap1())
+                .with_texcoord(reg.texcoord1())
+                .with_tex_enable(reg.tex_enable1());
+        }
+        orders
+    }
+
     fn resolve_tev_color_regs(&self) -> [[f32; 4]; 4] {
         std::array::from_fn(|i| {
             let lo = self.cur_tev_color_regs_lo[i];

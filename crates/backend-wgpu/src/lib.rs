@@ -11,14 +11,29 @@ struct GpuVertex {
     position: [f32; 3],
     color: [f32; 4],
     tex0: [f32; 2],
+    tex1: [f32; 2],
+    tex2: [f32; 2],
+    tex3: [f32; 2],
+    tex4: [f32; 2],
+    tex5: [f32; 2],
+    tex6: [f32; 2],
+    tex7: [f32; 2],
 }
 
 impl From<&gecko::flipper::gx::draw::Vertex> for GpuVertex {
     fn from(v: &gecko::flipper::gx::draw::Vertex) -> Self {
+        let tc = |i: usize| v.texcoords[i].unwrap_or([0.0, 0.0]);
         Self {
             position: v.position,
             color: v.color0,
-            tex0: v.texcoords[0].unwrap_or([0.0, 0.0]),
+            tex0: tc(0),
+            tex1: tc(1),
+            tex2: tc(2),
+            tex3: tc(3),
+            tex4: tc(4),
+            tex5: tc(5),
+            tex6: tc(6),
+            tex7: tc(7),
         }
     }
 }
@@ -30,6 +45,7 @@ struct FrameUniforms {
     tev_konst_colors: [[f32; 4]; 16],
     tev_color_env: [u32; 16],
     tev_alpha_env: [u32; 16],
+    tev_orders: [u32; 16],
     num_tev_stages: u32,
     alpha_ref0: f32,
     alpha_ref1: f32,
@@ -124,46 +140,52 @@ impl GxRenderer {
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
         });
 
+        // Bindings: 0=FrameUniforms, 1=DrawUniforms, 2-9=textures 0-7, 10-17=samplers 0-7
+        let mut layout_entries = vec![
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(frame_uniform_size),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: wgpu::BufferSize::new(draw_uniform_size),
+                },
+                count: None,
+            },
+        ];
+        for i in 0..8u32 {
+            layout_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: 2 + i,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            });
+        }
+        for i in 0..8u32 {
+            layout_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: 10 + i,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            });
+        }
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(frame_uniform_size),
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: wgpu::BufferSize::new(draw_uniform_size),
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
+            entries: &layout_entries,
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -226,35 +248,40 @@ impl GxRenderer {
         );
         let fallback_view = fallback_texture.create_view(&Default::default());
 
+        let mut initial_entries = vec![
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &frame_uniform_buffer,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(frame_uniform_size),
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &draw_uniform_buffer,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(draw_uniform_size),
+                }),
+            },
+        ];
+        for i in 0..8u32 {
+            initial_entries.push(wgpu::BindGroupEntry {
+                binding: 2 + i,
+                resource: wgpu::BindingResource::TextureView(&fallback_view),
+            });
+        }
+        for i in 0..8u32 {
+            initial_entries.push(wgpu::BindGroupEntry {
+                binding: 10 + i,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            });
+        }
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &frame_uniform_buffer,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(frame_uniform_size),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &draw_uniform_buffer,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(draw_uniform_size),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&fallback_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
+            entries: &initial_entries,
         });
 
         let initial_capacity = 1024;
@@ -320,21 +347,27 @@ impl GxRenderer {
             array_stride: std::mem::size_of::<GpuVertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
+                // position: vec3<f32>
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x3,
                     offset: 0,
                     shader_location: 0,
                 },
+                // color: vec4<f32>
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x4,
                     offset: 12,
                     shader_location: 1,
                 },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
-                    offset: 28,
-                    shader_location: 2,
-                },
+                // tex0-tex7: vec2<f32> each
+                wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x2, offset: 28, shader_location: 2 },
+                wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x2, offset: 36, shader_location: 3 },
+                wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x2, offset: 44, shader_location: 4 },
+                wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x2, offset: 52, shader_location: 5 },
+                wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x2, offset: 60, shader_location: 6 },
+                wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x2, offset: 68, shader_location: 7 },
+                wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x2, offset: 76, shader_location: 8 },
+                wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x2, offset: 84, shader_location: 9 },
             ],
         };
 
@@ -498,6 +531,7 @@ impl GxRenderer {
                 tev_konst_colors: dc.tev_konst_colors,
                 tev_color_env: dc.tev_color_env.map(|e| e.raw()),
                 tev_alpha_env: dc.tev_alpha_env.map(|e| e.raw()),
+                tev_orders: dc.tev_orders.map(|o| o.raw()),
                 num_tev_stages: dc.num_tev_stages as u32,
                 alpha_ref0: alpha_cmp.ref0() as f32 / 255.0,
                 alpha_ref1: alpha_cmp.ref1() as f32 / 255.0,
@@ -578,46 +612,57 @@ impl GxRenderer {
                 let pipeline = &self.pipeline_cache[&pipeline_key];
                 rpass.set_pipeline(pipeline);
 
-                let (tex_view, sampler) = if let Some(desc) = &dc.textures[0] {
-                    let tex_key = (desc.ram_addr, desc.width, desc.height, desc.format);
-                    let sampler_key = (desc.wrap_s, desc.wrap_t, desc.mag_filter, desc.min_filter);
-                    (&self.texture_cache[&tex_key].1, &self.sampler_cache[&sampler_key])
-                } else {
-                    (&self.fallback_view, &self.sampler_cache[&fallback_sampler_key])
-                };
+                // Resolve all 8 texture views + samplers for this draw call
+                let mut tex_views: [&wgpu::TextureView; 8] = [&self.fallback_view; 8];
+                let mut tex_samplers: [&wgpu::Sampler; 8] =
+                    [&self.sampler_cache[&fallback_sampler_key]; 8];
+                for slot in 0..8 {
+                    if let Some(desc) = &dc.textures[slot] {
+                        let tex_key = (desc.ram_addr, desc.width, desc.height, desc.format);
+                        let sampler_key =
+                            (desc.wrap_s, desc.wrap_t, desc.mag_filter, desc.min_filter);
+                        tex_views[slot] = &self.texture_cache[&tex_key].1;
+                        tex_samplers[slot] = &self.sampler_cache[&sampler_key];
+                    }
+                }
 
                 let frame_offset = (index as u64 * frame_stride as u64) as wgpu::BufferAddress;
                 let draw_offset = (index as u64 * self.draw_uniform_stride) as u32;
 
+                let mut entries = vec![
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.frame_uniform_buffer,
+                            offset: frame_offset,
+                            size: wgpu::BufferSize::new(std::mem::size_of::<FrameUniforms>() as u64),
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.draw_uniform_buffer,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(std::mem::size_of::<DrawUniforms>() as u64),
+                        }),
+                    },
+                ];
+                for i in 0..8u32 {
+                    entries.push(wgpu::BindGroupEntry {
+                        binding: 2 + i,
+                        resource: wgpu::BindingResource::TextureView(tex_views[i as usize]),
+                    });
+                }
+                for i in 0..8u32 {
+                    entries.push(wgpu::BindGroupEntry {
+                        binding: 10 + i,
+                        resource: wgpu::BindingResource::Sampler(tex_samplers[i as usize]),
+                    });
+                }
                 let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: None,
                     layout: &self.bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                buffer: &self.frame_uniform_buffer,
-                                offset: frame_offset,
-                                size: wgpu::BufferSize::new(std::mem::size_of::<FrameUniforms>() as u64),
-                            }),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                buffer: &self.draw_uniform_buffer,
-                                offset: 0,
-                                size: wgpu::BufferSize::new(std::mem::size_of::<DrawUniforms>() as u64),
-                            }),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::TextureView(tex_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: wgpu::BindingResource::Sampler(sampler),
-                        },
-                    ],
+                    entries: &entries,
                 });
 
                 rpass.set_bind_group(0, &bind_group, &[draw_offset]);

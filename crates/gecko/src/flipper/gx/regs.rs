@@ -612,6 +612,19 @@ pub struct TevOrder {
 }
 
 #[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TevStageOrder {
+    #[bits(0..=2)]
+    pub texmap: u8,
+
+    #[bits(3..=5)]
+    pub texcoord: u8,
+
+    #[bits(6)]
+    pub tex_enable: bool,
+}
+
+#[chapa::bitfield(u32, order = lsb0)]
 #[derive(Debug, Clone, Copy)]
 pub struct TxSetMode0 {
     #[bits(0..=1)]

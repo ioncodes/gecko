@@ -1,4 +1,4 @@
-use super::regs::{AlphaCompare, BlendMode, MagFilter, MinFilter, TevAlphaEnv, TevColorEnv, WrapMode, ZMode};
+use super::regs::{AlphaCompare, BlendMode, MagFilter, MinFilter, TevAlphaEnv, TevColorEnv, TevStageOrder, WrapMode, ZMode};
 use chapa::BitEnum;
 
 #[derive(Debug)]
@@ -73,6 +73,9 @@ pub struct DrawCall {
 
     // Textures bound at draw time
     pub textures: [Option<TextureDescriptor>; 8],
+
+    // Per-TEV-stage order (resolved from paired TevOrder registers)
+    pub tev_orders: [TevStageOrder; 16],
 
     // TEV state snapshot
     pub tev_color_env: [TevColorEnv; 16],

@@ -6,6 +6,7 @@ struct FrameUniforms {
     tev_konst_colors: array<vec4<f32>, 16>,
     tev_color_env: array<vec4<u32>, 4>,
     tev_alpha_env: array<vec4<u32>, 4>,
+    tev_orders: array<vec4<u32>, 4>,
     num_tev_stages: u32,
     alpha_ref0: f32,
     alpha_ref1: f32,
@@ -24,22 +25,50 @@ var<uniform> frame: FrameUniforms;
 @group(0) @binding(1)
 var<uniform> draw: DrawUniforms;
 
-@group(0) @binding(2)
-var tex: texture_2d<f32>;
+// 8 texture maps (texmap 0-7)
+@group(0) @binding(2) var tex0: texture_2d<f32>;
+@group(0) @binding(3) var tex1: texture_2d<f32>;
+@group(0) @binding(4) var tex2: texture_2d<f32>;
+@group(0) @binding(5) var tex3: texture_2d<f32>;
+@group(0) @binding(6) var tex4: texture_2d<f32>;
+@group(0) @binding(7) var tex5: texture_2d<f32>;
+@group(0) @binding(8) var tex6: texture_2d<f32>;
+@group(0) @binding(9) var tex7: texture_2d<f32>;
 
-@group(0) @binding(3)
-var tex_sampler: sampler;
+// 8 samplers (paired with texmaps)
+@group(0) @binding(10) var samp0: sampler;
+@group(0) @binding(11) var samp1: sampler;
+@group(0) @binding(12) var samp2: sampler;
+@group(0) @binding(13) var samp3: sampler;
+@group(0) @binding(14) var samp4: sampler;
+@group(0) @binding(15) var samp5: sampler;
+@group(0) @binding(16) var samp6: sampler;
+@group(0) @binding(17) var samp7: sampler;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
     @location(1) color: vec4<f32>,
     @location(2) tex0: vec2<f32>,
+    @location(3) tex1: vec2<f32>,
+    @location(4) tex2: vec2<f32>,
+    @location(5) tex3: vec2<f32>,
+    @location(6) tex4: vec2<f32>,
+    @location(7) tex5: vec2<f32>,
+    @location(8) tex6: vec2<f32>,
+    @location(9) tex7: vec2<f32>,
 };
 
 struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) color: vec4<f32>,
-    @location(1) tex0: vec2<f32>,
+    @location(1) uv0: vec2<f32>,
+    @location(2) uv1: vec2<f32>,
+    @location(3) uv2: vec2<f32>,
+    @location(4) uv3: vec2<f32>,
+    @location(5) uv4: vec2<f32>,
+    @location(6) uv5: vec2<f32>,
+    @location(7) uv6: vec2<f32>,
+    @location(8) uv7: vec2<f32>,
 };
 
 @vertex
@@ -49,7 +78,14 @@ fn vs_main(in: VsIn) -> VsOut {
     // Remap depth: GameCube/OpenGL uses [-1,1], wgpu uses [0,1]
     out.clip_pos.z = out.clip_pos.z * 0.5 + out.clip_pos.w * 0.5;
     out.color = in.color;
-    out.tex0 = in.tex0;
+    out.uv0 = in.tex0;
+    out.uv1 = in.tex1;
+    out.uv2 = in.tex2;
+    out.uv3 = in.tex3;
+    out.uv4 = in.tex4;
+    out.uv5 = in.tex5;
+    out.uv6 = in.tex6;
+    out.uv7 = in.tex7;
     return out;
 }
 
@@ -63,6 +99,36 @@ fn read_packed(arr: array<vec4<u32>, 4>, idx: u32) -> u32 {
 // Extract `width` bits starting at bit `lo` from `val`
 fn extract_bits(val: u32, lo: u32, width: u32) -> u32 {
     return (val >> lo) & ((1u << width) - 1u);
+}
+
+// Select texcoord by index (from TevOrder.texcoord)
+fn select_texcoord(in: VsOut, idx: u32) -> vec2<f32> {
+    switch idx {
+        case 0u: { return in.uv0; }
+        case 1u: { return in.uv1; }
+        case 2u: { return in.uv2; }
+        case 3u: { return in.uv3; }
+        case 4u: { return in.uv4; }
+        case 5u: { return in.uv5; }
+        case 6u: { return in.uv6; }
+        case 7u: { return in.uv7; }
+        default: { return in.uv0; }
+    }
+}
+
+// Sample from texmap by index (from TevOrder.texmap)
+fn sample_texmap(texmap: u32, uv: vec2<f32>) -> vec4<f32> {
+    switch texmap {
+        case 0u: { return textureSample(tex0, samp0, uv); }
+        case 1u: { return textureSample(tex1, samp1, uv); }
+        case 2u: { return textureSample(tex2, samp2, uv); }
+        case 3u: { return textureSample(tex3, samp3, uv); }
+        case 4u: { return textureSample(tex4, samp4, uv); }
+        case 5u: { return textureSample(tex5, samp5, uv); }
+        case 6u: { return textureSample(tex6, samp6, uv); }
+        case 7u: { return textureSample(tex7, samp7, uv); }
+        default: { return textureSample(tex0, samp0, uv); }
+    }
 }
 
 // TEV color input selector (TevColorIn, 4-bit, 16 variants)
@@ -107,7 +173,7 @@ fn tev_alpha_in(sel: u32, tex_color: vec4<f32>, ras_color: vec4<f32>, regs: arra
 fn tev_combine_color(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, d: vec3<f32>,
                      bias: u32, sub: bool, scale: u32, do_clamp: bool) -> vec3<f32> {
     let lerp = a * (vec3(1.0) - c) + b * c;
-    
+
     var result: vec3<f32>;
     if sub {
         result = d - lerp;
@@ -121,7 +187,7 @@ fn tev_combine_color(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, d: vec3<f32>,
         case 2u: { result -= vec3(0.5); }   // SubHalf
         default: {}                         // Zero
     }
-    
+
     // Scale
     switch scale {
         case 1u: { result *= 2.0; }     // Scale2
@@ -133,38 +199,38 @@ fn tev_combine_color(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, d: vec3<f32>,
     if do_clamp {
         result = clamp(result, vec3(0.0), vec3(1.0));
     }
-    
+
     return result;
 }
 
 // TEV alpha combiner: same formula as color but per-channel
 fn tev_combine_alpha(a: f32, b: f32, c: f32, d: f32, bias: u32, sub: bool, scale: u32, do_clamp: bool) -> f32 {
     let lerp = a * (1.0 - c) + b * c;
-    
+
     var result: f32;
     if sub {
         result = d - lerp;
     } else {
         result = d + lerp;
     }
-    
+
     switch bias {
         case 1u: { result += 0.5; }
         case 2u: { result -= 0.5; }
         default: {}
     }
-    
+
     switch scale {
         case 1u: { result *= 2.0; }
         case 2u: { result *= 4.0; }
         case 3u: { result *= 0.5; }
         default: {}
     }
-    
+
     if do_clamp {
         result = clamp(result, 0.0, 1.0);
     }
-    
+
     return result;
 }
 
@@ -201,15 +267,27 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     regs[2] = frame.tev_color_reg2;
     regs[3] = frame.tev_color_reg3;
 
-    // Inputs available to TEV stages
     let ras_color = in.color;
-    let tex_color = textureSample(tex, tex_sampler, in.tex0);
-
     let num_stages = frame.num_tev_stages;
 
     for (var stage = 0u; stage < 16u; stage++) {
         if stage >= num_stages {
             break;
+        }
+
+        // Resolve per-stage texture from TevOrder
+        // TevStageOrder bit layout: texmap(0-2), texcoord(3-5), tex_enable(6)
+        let order = read_packed(frame.tev_orders, stage);
+        let texmap_idx = order & 7u;
+        let texcoord_idx = (order >> 3u) & 7u;
+        let tex_enabled = ((order >> 6u) & 1u) != 0u;
+
+        var tex_color: vec4<f32>;
+        if tex_enabled {
+            let uv = select_texcoord(in, texcoord_idx);
+            tex_color = sample_texmap(texmap_idx, uv);
+        } else {
+            tex_color = vec4<f32>(1.0, 1.0, 1.0, 1.0);
         }
 
         // Combine colors
