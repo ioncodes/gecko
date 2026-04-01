@@ -48,11 +48,21 @@ pub fn show_controls(
             if ui
                 .add_enabled(
                     is_paused,
-                    egui::Button::new(format!("{} Step", icons::SKIP_FORWARD)).min_size(btn_size),
+                    egui::Button::new(format!("{} Step CPU", icons::SKIP_FORWARD)).min_size(btn_size),
                 )
                 .clicked()
             {
                 *state = EmulatorState::Step;
+            }
+
+            if ui
+                .add_enabled(
+                    is_paused,
+                    egui::Button::new(format!("{} Step DSP", icons::SKIP_FORWARD)).min_size(btn_size),
+                )
+                .clicked()
+            {
+                *state = EmulatorState::StepDsp;
             }
 
             if ui

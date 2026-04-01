@@ -1,4 +1,4 @@
-use egui::{Align, Color32, Context, Grid, RichText, ScrollArea};
+use egui::{Color32, Context, Grid, RichText, ScrollArea};
 use gecko::cpu::Cpu;
 use gecko::mmio::Mmio;
 use image::symbols::SymbolTable;
@@ -103,17 +103,14 @@ pub fn show_cpu(ctx: &Context, open: &mut bool, cpu: &Cpu, mmio: &Mmio, symbols:
 
                                     let is_pc = addr == pc;
 
-                                    let indicator_resp = if is_pc {
-                                        Some(
-                                            ui.label(
-                                                RichText::new(egui_phosphor::regular::PLAY)
-                                                    .color(Color32::from_rgb(120, 220, 120)),
-                                            ),
-                                        )
+                                    if is_pc {
+                                        ui.label(
+                                            RichText::new(egui_phosphor::regular::PLAY)
+                                                .color(Color32::from_rgb(120, 220, 120)),
+                                        );
                                     } else {
                                         ui.label("");
-                                        None
-                                    };
+                                    }
 
                                     ui.monospace(format!("{:#010X}", addr));
 
@@ -136,10 +133,6 @@ pub fn show_cpu(ctx: &Context, open: &mut bool, cpu: &Cpu, mmio: &Mmio, symbols:
                                     });
 
                                     ui.end_row();
-
-                                    if let Some(resp) = indicator_resp {
-                                        resp.scroll_to_me(Some(Align::Min));
-                                    }
 
                                     addr = addr.wrapping_add(4);
                                 }

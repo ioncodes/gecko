@@ -191,6 +191,16 @@ fn tokenize_operands<'a>(sc: &mut Scanner<'a>, tokens: &mut Vec<AsmToken<'a>>, m
             continue;
         }
 
+        // ── DSP register: $name or $name.sub ────────────────────────
+        if b == b'$' && sc.peek_at(1).is_some_and(|b| b.is_ascii_alphabetic()) {
+            let word = sc.span(|s| {
+                s.skip(1); // skip '$'
+                s.take_while(|b| b.is_ascii_alphanumeric() || *b == b'.' || *b == b'_');
+            });
+            tokens.push(AsmToken::Spr(word));
+            continue;
+        }
+
         // ── Word token: identifier ───────────────────────────────────
         if b.is_ascii_alphabetic() || b == b'_' {
             let word = sc.take_while(|b| b.is_ascii_alphanumeric() || *b == b'_');

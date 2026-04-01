@@ -11,6 +11,7 @@ pub enum EmulatorState {
     Running,
     Paused,
     Step,
+    StepDsp,
     RunUntilVsync,
     RunUntilAddress(u32),
 }
@@ -91,6 +92,10 @@ impl Debugger {
             EmulatorState::Step => {
                 self.trace_step(emulator);
                 emulator.step();
+                self.state = EmulatorState::Paused;
+            }
+            EmulatorState::StepDsp => {
+                emulator.tick_dsp();
                 self.state = EmulatorState::Paused;
             }
             EmulatorState::RunUntilVsync => {

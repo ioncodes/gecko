@@ -232,10 +232,23 @@ impl RenderState {
                             ui.close();
                         }
                         if ui
-                            .add_enabled(is_paused, egui::Button::new(format!("{} Step", icons::SKIP_FORWARD)))
+                            .add_enabled(
+                                is_paused,
+                                egui::Button::new(format!("{} Step CPU", icons::SKIP_FORWARD)),
+                            )
                             .clicked()
                         {
                             debugger_ui.debugger.set_state(EmulatorState::Step);
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                is_paused,
+                                egui::Button::new(format!("{} Step DSP", icons::SKIP_FORWARD)),
+                            )
+                            .clicked()
+                        {
+                            debugger_ui.debugger.set_state(EmulatorState::StepDsp);
                             ui.close();
                         }
                         if ui.button(format!("{} Run Until VSync", icons::FAST_FORWARD)).clicked() {
