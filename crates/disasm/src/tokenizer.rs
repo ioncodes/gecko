@@ -12,6 +12,8 @@ pub enum AsmToken<'a> {
     ImmHex(i64),
     Displacement(i32),
     BranchTarget(&'a str),
+    AddrPrefix,
+    ImmPrefix,
     Punct(char),
     Text(&'a str),
 }
@@ -28,6 +30,8 @@ impl fmt::Display for AsmToken<'_> {
             AsmToken::ImmUnsigned(v) => write!(f, "{v}"),
             AsmToken::ImmHex(v) if *v < 0 => write!(f, "-0x{:X}", -v),
             AsmToken::ImmHex(v) => write!(f, "0x{v:X}"),
+            AsmToken::AddrPrefix => f.write_str("@"),
+            AsmToken::ImmPrefix => f.write_str("#"),
             AsmToken::Displacement(v) => write!(f, "{v}"),
             AsmToken::BranchTarget(s) => f.write_str(s),
             AsmToken::Punct(c) => write!(f, "{c}"),
@@ -123,8 +127,20 @@ fn tokenize_operands<'a>(sc: &mut Scanner<'a>, tokens: &mut Vec<AsmToken<'a>>, m
         let ch = b as char;
 
         // ── Whitespace / punctuation ─────────────────────────────────
-        if ch.is_ascii_whitespace() || matches!(ch, ',' | '(' | ')' | '@' | '#' | '.') {
+        if ch.is_ascii_whitespace() || matches!(ch, ',' | '(' | ')' | '.') {
             tokens.push(AsmToken::Punct(ch));
+            sc.skip(1);
+            continue;
+        }
+
+        if ch == '@' {
+            tokens.push(AsmToken::AddrPrefix);
+            sc.skip(1);
+            continue;
+        }
+
+        if ch == '#' {
+            tokens.push(AsmToken::ImmPrefix);
             sc.skip(1);
             continue;
         }

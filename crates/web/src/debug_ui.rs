@@ -99,7 +99,10 @@ impl DebugState {
         if self.show_controls {
             let mut start_trace = false;
             let mut stop_trace = false;
+            let mut start_dsp_trace = false;
+            let mut stop_dsp_trace = false;
             let tracing = self.debugger.is_tracing();
+            let dsp_tracing = self.debugger.is_dsp_tracing();
             let mut state = self.debugger.state();
             dbglib::windows::controls::show_controls(
                 ctx,
@@ -110,6 +113,9 @@ impl DebugState {
                 tracing,
                 &mut start_trace,
                 &mut stop_trace,
+                dsp_tracing,
+                &mut start_dsp_trace,
+                &mut stop_dsp_trace,
             );
             self.debugger.set_state(state);
         }

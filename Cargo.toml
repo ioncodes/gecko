@@ -15,6 +15,20 @@ members = [
     "crates/dspemu",
     "crates/web",
 ]
+default-members = [
+    "crates/gctool",
+    "crates/disasm",
+    "crates/gecko",
+    "crates/tinyemu",
+    "crates/tinybench",
+    "crates/image",
+    "crates/tinyapp",
+    "crates/backend-wgpu",
+    "crates/dbglib",
+    "crates/debugger",
+    "crates/scripting",
+    "crates/dspemu",
+]
 
 [patch.crates-io]
 egui = { git = "https://github.com/ioncodes/egui.git" }

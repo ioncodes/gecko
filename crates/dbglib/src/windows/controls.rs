@@ -12,6 +12,9 @@ pub fn show_controls(
     tracing: bool,
     start_trace: &mut bool,
     stop_trace: &mut bool,
+    dsp_tracing: bool,
+    start_dsp_trace: &mut bool,
+    stop_dsp_trace: &mut bool,
 ) {
     egui::Window::new("Controls")
         .open(open)
@@ -72,6 +75,16 @@ pub fn show_controls(
                 *state = EmulatorState::RunUntilVsync;
             }
 
+            if ui
+                .add_enabled(
+                    is_paused,
+                    egui::Button::new(format!("{} Run Until DSP", icons::FAST_FORWARD)).min_size(btn_size),
+                )
+                .clicked()
+            {
+                *state = EmulatorState::RunUntilDsp;
+            }
+
             ui.separator();
 
             ui.horizontal(|ui| {
@@ -109,17 +122,33 @@ pub fn show_controls(
 
             if !tracing {
                 if ui
-                    .add(egui::Button::new(format!("{} Start Trace", icons::RECORD)).min_size(btn_size))
+                    .add(egui::Button::new(format!("{} Start CPU Trace", icons::RECORD)).min_size(btn_size))
                     .clicked()
                 {
                     *start_trace = true;
                 }
             } else {
                 if ui
-                    .add(egui::Button::new(format!("{} Stop Trace", icons::STOP)).min_size(btn_size))
+                    .add(egui::Button::new(format!("{} Stop CPU Trace", icons::STOP)).min_size(btn_size))
                     .clicked()
                 {
                     *stop_trace = true;
+                }
+            }
+
+            if !dsp_tracing {
+                if ui
+                    .add(egui::Button::new(format!("{} Start DSP Trace", icons::RECORD)).min_size(btn_size))
+                    .clicked()
+                {
+                    *start_dsp_trace = true;
+                }
+            } else {
+                if ui
+                    .add(egui::Button::new(format!("{} Stop DSP Trace", icons::STOP)).min_size(btn_size))
+                    .clicked()
+                {
+                    *stop_dsp_trace = true;
                 }
             }
         });

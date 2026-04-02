@@ -113,7 +113,6 @@ impl Default for ControlStatus {
 }
 
 // 0xCC005000 2 [W] CPU-to-DSP Mailbox High
-// TODO: Since we don't emulate the DSP processor, always read busy as 0
 
 crate::mmio_register! {
     MailboxToDspHi: u16 @ 0xCC005000 {
@@ -131,7 +130,9 @@ impl MmioAccess<Dsp> for MailboxToDspHi {
     }
 
     fn write(self, dsp: &mut Dsp) {
-        dsp.mailbox_to_dsp_hi = self;
+        // CPU writing CMBH sets data bits (14:0) and clears M bit
+        // M will be set when CMBL is written
+        dsp.mailbox_to_dsp_hi = self.with_busy(false);
     }
 }
 
@@ -161,12 +162,26 @@ impl MmioAccess<Dsp> for MailboxToDspLo {
 // 0xCC005004 2 [R] DSP-to-CPU Mailbox High (DMBH)
 
 crate::mmio_register! {
-    MailboxToCpuHi: u16 @ 0xCC005004 => Dsp.mailbox_to_cpu_hi {
+    MailboxToCpuHi: u16 @ 0xCC005004 {
         #[bits(0..=14)]
         pub data: u16,
 
         #[bits(15)]
         pub busy: bool,
+    }
+}
+
+impl MmioAccess<Dsp> for MailboxToCpuHi {
+    fn read(dsp: &Dsp) -> Self {
+        dsp.mailbox_to_cpu_hi
+    }
+
+    fn read_at(dsp: &mut Dsp, addr: u32, access_size: u32) -> u32 {
+        Self::read_sub(Self::read(dsp).raw() as u32, addr, access_size)
+    }
+
+    fn write(self, _dsp: &mut Dsp) {
+        // Read-only from CPU side
     }
 }
 

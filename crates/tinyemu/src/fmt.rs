@@ -14,6 +14,7 @@ pub fn colorize(tok: &AsmToken<'_>) -> String {
         AsmToken::ImmHex(v) => format!("0x{v:X}").blue().to_string(),
         AsmToken::Displacement(v) => format!("{v}").blue().to_string(),
         AsmToken::BranchTarget(s) => s.bright_red().to_string(),
+        AsmToken::AddrPrefix | AsmToken::ImmPrefix => tok.to_string().blue().to_string(),
         AsmToken::Punct(_) | AsmToken::Text(_) => tok.to_string(),
     }
 }

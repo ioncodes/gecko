@@ -276,6 +276,16 @@ impl RenderState {
                             debugger_ui.debugger.set_state(EmulatorState::RunUntilVsync);
                             ui.close();
                         }
+                        if ui
+                            .add_enabled(
+                                is_paused,
+                                egui::Button::new(format!("{} Run Until DSP", icons::FAST_FORWARD)),
+                            )
+                            .clicked()
+                        {
+                            debugger_ui.debugger.set_state(EmulatorState::RunUntilDsp);
+                            ui.close();
+                        }
                     });
 
                     ui.menu_button("Windows", |ui| {
@@ -317,7 +327,10 @@ impl RenderState {
             if debugger_ui.show_controls {
                 let mut start_trace = false;
                 let mut stop_trace = false;
+                let mut start_dsp_trace = false;
+                let mut stop_dsp_trace = false;
                 let tracing = debugger_ui.debugger.is_tracing();
+                let dsp_tracing = debugger_ui.debugger.is_dsp_tracing();
                 let mut state = debugger_ui.debugger.state();
                 dbglib::windows::controls::show_controls(
                     &ctx,
@@ -328,6 +341,9 @@ impl RenderState {
                     tracing,
                     &mut start_trace,
                     &mut stop_trace,
+                    dsp_tracing,
+                    &mut start_dsp_trace,
+                    &mut stop_dsp_trace,
                 );
                 debugger_ui.debugger.set_state(state);
                 if start_trace {
@@ -335,6 +351,12 @@ impl RenderState {
                 }
                 if stop_trace {
                     debugger_ui.stop_trace();
+                }
+                if start_dsp_trace {
+                    debugger_ui.start_dsp_trace();
+                }
+                if stop_dsp_trace {
+                    debugger_ui.stop_dsp_trace();
                 }
             }
             if debugger_ui.show_gx_state {

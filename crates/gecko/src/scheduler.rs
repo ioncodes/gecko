@@ -3,7 +3,7 @@ use std::collections::BinaryHeap;
 
 pub const CYCLES_PER_VSYNC: u64 = 486_000_000 / 60; // TODO: fix
 pub const TIMEBASE_DIVISOR: u64 = 12;
-pub const DSP_TICKS_PER_CPU_CYCLE: u64 = 1024; // TODO: should probably be much less, batch it on vsync? need this for debugging atm
+pub const DSP_TICKS_PER_CPU_CYCLE: u64 = 6; // ~486MHz CPU / ~81MHz DSP
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EventKind {

@@ -184,6 +184,7 @@ impl GameCube {
         }
 
         self.dsp.registers.pc = self.dsp.registers.nia;
+        self.check_dsp_interrupts();
     }
 }
 
@@ -229,8 +230,13 @@ impl Dsp {
     /// Read a 16-bit word from IFX register space, with mailbox side-effects.
     pub fn read_ifx(&mut self, addr: u16) -> u16 {
         match addr {
-            // CMBH (CPU Mailbox High): reading returns data + M bit
-            0xFFFE => self.mailbox_to_dsp_hi.raw(),
+            // CMBH (CPU Mailbox High): reading returns data + M bit;
+            // clears M (busy) so the CPU sees the mailbox as free.
+            0xFFFE => {
+                let val = self.mailbox_to_dsp_hi.raw();
+                self.mailbox_to_dsp_hi.set_busy(false);
+                val
+            }
             // CMBL (CPU Mailbox Low): reading clears CMBH.M (busy)
             0xFFFF => {
                 self.mailbox_to_dsp_hi.set_busy(false);
@@ -238,12 +244,8 @@ impl Dsp {
             }
             // DMBH (DSP Mailbox High): DSP reads back what it wrote
             0xFFFC => self.mailbox_to_cpu_hi.raw(),
-            // DMBL (DSP Mailbox Low): reading clears DMBH.M (CPU consumed the mail)
-            0xFFFD => {
-                let val = self.mailbox_to_cpu_lo.raw();
-                self.mailbox_to_cpu_hi.set_busy(false);
-                val
-            }
+            // DMBL (DSP Mailbox Low): DSP reads back what it wrote (no side effects)
+            0xFFFD => self.mailbox_to_cpu_lo.raw(),
             _ => read_word(&*self.ifx, addr - 0xFF00),
         }
     }
@@ -251,19 +253,22 @@ impl Dsp {
     /// Write a 16-bit word to IFX register space, with mailbox side-effects.
     pub fn write_ifx(&mut self, addr: u16, value: u16) {
         match addr {
-            // DMBH (DSP Mailbox High): store data bits, M will be set when DMBL is written
+            // DMBH (DSP Mailbox High): store data bits (14:0), clear M bit
+            // M will be set when DMBL is written (matching Dolphin behavior)
             0xFFFC => {
                 self.mailbox_to_cpu_hi = regs::MailboxToCpuHi::from_raw(value & 0x7FFF);
             }
-            // DMBL (DSP Mailbox Low): writing sets DMBH.M, signaling mail ready to CPU
+            // DMBL (DSP Mailbox Low): writing sets DMBH.M
+            // Interrupt is NOT raised here; the ucode must explicitly write DIRQ (0xFFFB)
             0xFFFD => {
                 self.mailbox_to_cpu_lo = regs::MailboxToCpuLo::from_raw(value);
                 self.mailbox_to_cpu_hi.set_busy(true);
-                tracing::debug!(
-                    hi = format!("{:04X}", self.mailbox_to_cpu_hi.raw()),
-                    lo = format!("{:04X}", value),
-                    "DSP->CPU mailbox"
-                );
+            }
+            // DIRQ: DSP explicitly raises interrupt to CPU
+            0xFFFB => {
+                if value & 1 != 0 {
+                    self.csr.set_dsp_interrupt(true);
+                }
             }
             // CMBH/CMBL are read-only from DSP side
             0xFFFE | 0xFFFF => {}

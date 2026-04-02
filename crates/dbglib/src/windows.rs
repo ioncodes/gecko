@@ -27,9 +27,12 @@ pub(crate) fn token_color(token: &AsmToken<'_>) -> Option<Color32> {
         AsmToken::Gpr(_) | AsmToken::Fpr(_) | AsmToken::CrField(_) | AsmToken::Spr(_) => {
             Some(Color32::from_rgb(255, 200, 100))
         }
-        AsmToken::ImmSigned(_) | AsmToken::ImmUnsigned(_) | AsmToken::ImmHex(_) | AsmToken::Displacement(_) => {
-            Some(Color32::from_rgb(150, 220, 150))
-        }
+        AsmToken::ImmSigned(_)
+        | AsmToken::ImmUnsigned(_)
+        | AsmToken::ImmHex(_)
+        | AsmToken::Displacement(_)
+        | AsmToken::AddrPrefix
+        | AsmToken::ImmPrefix => Some(Color32::from_rgb(150, 220, 150)),
         AsmToken::BranchTarget(_) => Some(Color32::from_rgb(255, 150, 150)),
         AsmToken::Punct(_) | AsmToken::Text(_) => None,
     }

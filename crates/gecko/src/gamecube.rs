@@ -156,31 +156,32 @@ impl GameCube {
         emulator
     }
 
+    /// Handle a single scheduler event.
     #[inline(always)]
-    pub fn step(&mut self) {
-        // Fire any events that are due
-        while let Some(event) = self.scheduler.poll() {
-            match event {
-                EventKind::VSync => {
-                    self.vsync_pending = true;
-                    self.scheduler.schedule_in(CYCLES_PER_VSYNC, EventKind::VSync);
-                }
-                EventKind::ViHalfLine => {
-                    self.vi.on_half_line(self.scheduler.cycles);
-                    self.vi.half_line_scheduled = false;
-                    self.maybe_schedule_vi_half_line();
-                    self.check_vi_interrupts();
-                }
-                EventKind::DiTransferComplete => {
-                    self.complete_dvd_transfer();
-                }
-                EventKind::DspTick => {
-                    self.tick_dsp();
-                    self.scheduler.schedule_in(DSP_TICKS_PER_CPU_CYCLE, EventKind::DspTick);
-                }
+    pub fn process_event(&mut self, event: EventKind) {
+        match event {
+            EventKind::VSync => {
+                self.vsync_pending = true;
+                self.scheduler.schedule_in(CYCLES_PER_VSYNC, EventKind::VSync);
+            }
+            EventKind::ViHalfLine => {
+                self.vi.on_half_line(self.scheduler.cycles);
+                self.vi.half_line_scheduled = false;
+                self.maybe_schedule_vi_half_line();
+                self.check_vi_interrupts();
+            }
+            EventKind::DiTransferComplete => {
+                self.complete_dvd_transfer();
+            }
+            EventKind::DspTick => {
+                self.tick_dsp();
+                self.scheduler.schedule_in(DSP_TICKS_PER_CPU_CYCLE, EventKind::DspTick);
             }
         }
+    }
 
+    #[inline(always)]
+    pub fn step_cpu(&mut self) {
         // Deliver external interrupt when EE=1 and any enabled PI interrupt is pending
         if self.cpu.msr.external_interrupt_enable() && self.pi.interrupt_pending() {
             self.cause_external_interrupt();
@@ -241,6 +242,15 @@ impl GameCube {
         }
 
         self.cpu.pc = self.cpu.nia;
+    }
+
+    /// Drain pending scheduler events, then execute one CPU instruction.
+    #[inline(always)]
+    pub fn step(&mut self) {
+        while let Some(event) = self.scheduler.poll() {
+            self.process_event(event);
+        }
+        self.step_cpu();
     }
 
     #[inline(always)]

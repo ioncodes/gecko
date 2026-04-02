@@ -56,11 +56,33 @@ pub fn cmp_test<const OP: u32>(
             let result = a.wrapping_sub(b);
             ctx.dsp.registers.update_flags_sub(a, b, result);
         }
-        OP_TST => todo!("tst"),
-        OP_TSTPROD => todo!("tstprod"),
-        OP_TSTAXH => todo!("tstaxh"),
-        OP_NX_0 => todo!("nx_0"),
-        OP_NX_1 => todo!("nx_1"),
+        OP_TST => {
+            let r = instr.r_4_4();
+            let ac = ctx.dsp.registers.ac(r);
+            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.status.set_o(false);
+            ctx.dsp.registers.status.set_c(false);
+        }
+        OP_TSTPROD => {
+            let regs = &mut ctx.dsp.registers;
+            let ph = (regs.product_high as u8) as i8 as i64;
+            let pm1 = regs.product_mid1 as i64;
+            let pm2 = regs.product_mid2 as i64;
+            let pl = regs.product_low as i64;
+            let prod = (ph << 32) + ((pm1 + pm2) << 16) + pl;
+            regs.update_flags_ac(prod);
+            regs.status.set_o(false);
+            regs.status.set_c(false);
+        }
+        OP_TSTAXH => {
+            let r = instr.r_7_7() as usize;
+            let val = (ctx.dsp.registers.axh[r] as i16 as i64) << 16;
+            ctx.dsp.registers.update_flags_ac(val);
+            ctx.dsp.registers.status.set_as32(false);
+            ctx.dsp.registers.status.set_o(false);
+            ctx.dsp.registers.status.set_c(false);
+        }
+        OP_NX_0 | OP_NX_1 => {}
         OP_CLR => {
             let r = instr.r_4_4();
             // Clear all three parts of the accumulator
@@ -165,9 +187,47 @@ pub fn imm_alu<const OP: u32>(
 ) {
     match OP {
         OP_ADDI => todo!("addi"),
-        OP_XORI => todo!("xori"),
-        OP_ANDI => todo!("andi"),
-        OP_ORI => todo!("ori"),
+        OP_XORI => {
+            let d = instr.d_7_7();
+            let ac_mid = if d != 0 {
+                ctx.dsp.registers.ac1_mid
+            } else {
+                ctx.dsp.registers.ac0_mid
+            };
+            let result = ac_mid ^ instr.imm_16_31();
+            ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
+            let ac = ctx.dsp.registers.ac(d);
+            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.status.set_o(false);
+            ctx.dsp.registers.status.set_c(false);
+        }
+        OP_ANDI => {
+            let d = instr.d_7_7();
+            let ac_mid = if d != 0 {
+                ctx.dsp.registers.ac1_mid
+            } else {
+                ctx.dsp.registers.ac0_mid
+            };
+            let result = ac_mid & instr.imm_16_31();
+            ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
+            let ac = ctx.dsp.registers.ac(d);
+            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.status.set_o(false);
+            ctx.dsp.registers.status.set_c(false);
+        }
+        OP_ORI => {
+            let d = instr.d_7_7();
+            let ac_mid = if d != 0 {
+                ctx.dsp.registers.ac1_mid
+            } else {
+                ctx.dsp.registers.ac0_mid
+            };
+            let result = ac_mid | instr.imm_16_31();
+            ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
+            let ac = ctx.dsp.registers.ac(d);
+            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.status.set_o(false);
+        }
         OP_CMPI => {
             let d = instr.d_7_7();
             let a = ctx.dsp.registers.ac(d);
@@ -308,17 +368,105 @@ pub fn load_store<const OP: u32>(
 }
 
 #[inline(always)]
-pub fn logic<const OP: u32>(
-    _ctx: &mut crate::gamecube::GameCube,
-    _instr: crate::flipper::dsp::instruction::Instruction,
-) {
+pub fn logic<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::flipper::dsp::instruction::Instruction) {
     match OP {
-        OP_XORR => todo!("xorr"),
-        OP_ANDR => todo!("andr"),
-        OP_ORR => todo!("orr"),
-        OP_ANDC => todo!("andc"),
-        OP_ORC => todo!("orc"),
-        OP_XORC => todo!("xorc"),
+        OP_XORR => {
+            let s = instr.s_6_6() as usize;
+            let d = instr.d_7_7();
+            let ac_mid = if d != 0 {
+                ctx.dsp.registers.ac1_mid
+            } else {
+                ctx.dsp.registers.ac0_mid
+            };
+            let result = ac_mid ^ ctx.dsp.registers.axh[s];
+            ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
+            let ac = ctx.dsp.registers.ac(d);
+            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.status.set_o(false);
+            ctx.dsp.registers.status.set_c(false);
+        }
+        OP_ANDR => {
+            let s = instr.s_6_6() as usize;
+            let d = instr.d_7_7();
+            let ac_mid = if d != 0 {
+                ctx.dsp.registers.ac1_mid
+            } else {
+                ctx.dsp.registers.ac0_mid
+            };
+            let result = ac_mid & ctx.dsp.registers.axh[s];
+            ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
+            let ac = ctx.dsp.registers.ac(d);
+            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.status.set_o(false);
+            ctx.dsp.registers.status.set_c(false);
+        }
+        OP_ORR => {
+            let s = instr.s_6_6() as usize;
+            let d = instr.d_7_7();
+            let ac_mid = if d != 0 {
+                ctx.dsp.registers.ac1_mid
+            } else {
+                ctx.dsp.registers.ac0_mid
+            };
+            let result = ac_mid | ctx.dsp.registers.axh[s];
+            ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
+            let ac = ctx.dsp.registers.ac(d);
+            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.status.set_o(false);
+        }
+        OP_ANDC => {
+            let d = instr.d_7_7();
+            let ac_mid = if d != 0 {
+                ctx.dsp.registers.ac1_mid
+            } else {
+                ctx.dsp.registers.ac0_mid
+            };
+            let other_mid = if d != 0 {
+                ctx.dsp.registers.ac0_mid
+            } else {
+                ctx.dsp.registers.ac1_mid
+            };
+            let result = ac_mid & other_mid;
+            ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
+            let ac = ctx.dsp.registers.ac(d);
+            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.status.set_o(false);
+            ctx.dsp.registers.status.set_c(false);
+        }
+        OP_ORC => {
+            let d = instr.d_7_7();
+            let ac_mid = if d != 0 {
+                ctx.dsp.registers.ac1_mid
+            } else {
+                ctx.dsp.registers.ac0_mid
+            };
+            let other_mid = if d != 0 {
+                ctx.dsp.registers.ac0_mid
+            } else {
+                ctx.dsp.registers.ac1_mid
+            };
+            let result = ac_mid | other_mid;
+            ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
+        }
+        OP_XORC => {
+            let d = instr.d_7_7();
+            let ac_mid = if d != 0 {
+                ctx.dsp.registers.ac1_mid
+            } else {
+                ctx.dsp.registers.ac0_mid
+            };
+            let other_mid = if d != 0 {
+                ctx.dsp.registers.ac0_mid
+            } else {
+                ctx.dsp.registers.ac1_mid
+            };
+            let result = ac_mid ^ other_mid;
+            ctx.dsp.registers.write::<false>(reg::AC0M + d, result);
+            let ac = ctx.dsp.registers.ac(d);
+            ctx.dsp.registers.update_flags_ac(ac);
+            ctx.dsp.registers.status.set_o(false);
+            ctx.dsp.registers.status.set_c(false);
+        }
         OP_NOT_AC => todo!("not_ac"),
         _ => unreachable!(),
     }

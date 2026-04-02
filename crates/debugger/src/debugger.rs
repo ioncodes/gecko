@@ -4,7 +4,8 @@ use std::io::BufWriter;
 use dbglib::Debugger;
 use image::symbols::SymbolTable;
 
-const TRACE_FILENAME: &str = "trace.log";
+const CPU_TRACE_FILENAME: &str = "cpu_trace.log";
+const DSP_TRACE_FILENAME: &str = "dsp_trace.log";
 const DEFAULT_LUA_SCRIPT: &str = include_str!("../../../scripts/bs2_dvd_state_logger.lua");
 
 pub struct DebuggerUi {
@@ -57,11 +58,20 @@ impl Default for DebuggerUi {
 
 impl DebuggerUi {
     pub fn start_trace(&mut self) {
-        let file = File::create(TRACE_FILENAME).expect("failed to create trace file");
+        let file = File::create(CPU_TRACE_FILENAME).expect("failed to create CPU trace file");
         self.debugger.start_trace(Box::new(BufWriter::new(file)));
     }
 
     pub fn stop_trace(&mut self) {
         self.debugger.stop_trace();
+    }
+
+    pub fn start_dsp_trace(&mut self) {
+        let file = File::create(DSP_TRACE_FILENAME).expect("failed to create DSP trace file");
+        self.debugger.start_dsp_trace(Box::new(BufWriter::new(file)));
+    }
+
+    pub fn stop_dsp_trace(&mut self) {
+        self.debugger.stop_dsp_trace();
     }
 }
