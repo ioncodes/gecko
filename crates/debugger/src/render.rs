@@ -184,6 +184,27 @@ impl RenderState {
             }
         }
 
+        // Drain Lua log messages from the script host
+        if debugger_ui.show_lua {
+            if let Some(ref mut host) = emulator.script_host {
+                debugger_ui.lua_log.extend(host.drain_logs());
+            }
+        }
+
+        // Load a new Lua script if requested
+        if debugger_ui.lua_load_pending {
+            debugger_ui.lua_load_pending = false;
+            match scripting::LuaScriptHost::from_source("editor", &debugger_ui.lua_source) {
+                Ok(host) => {
+                    debugger_ui.lua_log.push("[lua] script loaded".to_string());
+                    emulator.set_script_host(Box::new(host));
+                }
+                Err(err) => {
+                    debugger_ui.lua_log.push(format!("[lua] error: {err}"));
+                }
+            }
+        }
+
         debugger_ui.debugger.tick(emulator);
 
         let frame = match self.surface.get_current_texture() {
@@ -267,6 +288,7 @@ impl RenderState {
                         ui.checkbox(&mut debugger_ui.show_exi, "EXI");
                         ui.checkbox(&mut debugger_ui.show_irqs, "IRQ");
                         ui.checkbox(&mut debugger_ui.show_controls, "Controls");
+                        ui.checkbox(&mut debugger_ui.show_lua, "Lua");
                     });
                 });
             });
@@ -335,6 +357,24 @@ impl RenderState {
             }
             if debugger_ui.show_irqs {
                 dbglib::windows::irq::show_irq(&ctx, &mut debugger_ui.show_irqs, &emulator.cpu, &emulator.pi);
+            }
+            if debugger_ui.show_lua {
+                let mut load_script = false;
+                let mut clear_log = false;
+                dbglib::windows::lua::show_lua(
+                    &ctx,
+                    &mut debugger_ui.show_lua,
+                    &mut debugger_ui.lua_source,
+                    &debugger_ui.lua_log,
+                    &mut load_script,
+                    &mut clear_log,
+                );
+                if clear_log {
+                    debugger_ui.lua_log.clear();
+                }
+                if load_script {
+                    debugger_ui.lua_load_pending = true;
+                }
             }
         });
 

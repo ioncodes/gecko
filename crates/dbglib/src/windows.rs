@@ -6,6 +6,7 @@ pub mod dvd;
 pub mod exi;
 pub mod gx;
 pub mod irq;
+pub mod lua;
 pub mod mmio;
 
 use disasm::tokenizer::AsmToken;

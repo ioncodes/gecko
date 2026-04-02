@@ -108,6 +108,11 @@ pub trait ScriptHost {
         Ok(None)
     }
 
+    /// Drain buffered log messages emitted by the script.
+    fn drain_logs(&mut self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Called before each CPU instruction executes.
     fn on_cpu_pre(&mut self, emu: &mut GameCube);
 

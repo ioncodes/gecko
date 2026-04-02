@@ -5,6 +5,7 @@ use dbglib::Debugger;
 use image::symbols::SymbolTable;
 
 const TRACE_FILENAME: &str = "trace.log";
+const DEFAULT_LUA_SCRIPT: &str = include_str!("../../../scripts/bs2_dvd_state_logger.lua");
 
 pub struct DebuggerUi {
     pub debugger: Debugger,
@@ -18,10 +19,14 @@ pub struct DebuggerUi {
     pub show_irqs: bool,
     pub show_controls: bool,
     pub show_callstack: bool,
+    pub show_lua: bool,
     pub memory_base: u32,
     pub memory_addr_input: String,
     pub run_until_addr_input: String,
     pub dvd_cover_open: Option<bool>,
+    pub lua_source: String,
+    pub lua_log: Vec<String>,
+    pub lua_load_pending: bool,
 }
 
 impl Default for DebuggerUi {
@@ -38,10 +43,14 @@ impl Default for DebuggerUi {
             show_exi: false,
             show_irqs: false,
             show_callstack: false,
+            show_lua: false,
             memory_base: 0x8000_0000,
             memory_addr_input: "80000000".to_string(),
             run_until_addr_input: String::new(),
             dvd_cover_open: None,
+            lua_source: DEFAULT_LUA_SCRIPT.to_string(),
+            lua_log: Vec::new(),
+            lua_load_pending: false,
         }
     }
 }

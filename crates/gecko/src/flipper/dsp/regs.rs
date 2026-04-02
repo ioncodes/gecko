@@ -1,7 +1,7 @@
 use chapa::BitEnum;
 
 use crate::flipper::dsp::Dsp;
-use crate::mmio::traits::MmioAccess;
+use crate::mmio::traits::{MmioAccess, MmioRegister};
 
 // 0xCC00500A 2 [R/W] CSR - DSP Control/Status Register
 
@@ -127,8 +127,7 @@ crate::mmio_register! {
 
 impl MmioAccess<Dsp> for MailboxToDspHi {
     fn read(dsp: &Dsp) -> Self {
-        // TODO: instantly consume it for now
-        dsp.mailbox_to_dsp_hi.with_busy(false)
+        dsp.mailbox_to_dsp_hi
     }
 
     fn write(self, dsp: &mut Dsp) {
@@ -180,9 +179,14 @@ crate::mmio_register! {
 
 impl MmioAccess<Dsp> for MailboxToCpuLo {
     fn read(dsp: &Dsp) -> Self {
-        // NOTE: ideally reading lo should clear hi.M, but read takes &self not &mut self.
-        // The M bit will be cleared on the next hi read after lo is read.
         dsp.mailbox_to_cpu_lo
+    }
+
+    fn read_at(dsp: &mut Dsp, addr: u32, access_size: u32) -> u32 {
+        let val = Self::read_sub(Self::read(dsp).raw() as u32, addr, access_size);
+        // Reading DMBL clears DMBH.M (bit 15), signaling the CPU has consumed the mail
+        dsp.mailbox_to_cpu_hi.set_busy(false);
+        val
     }
 
     fn write(self, _dsp: &mut Dsp) {
