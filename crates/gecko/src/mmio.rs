@@ -183,6 +183,11 @@ impl Mmio {
         self.phys_slice(Self::virt_to_phys(addr), len)
     }
 
+    #[inline(always)]
+    pub fn virt_slice_mut(&mut self, addr: u32, len: usize) -> &mut [u8] {
+        self.phys_slice_mut(Self::virt_to_phys(addr), len)
+    }
+
     /// Read a typed MMIO register from its physical address
     #[inline(always)]
     pub fn read_register<T: traits::MmioRegister>(&self) -> T {

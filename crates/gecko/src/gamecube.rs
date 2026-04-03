@@ -15,7 +15,7 @@ use crate::flipper::vi::VideoInterface;
 #[cfg(feature = "idle-skip")]
 use crate::idle::{IDLE_LOOP_MAX_INSTRS, IdleCheck, IdleDetector};
 use crate::mmio::Mmio;
-use crate::scheduler::{CYCLES_PER_VSYNC, CPU_CYCLES_PER_DSP_TICK, EventKind, Scheduler};
+use crate::scheduler::{CPU_CYCLES_PER_DSP_TICK, CYCLES_PER_VSYNC, EventKind, Scheduler};
 #[cfg(feature = "scripting")]
 use crate::scripting::{HookFlags, ScriptHookFilters, ScriptHookState, ScriptHost};
 use image::Executable;

@@ -1,5 +1,6 @@
 use crate::flipper::dsp::condition::BranchControl;
-use crate::flipper::dsp::core::{SignExtensionMode, StatusRegister, reg};
+use crate::flipper::dsp::core::reg;
+use crate::flipper::dsp::core::regs::{SignExtensionMode, StatusRegister};
 use crate::flipper::dsp::lut::*;
 
 #[inline(always)]

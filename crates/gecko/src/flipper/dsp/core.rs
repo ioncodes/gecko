@@ -1,4 +1,7 @@
-use chapa::BitEnum;
+pub mod regs;
+pub mod stack;
+
+use crate::flipper::dsp::core::regs::{SignExtensionMode, StatusRegister};
 
 /// DSP register indices for `Registers::read` / `Registers::write`.
 pub mod reg {
@@ -36,47 +39,6 @@ pub mod reg {
     pub const AC1M: u8 = 31;
 }
 
-pub struct DspStack<const N: usize> {
-    data: [u16; N],
-    ptr: u8,
-}
-
-impl<const N: usize> Default for DspStack<N> {
-    fn default() -> Self {
-        Self { data: [0; N], ptr: 0 }
-    }
-}
-
-impl<const N: usize> DspStack<N> {
-    #[inline(always)]
-    pub fn top(&self) -> u16 {
-        self.data[self.ptr as usize]
-    }
-
-    #[inline(always)]
-    pub fn set_top(&mut self, value: u16) {
-        self.data[self.ptr as usize] = value;
-    }
-
-    #[inline(always)]
-    pub fn push(&mut self, value: u16) {
-        self.ptr += 1;
-        self.data[self.ptr as usize] = value;
-    }
-
-    #[inline(always)]
-    pub fn pop(&mut self) -> u16 {
-        let value = self.data[self.ptr as usize];
-        self.ptr -= 1;
-        value
-    }
-
-    #[inline(always)]
-    pub fn is_empty(&self) -> bool {
-        self.ptr == 0
-    }
-}
-
 #[derive(Default)]
 pub struct Registers {
     pub pc: u16,
@@ -85,10 +47,10 @@ pub struct Registers {
     pub ar: [u16; 4],
     pub ix: [u16; 4],
     pub wr: [u16; 4],
-    pub call_stack: DspStack<8>,   // st0
-    pub data_stack: DspStack<4>,   // st1
-    pub loop_addr: DspStack<4>,    // st2
-    pub loop_counter: DspStack<4>, // st3
+    pub call_stack: stack::DspStack<32>,   // st0
+    pub data_stack: stack::DspStack<32>,   // st1
+    pub loop_addr: stack::DspStack<32>,    // st2
+    pub loop_counter: stack::DspStack<32>, // st3
     pub ac0_high: u16,
     pub ac1_high: u16,
     pub config: u16,
@@ -283,41 +245,4 @@ impl Registers {
             _ => unreachable!(),
         }
     }
-}
-
-#[derive(BitEnum, PartialEq, PartialOrd)]
-pub enum SignExtensionMode {
-    Bits16,
-    Bits40,
-}
-
-#[chapa::bitfield(u16, order = lsb0)]
-#[derive(Clone, Copy, Default)]
-pub struct StatusRegister {
-    #[bits(0, alias = "c")]
-    pub carry: bool,
-    #[bits(1, alias = "o")]
-    pub overflow: bool,
-    #[bits(2, alias = "z")]
-    pub arithmetic_zero: bool,
-    #[bits(3, alias = "s")]
-    pub sign: bool,
-    #[bits(4, alias = "as32")]
-    pub above_s32: bool,
-    #[bits(5, alias = "tb")]
-    pub top_two_bits_equal: bool,
-    #[bits(6, alias = "lz")]
-    pub logical_zero: bool,
-    #[bits(7, alias = "os")]
-    pub overflow_sticky: bool,
-    #[bits(9, alias = "ie")]
-    pub interrupt_enable: bool,
-    #[bits(11, alias = "eie")]
-    pub external_interrupt_enable: bool,
-    #[bits(13, alias = "am")]
-    pub product_multiply_result_by_2: bool, // when AM = 0
-    #[bits(14, alias = "sxm")]
-    pub sign_extension_mode: SignExtensionMode,
-    #[bits(15, alias = "su")]
-    pub multiplication_operands_are_signed: bool,
 }

@@ -1,3 +1,4 @@
+pub mod addr;
 pub mod condition;
 pub mod core;
 pub mod instruction;
@@ -14,8 +15,6 @@ use crate::gamecube::GameCube;
 use crate::mmio::Mmio;
 use crate::mmio::constants::DSP_BASE;
 use crate::mmio::traits::{MmioAccess, MmioRegister, MmioRw};
-
-pub const DSP_MAIL_SLICE: u32 = 72;
 
 pub struct Dsp {
     // Registers
@@ -46,8 +45,16 @@ pub struct Dsp {
     pub aram_dma_aram_addr: regs::AramDmaAramAddr,
     pub aram_dma_control: regs::AramDmaControl,
 
+    // IFX Registers
+    pub dma_control: core::regs::DspDmaControl,
+    pub dma_length: u16,
+    pub dma_dsp_addr: u16,
+    pub dma_ram_addr_hi: u16,
+    pub dma_ram_addr_lo: u16,
+
     // Flags set by register write handlers, consumed by process_pending_dma
     pub pending_aram_dma: bool,
+    pub pending_dsp_dma: bool,
     pub pending_ucode_upload: bool,
 }
 
@@ -79,68 +86,104 @@ impl Dsp {
             aram_dma_mmio_addr: regs::AramDmaMmioAddr::from_raw(0),
             aram_dma_aram_addr: regs::AramDmaAramAddr::from_raw(0),
             aram_dma_control: regs::AramDmaControl::from_raw(0),
+            dma_control: core::regs::DspDmaControl::new(),
+            dma_length: 0,
+            dma_dsp_addr: 0,
+            dma_ram_addr_hi: 0,
+            dma_ram_addr_lo: 0,
             pending_aram_dma: false,
+            pending_dsp_dma: false,
             pending_ucode_upload: false,
         }
     }
 
-    /// Called by the bus after every DSP MMIO write
-    ///
-    /// - If an ARAM DMA was triggered (write to DmaControl), execute the transfer and
-    ///   assert ARINT in the CSR
-    /// - If ucode upload was triggered (CSR bit 11 falling edge), DMA 1024 bytes from
-    ///   main RAM into IRAM (we LLE, but we could HLE the mailbox response)
     #[inline]
     pub fn process_pending_dma(&mut self, mmio: &mut Mmio) {
-        // Handle ARAM DMA
         if self.pending_aram_dma {
             self.pending_aram_dma = false;
-
-            let mmio_addr = (self.aram_dma_mmio_addr.raw() & 0x3FFFFFFF) as usize;
-            let aram_addr = self.aram_dma_aram_addr.raw() as usize;
-            let count = self.aram_dma_control.count() as usize * 4;
-
-            if self.aram_dma_control.direction() == regs::DmaDirection::AramToRam {
-                // ARAM -> main RAM
-                let src = self.aram[aram_addr..aram_addr + count].to_vec();
-                mmio.ram[mmio_addr..mmio_addr + count].copy_from_slice(&src);
-            } else {
-                // main RAM -> ARAM
-                let src = mmio.ram[mmio_addr..mmio_addr + count].to_vec();
-                self.aram[aram_addr..aram_addr + count].copy_from_slice(&src);
-            }
-
-            tracing::debug!(
-                mmio_addr = format!("{mmio_addr:08X}"),
-                aram_addr = format!("{aram_addr:08X}"),
-                count,
-                direction = ?self.aram_dma_control.direction(),
-                "ARAM DMA complete"
-            );
-
-            // Assert ARAM DMA complete interrupt in CSR
-            self.csr = self.csr.with_ar_interrupt(true);
+            self.process_aram_dma(mmio);
         }
 
-        // Handle DSP ucode upload
         if self.pending_ucode_upload {
             self.pending_ucode_upload = false;
-
-            const UCODE_ADDR: usize = 0x8100_0000;
-            const UCODE_SIZE: usize = 1024;
-            let src = mmio.virt_slice(UCODE_ADDR as u32, UCODE_SIZE);
-            self.iram[..UCODE_SIZE].copy_from_slice(&src);
-
-            tracing::info!(
-                mmio_addr = format!("{UCODE_ADDR:08X}"),
-                count = UCODE_SIZE,
-                "DSP stub uploaded from RAM to IRAM, executing IRAM"
-            );
-
-            // HLE: Write expected response to mailbox
-            // self.mailbox_to_cpu_hi = regs::MailboxToCpuHi::from_raw(0x8071);
-            // self.mailbox_to_cpu_lo = regs::MailboxToCpuLo::from_raw(0xFEED);
+            self.process_ucode_upload(mmio);
         }
+
+        if self.pending_dsp_dma {
+            self.pending_dsp_dma = false;
+            self.process_dsp_dma(mmio);
+        }
+    }
+
+    fn process_aram_dma(&mut self, mmio: &mut Mmio) {
+        let mmio_addr = (self.aram_dma_mmio_addr.raw() & 0x3FFFFFFF) as usize;
+        let aram_addr = self.aram_dma_aram_addr.raw() as usize;
+        let count = self.aram_dma_control.count() as usize * 4;
+
+        if self.aram_dma_control.direction() == regs::DmaDirection::AramToRam {
+            let src = &self.aram[aram_addr..aram_addr + count];
+            let dst = mmio.virt_slice_mut(mmio_addr as u32, count);
+            dst.copy_from_slice(src);
+        } else {
+            let src = mmio.virt_slice(mmio_addr as u32, count);
+            self.aram[aram_addr..aram_addr + count].copy_from_slice(&src);
+        }
+
+        tracing::debug!(
+            mmio_addr = format!("{mmio_addr:08X}"),
+            aram_addr = format!("{aram_addr:08X}"),
+            count,
+            direction = ?self.aram_dma_control.direction(),
+            "ARAM DMA complete"
+        );
+
+        self.csr = self.csr.with_ar_interrupt(true);
+    }
+
+    fn process_ucode_upload(&mut self, mmio: &mut Mmio) {
+        const UCODE_ADDR: usize = 0x8100_0000;
+        const UCODE_SIZE: usize = 1024;
+        let src = mmio.virt_slice(UCODE_ADDR as u32, UCODE_SIZE);
+        self.iram[..UCODE_SIZE].copy_from_slice(&src);
+
+        tracing::info!(
+            mmio_addr = format!("{UCODE_ADDR:08X}"),
+            count = UCODE_SIZE,
+            "DSP stub uploaded from RAM to IRAM, executing IRAM"
+        );
+    }
+
+    fn process_dsp_dma(&mut self, mmio: &mut Mmio) {
+        let ram_addr = ((self.dma_ram_addr_hi as u32) << 16) | self.dma_ram_addr_lo as u32;
+        let dsp_addr = (self.dma_dsp_addr as usize) * 2; // word address -> byte offset
+        let len = self.dma_length as usize;
+
+        tracing::debug!(
+            ram_addr = format!("{ram_addr:08X}"),
+            dsp_addr = format!("{dsp_addr:04X}"),
+            len,
+            dscr = format!("{:04X}", self.dma_control.raw()),
+            "DSP DMA"
+        );
+
+        let memory = match self.dma_control.memory_type() {
+            core::regs::DspMemoryType::Data => &mut *self.dram,
+            core::regs::DspMemoryType::Instruction => &mut *self.iram,
+        };
+
+        match self.dma_control.direction() {
+            core::regs::DspDmaDirection::MainToDsp => {
+                let src = mmio.virt_slice(ram_addr, len);
+                memory[dsp_addr..dsp_addr + len].copy_from_slice(&src);
+            }
+            core::regs::DspDmaDirection::DspToMain => {
+                let src = &memory[dsp_addr..dsp_addr + len];
+                let dst = mmio.virt_slice_mut(ram_addr, len);
+                dst.copy_from_slice(src);
+            }
+        }
+
+        self.dma_length = 0;
     }
 }
 
@@ -233,18 +276,27 @@ impl Dsp {
     pub fn read_ifx(&mut self, addr: u16) -> u16 {
         match addr {
             // CMBH (CPU Mailbox High): reading returns data + M bit.
-            // M is only cleared when CMBL is read (0xFFFF).
-            0xFFFE => self.mailbox_to_dsp_hi.raw(),
+            // M is only cleared when CMBL is read.
+            addr::IFX_CMBH => self.mailbox_to_dsp_hi.raw(),
             // CMBL (CPU Mailbox Low): reading clears CMBH.M (busy)
-            0xFFFF => {
+            addr::IFX_CMBL => {
                 self.mailbox_to_dsp_hi.set_busy(false);
                 self.mailbox_to_dsp_lo.raw()
             }
             // DMBH (DSP Mailbox High): DSP reads back what it wrote
-            0xFFFC => self.mailbox_to_cpu_hi.raw(),
+            addr::IFX_DMBH => self.mailbox_to_cpu_hi.raw(),
             // DMBL (DSP Mailbox Low): DSP reads back what it wrote (no side effects)
-            0xFFFD => self.mailbox_to_cpu_lo.raw(),
-            _ => read_word(&*self.ifx, addr - 0xFF00),
+            addr::IFX_DMBL => self.mailbox_to_cpu_lo.raw(),
+            // DSP DMA registers
+            addr::IFX_DSCR => self.dma_control.raw(),
+            addr::IFX_DSBL => self.dma_length,
+            addr::IFX_DSPA => self.dma_dsp_addr,
+            addr::IFX_DSMAH => self.dma_ram_addr_hi,
+            addr::IFX_DSMAL => self.dma_ram_addr_lo,
+            _ => {
+                tracing::warn!(addr = format!("{:04X}", addr), "Read from unknown DSP IFX register");
+                read_word(&*self.ifx, addr - 0xFF00)
+            }
         }
     }
 
@@ -252,26 +304,41 @@ impl Dsp {
     pub fn write_ifx(&mut self, addr: u16, value: u16) {
         match addr {
             // DMBH (DSP Mailbox High): store data bits (14:0), busy is preserved
-            0xFFFC => {
+            addr::IFX_DMBH => {
                 let busy = self.mailbox_to_cpu_hi.busy();
                 self.mailbox_to_cpu_hi = regs::MailboxToCpuHi::from_raw(value & 0x7FFF).with_busy(busy);
             }
             // DMBL (DSP Mailbox Low): writing sets DMBH.M
-            // Interrupt is NOT raised here; the ucode must explicitly write DIRQ (0xFFFB)
-            0xFFFD => {
+            addr::IFX_DMBL => {
                 self.mailbox_to_cpu_lo = regs::MailboxToCpuLo::from_raw(value);
                 self.mailbox_to_cpu_hi.set_busy(true);
             }
             // DIRQ: DSP explicitly raises interrupt to CPU
-            0xFFFB => {
+            addr::IFX_DIRQ => {
                 if value & 1 != 0 {
                     tracing::debug!("DSP DIRQ: requesting CPU interrupt");
                     self.csr.set_dsp_interrupt(true);
                 }
             }
             // CMBH/CMBL are read-only from DSP side
-            0xFFFE | 0xFFFF => {}
-            _ => write_word(&mut *self.ifx, addr - 0xFF00, value),
+            addr::IFX_CMBH | addr::IFX_CMBL => {}
+            // DSP DMA: writing DSBL triggers the transfer
+            addr::IFX_DSBL => {
+                self.dma_length = value;
+                self.pending_dsp_dma = true;
+            }
+            addr::IFX_DSCR => self.dma_control = core::regs::DspDmaControl::from_raw(value),
+            addr::IFX_DSPA => self.dma_dsp_addr = value,
+            addr::IFX_DSMAH => self.dma_ram_addr_hi = value,
+            addr::IFX_DSMAL => self.dma_ram_addr_lo = value,
+            _ => {
+                tracing::warn!(
+                    addr = format!("{:04X}", addr),
+                    value = format!("{:04X}", value),
+                    "Write to unknown DSP IFX register"
+                );
+                write_word(&mut *self.ifx, addr - 0xFF00, value);
+            }
         }
     }
 
