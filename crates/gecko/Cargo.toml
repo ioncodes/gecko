@@ -5,8 +5,8 @@ edition = "2024"
 
 [features]
 idle-skip = []
-scripting = []
-scripting-mut-traps = ["scripting"]
+hooks = []
+hooks-mut-traps = ["hooks"]
 
 [build-dependencies]
 chipi-build = "0.8.2"

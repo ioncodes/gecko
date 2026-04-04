@@ -186,7 +186,7 @@ impl RenderState {
 
         // Drain Lua log messages from the script host
         if debugger_ui.show_lua {
-            if let Some(ref mut host) = emulator.script_host {
+            if let Some(ref mut host) = emulator.hook_host {
                 debugger_ui.lua_log.extend(host.drain_logs());
             }
         }
@@ -194,10 +194,10 @@ impl RenderState {
         // Load a new Lua script if requested
         if debugger_ui.lua_load_pending {
             debugger_ui.lua_load_pending = false;
-            match scripting::LuaScriptHost::from_source("editor", &debugger_ui.lua_source) {
+            match scripting::LuaHost::from_source("editor", &debugger_ui.lua_source) {
                 Ok(host) => {
                     debugger_ui.lua_log.push("[lua] script loaded".to_string());
-                    emulator.set_script_host(Box::new(host));
+                    emulator.set_hook_host(Box::new(host));
                 }
                 Err(err) => {
                     debugger_ui.lua_log.push(format!("[lua] error: {err}"));

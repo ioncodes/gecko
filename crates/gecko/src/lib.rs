@@ -6,5 +6,5 @@ pub mod idle;
 pub mod mmio;
 pub mod scheduler;
 
-#[cfg(feature = "scripting")]
-pub mod scripting;
+#[cfg(feature = "hooks")]
+pub mod hooks;

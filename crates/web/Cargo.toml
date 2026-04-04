@@ -1,5 +1,5 @@
 [package]
-name = "gecko-web"
+name = "web"
 version = "0.1.0"
 edition = "2024"
 
@@ -35,6 +35,4 @@ web-sys = { version = "0.3.94", features = [
     "Performance",
     "console",
 ] }
-js-sys = "0.3.94"
 console_error_panic_hook = "0.1.7"
-tracing = "0.1.44"

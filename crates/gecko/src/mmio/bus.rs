@@ -1,11 +1,11 @@
 use crate::gamecube::GameCube;
+#[cfg(feature = "hooks")]
+use crate::hooks::HookFlags;
 use crate::mmio::constants::{
     AI_BASE, AI_END, CP_BASE, CP_END, DI_BASE, DI_END, DSP_BASE, DSP_END, EXI_BASE, EXI_END, GX_FIFO_BASE, GX_FIFO_END,
     IPL_BASE, IPL_END, MI_BASE, MI_END, PE_BASE, PE_END, PI_BASE, PI_END, RAM_END, SI_BASE, SI_END, VI_BASE, VI_END,
 };
 use crate::mmio::{Mmio, MmioRw};
-#[cfg(feature = "scripting")]
-use crate::scripting::HookFlags;
 
 enum BusTarget {
     Cp,
@@ -45,17 +45,17 @@ fn route_mmio(phys: u32) -> (BusTarget, u32) {
 
 macro_rules! bus_read_hooks {
     ($self:ident, $addr:ident, $phys:ident, $size:literal, $body:expr) => {{
-        #[cfg(feature = "scripting")]
-        if $self.script_hook_flags.contains(HookFlags::BUS_READ_PRE) {
-            if $self.script_hook_filters.bus_read_pre.matches($addr, $phys) {
-                if let Some(mut host) = $self.script_host.take() {
+        #[cfg(feature = "hooks")]
+        if $self.hook_flags.contains(HookFlags::BUS_READ_PRE) {
+            if $self.hook_filters.bus_read_pre.matches($addr, $phys) {
+                if let Some(mut host) = $self.hook_host.take() {
                     if let Some(val) = host.on_bus_read_pre($self, $addr, $phys, $size) {
-                        $self.sync_pending_script_hook_state(host.as_mut());
-                        $self.script_host = Some(host);
+                        $self.sync_pending_hook_state(host.as_mut());
+                        $self.hook_host = Some(host);
                         return val as _;
                     }
-                    $self.sync_pending_script_hook_state(host.as_mut());
-                    $self.script_host = Some(host);
+                    $self.sync_pending_hook_state(host.as_mut());
+                    $self.hook_host = Some(host);
                 }
             }
         }
@@ -63,13 +63,13 @@ macro_rules! bus_read_hooks {
         #[allow(unused_mut)]
         let mut result = $body;
 
-        #[cfg(feature = "scripting")]
-        if $self.script_hook_flags.contains(HookFlags::BUS_READ_POST) {
-            if $self.script_hook_filters.bus_read_post.matches($addr, $phys) {
-                if let Some(mut host) = $self.script_host.take() {
+        #[cfg(feature = "hooks")]
+        if $self.hook_flags.contains(HookFlags::BUS_READ_POST) {
+            if $self.hook_filters.bus_read_post.matches($addr, $phys) {
+                if let Some(mut host) = $self.hook_host.take() {
                     result = host.on_bus_read_post($self, $addr, $phys, $size, result as u32) as _;
-                    $self.sync_pending_script_hook_state(host.as_mut());
-                    $self.script_host = Some(host);
+                    $self.sync_pending_hook_state(host.as_mut());
+                    $self.hook_host = Some(host);
                 }
             }
         }
@@ -80,13 +80,13 @@ macro_rules! bus_read_hooks {
 
 macro_rules! bus_write_hooks {
     ($self:ident, $addr:ident, $phys:ident, $size:literal, $val:ident, $body:expr) => {{
-        #[cfg(feature = "scripting")]
-        let $val = if $self.script_hook_flags.contains(HookFlags::BUS_WRITE_PRE) {
-            if $self.script_hook_filters.bus_write_pre.matches($addr, $phys) {
-                if let Some(mut host) = $self.script_host.take() {
+        #[cfg(feature = "hooks")]
+        let $val = if $self.hook_flags.contains(HookFlags::BUS_WRITE_PRE) {
+            if $self.hook_filters.bus_write_pre.matches($addr, $phys) {
+                if let Some(mut host) = $self.hook_host.take() {
                     let v = host.on_bus_write_pre($self, $addr, $phys, $size, $val as u32) as _;
-                    $self.sync_pending_script_hook_state(host.as_mut());
-                    $self.script_host = Some(host);
+                    $self.sync_pending_hook_state(host.as_mut());
+                    $self.hook_host = Some(host);
                     v
                 } else {
                     $val
@@ -100,13 +100,13 @@ macro_rules! bus_write_hooks {
 
         $body;
 
-        #[cfg(feature = "scripting")]
-        if $self.script_hook_flags.contains(HookFlags::BUS_WRITE_POST) {
-            if $self.script_hook_filters.bus_write_post.matches($addr, $phys) {
-                if let Some(mut host) = $self.script_host.take() {
+        #[cfg(feature = "hooks")]
+        if $self.hook_flags.contains(HookFlags::BUS_WRITE_POST) {
+            if $self.hook_filters.bus_write_post.matches($addr, $phys) {
+                if let Some(mut host) = $self.hook_host.take() {
                     host.on_bus_write_post($self, $addr, $phys, $size, $val as u32);
-                    $self.sync_pending_script_hook_state(host.as_mut());
-                    $self.script_host = Some(host);
+                    $self.sync_pending_hook_state(host.as_mut());
+                    $self.hook_host = Some(host);
                 }
             }
         }

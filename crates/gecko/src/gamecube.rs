@@ -12,12 +12,12 @@ use crate::flipper::pe::PixelEngine;
 use crate::flipper::pi::ProcessorInterface;
 use crate::flipper::si::{SerialInterface, pad};
 use crate::flipper::vi::VideoInterface;
+#[cfg(feature = "hooks")]
+use crate::hooks::{HookFilters, HookFlags, HookState, Host};
 #[cfg(feature = "idle-skip")]
 use crate::idle::{IDLE_LOOP_MAX_INSTRS, IdleCheck, IdleDetector};
 use crate::mmio::Mmio;
 use crate::scheduler::{CPU_CYCLES_PER_DSP_TICK, CYCLES_PER_VSYNC, DSP_BATCH_SIZE, EventKind, Scheduler};
-#[cfg(feature = "scripting")]
-use crate::scripting::{HookFlags, ScriptHookFilters, ScriptHookState, ScriptHost};
 use image::Executable;
 
 pub struct GameCube {
@@ -39,33 +39,33 @@ pub struct GameCube {
     #[cfg(feature = "idle-skip")]
     idle: IdleDetector,
 
-    #[cfg(feature = "scripting")]
-    pub script_host: Option<Box<dyn ScriptHost>>,
-    #[cfg(feature = "scripting")]
-    pub script_hook_flags: HookFlags,
-    #[cfg(feature = "scripting")]
-    pub script_hook_filters: ScriptHookFilters,
+    #[cfg(feature = "hooks")]
+    pub hook_host: Option<Box<dyn Host>>,
+    #[cfg(feature = "hooks")]
+    pub hook_flags: HookFlags,
+    #[cfg(feature = "hooks")]
+    pub hook_filters: HookFilters,
 }
 
 impl GameCube {
-    #[cfg(feature = "scripting")]
+    #[cfg(feature = "hooks")]
     #[inline(always)]
-    pub fn apply_script_hook_state(&mut self, state: ScriptHookState) {
-        self.script_hook_flags = state.flags;
-        self.script_hook_filters = state.filters;
+    pub fn apply_hook_state(&mut self, state: HookState) {
+        self.hook_flags = state.flags;
+        self.hook_filters = state.filters;
     }
 
-    #[cfg(feature = "scripting")]
+    #[cfg(feature = "hooks")]
     #[inline(always)]
-    pub fn sync_pending_script_hook_state(&mut self, host: &mut dyn ScriptHost) {
-        #[cfg(feature = "scripting-mut-traps")]
+    pub fn sync_pending_hook_state(&mut self, host: &mut dyn Host) {
+        #[cfg(feature = "hooks-mut-traps")]
         match host.take_pending_hook_state() {
-            Ok(Some(state)) => self.apply_script_hook_state(state),
+            Ok(Some(state)) => self.apply_hook_state(state),
             Ok(None) => {}
             Err(err) => tracing::error!(target: "script", error = %err, "failed to refresh script traps"),
         }
 
-        #[cfg(not(feature = "scripting-mut-traps"))]
+        #[cfg(not(feature = "hooks-mut-traps"))]
         let _ = host;
     }
 
@@ -89,12 +89,12 @@ impl GameCube {
             #[cfg(feature = "idle-skip")]
             idle: IdleDetector::new(),
 
-            #[cfg(feature = "scripting")]
-            script_host: None,
-            #[cfg(feature = "scripting")]
-            script_hook_flags: HookFlags::empty(),
-            #[cfg(feature = "scripting")]
-            script_hook_filters: ScriptHookFilters::default(),
+            #[cfg(feature = "hooks")]
+            hook_host: None,
+            #[cfg(feature = "hooks")]
+            hook_flags: HookFlags::empty(),
+            #[cfg(feature = "hooks")]
+            hook_filters: HookFilters::default(),
         }
     }
 
@@ -191,14 +191,14 @@ impl GameCube {
         }
 
         // CPU pre-hook
-        #[cfg(feature = "scripting")]
-        if self.script_hook_flags.contains(HookFlags::CPU_PRE) {
+        #[cfg(feature = "hooks")]
+        if self.hook_flags.contains(HookFlags::CPU_PRE) {
             let pc = self.cpu.pc;
-            if self.script_hook_filters.cpu_pre.matches(pc) {
-                if let Some(mut host) = self.script_host.take() {
+            if self.hook_filters.cpu_pre.matches(pc) {
+                if let Some(mut host) = self.hook_host.take() {
                     host.on_cpu_pre(self);
-                    self.sync_pending_script_hook_state(host.as_mut());
-                    self.script_host = Some(host);
+                    self.sync_pending_hook_state(host.as_mut());
+                    self.hook_host = Some(host);
                 }
             }
         }
@@ -211,14 +211,14 @@ impl GameCube {
         self.scheduler.cycles += 1;
 
         // CPU post-hook
-        #[cfg(feature = "scripting")]
-        if self.script_hook_flags.contains(HookFlags::CPU_POST) {
+        #[cfg(feature = "hooks")]
+        if self.hook_flags.contains(HookFlags::CPU_POST) {
             let pc = self.cpu.cia;
-            if self.script_hook_filters.cpu_post.matches(pc) {
-                if let Some(mut host) = self.script_host.take() {
+            if self.hook_filters.cpu_post.matches(pc) {
+                if let Some(mut host) = self.hook_host.take() {
                     host.on_cpu_post(self);
-                    self.sync_pending_script_hook_state(host.as_mut());
-                    self.script_host = Some(host);
+                    self.sync_pending_hook_state(host.as_mut());
+                    self.hook_host = Some(host);
                 }
             }
         }
@@ -281,27 +281,27 @@ impl GameCube {
         crate::idle::validate_polling_loop(&buf[..count.min(buf.len())], &self.cpu.gprs)
     }
 
-    #[cfg(feature = "scripting")]
-    pub fn set_script_host(&mut self, host: Box<dyn ScriptHost>) {
-        self.apply_script_hook_state(host.hook_state());
-        self.script_host = Some(host);
+    #[cfg(feature = "hooks")]
+    pub fn set_hook_host(&mut self, host: Box<dyn Host>) {
+        self.apply_hook_state(host.hook_state());
+        self.hook_host = Some(host);
     }
 
-    #[cfg(all(feature = "scripting", feature = "scripting-mut-traps"))]
-    pub fn refresh_script_traps(&mut self) -> Result<(), String> {
-        let Some(mut host) = self.script_host.take() else {
+    #[cfg(all(feature = "hooks", feature = "hooks-mut-traps"))]
+    pub fn refresh_hook_traps(&mut self) -> Result<(), String> {
+        let Some(mut host) = self.hook_host.take() else {
             return Ok(());
         };
 
         let refresh_result = host.force_refresh_traps();
         match refresh_result {
             Ok(state) => {
-                self.apply_script_hook_state(state);
-                self.script_host = Some(host);
+                self.apply_hook_state(state);
+                self.hook_host = Some(host);
                 Ok(())
             }
             Err(err) => {
-                self.script_host = Some(host);
+                self.hook_host = Some(host);
                 Err(err)
             }
         }

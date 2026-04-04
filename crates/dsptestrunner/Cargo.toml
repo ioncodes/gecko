@@ -1,0 +1,8 @@
+[package]
+name = "dsptestrunner"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+image = { path = "../image" }
+gecko = { path = "../gecko", features = ["hooks"] }

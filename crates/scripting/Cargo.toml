@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-scripting-mut-traps = ["gecko/scripting-mut-traps"]
+hooks-mut-traps = ["gecko/hooks-mut-traps"]
 
 [dependencies]
-gecko = { path = "../gecko", features = ["scripting"] }
+gecko = { path = "../gecko", features = ["hooks"] }
 mlua = { version = "0.10.5", features = ["lua54", "send"] }
 tracing = "0.1.44"

@@ -77,7 +77,7 @@ impl BusAddressFilter {
 }
 
 #[derive(Clone, Default)]
-pub struct ScriptHookFilters {
+pub struct HookFilters {
     pub cpu_pre: AddressFilter,
     pub cpu_post: AddressFilter,
     pub bus_read_pre: BusAddressFilter,
@@ -87,24 +87,24 @@ pub struct ScriptHookFilters {
 }
 
 #[derive(Clone, Default)]
-pub struct ScriptHookState {
+pub struct HookState {
     pub flags: HookFlags,
-    pub filters: ScriptHookFilters,
+    pub filters: HookFilters,
 }
 
-pub trait ScriptHost {
+pub trait Host {
     /// Current cached hook state for the host.
-    fn hook_state(&self) -> ScriptHookState;
+    fn hook_state(&self) -> HookState;
 
     /// Forcefully rebuild trap state immediately.
-    #[cfg(feature = "scripting-mut-traps")]
-    fn force_refresh_traps(&mut self) -> Result<ScriptHookState, String> {
+    #[cfg(feature = "hooks-mut-traps")]
+    fn force_refresh_traps(&mut self) -> Result<HookState, String> {
         Ok(self.hook_state())
     }
 
     /// Apply any pending trap refresh requested by the script.
-    #[cfg(feature = "scripting-mut-traps")]
-    fn take_pending_hook_state(&mut self) -> Result<Option<ScriptHookState>, String> {
+    #[cfg(feature = "hooks-mut-traps")]
+    fn take_pending_hook_state(&mut self) -> Result<Option<HookState>, String> {
         Ok(None)
     }
 

@@ -117,8 +117,8 @@ fn main() {
 
     #[cfg(feature = "scripting")]
     if let Some(path) = &args.script {
-        let host = scripting::LuaScriptHost::from_file(path).expect("failed to load script");
-        emulator.set_script_host(Box::new(host));
+        let host = scripting::LuaHost::from_file(path).expect("failed to load script");
+        emulator.set_hook_host(Box::new(host));
     }
 
     let symbols = args.elf.as_ref().map(|path| {

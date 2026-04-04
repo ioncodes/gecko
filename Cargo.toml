@@ -13,6 +13,9 @@ members = [
     "crates/debugger",
     "crates/scripting",
     "crates/dspemu",
+    
+    # Stuff we rarely use
+    "crates/dsptestrunner",
     "crates/web",
 ]
 default-members = [

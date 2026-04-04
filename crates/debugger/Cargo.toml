@@ -5,10 +5,10 @@ edition = "2024"
 
 [features]
 idle-skip = ["gecko/idle-skip"]
-scripting-mut-traps = ["gecko/scripting-mut-traps", "scripting/scripting-mut-traps"]
+hooks-mut-traps = ["gecko/hooks-mut-traps", "scripting/hooks-mut-traps"]
 
 [dependencies]
-gecko = { path = "../gecko", features = ["scripting"] }
+gecko = { path = "../gecko", features = ["hooks"] }
 scripting = { path = "../scripting" }
 image = { path = "../image" }
 dbglib = { path = "../dbglib" }

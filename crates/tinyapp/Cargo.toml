@@ -5,8 +5,8 @@ edition = "2024"
 
 [features]
 idle-skip = ["gecko/idle-skip"]
-scripting = ["gecko/scripting", "dep:scripting"]
-scripting-mut-traps = ["scripting", "gecko/scripting-mut-traps", "scripting/scripting-mut-traps"]
+scripting = ["gecko/hooks", "dep:scripting"]
+scripting-mut-traps = ["scripting", "gecko/hooks-mut-traps", "scripting/hooks-mut-traps"]
 
 [dependencies]
 gecko = { path = "../gecko" }

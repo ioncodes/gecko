@@ -864,6 +864,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "dsptestrunner"
+version = "0.1.0"
+dependencies = [
+ "gecko",
+ "image 0.1.0",
+]
+
+[[package]]
 name = "ecolor"
 version = "0.33.3"
 source = "git+https://github.com/ioncodes/egui.git#5aeebf13a9d68f49766273104fbde0a5ab6e38fc"
@@ -1224,28 +1232,6 @@ dependencies = [
  "chipi-build",
  "image 0.1.0",
  "tracing",
-]
-
-[[package]]
-name = "gecko-web"
-version = "0.1.0"
-dependencies = [
- "backend-wgpu",
- "console_error_panic_hook",
- "dbglib",
- "egui",
- "egui-phosphor",
- "egui-wgpu",
- "egui-winit",
- "gecko",
- "image 0.1.0",
- "js-sys",
- "tracing",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "wgpu",
- "winit",
 ]
 
 [[package]]
@@ -3707,6 +3693,26 @@ dependencies = [
  "log",
  "once_cell",
  "pkg-config",
+]
+
+[[package]]
+name = "web"
+version = "0.1.0"
+dependencies = [
+ "backend-wgpu",
+ "console_error_panic_hook",
+ "dbglib",
+ "egui",
+ "egui-phosphor",
+ "egui-wgpu",
+ "egui-winit",
+ "gecko",
+ "image 0.1.0",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wgpu",
+ "winit",
 ]
 
 [[package]]

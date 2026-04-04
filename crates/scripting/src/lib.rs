@@ -1,18 +1,18 @@
 use std::collections::HashMap;
-#[cfg(feature = "scripting-mut-traps")]
+#[cfg(feature = "hooks-mut-traps")]
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
 
 use gecko::gamecube::GameCube;
-use gecko::scripting::{AddressFilter, BusAddressFilter, HookFlags, ScriptHookFilters, ScriptHookState, ScriptHost};
+use gecko::hooks::{AddressFilter, BusAddressFilter, HookFilters, HookFlags, HookState, Host};
 use mlua::{Function, Lua, RegistryKey, Result as LuaResult, Table, UserDataMethods, Value};
 
-pub struct LuaScriptHost {
+pub struct LuaHost {
     lua: Lua,
     flags: HookFlags,
-    #[cfg(feature = "scripting-mut-traps")]
+    #[cfg(feature = "hooks-mut-traps")]
     refresh_requested: Arc<AtomicBool>,
     cpu_pre: CpuHookDispatch,
     cpu_post: CpuHookDispatch,
@@ -25,7 +25,7 @@ pub struct LuaScriptHost {
 type CpuHookDispatch = HashMap<u32, LuaCallback>;
 
 struct LoadedDispatches {
-    state: ScriptHookState,
+    state: HookState,
     cpu_pre: CpuHookDispatch,
     cpu_post: CpuHookDispatch,
     bus_read_pre: BusHookDispatch,
@@ -100,9 +100,9 @@ impl LoadedDispatches {
         }
 
         Ok(Self {
-            state: ScriptHookState {
+            state: HookState {
                 flags,
-                filters: ScriptHookFilters {
+                filters: HookFilters {
                     cpu_pre: AddressFilter::from_addresses(cpu_pre.keys().copied()),
                     cpu_post: AddressFilter::from_addresses(cpu_post.keys().copied()),
                     bus_read_pre: bus_read_pre.filter(),
@@ -147,7 +147,7 @@ impl LuaCallback {
     }
 }
 
-impl LuaScriptHost {
+impl LuaHost {
     pub fn from_file(path: &str) -> LuaResult<Self> {
         let source = std::fs::read_to_string(path).map_err(|e| mlua::Error::runtime(e.to_string()))?;
         Self::from_source(path, &source)
@@ -155,7 +155,7 @@ impl LuaScriptHost {
 
     pub fn from_source(name: &str, source: &str) -> LuaResult<Self> {
         let lua = Lua::new();
-        #[cfg(feature = "scripting-mut-traps")]
+        #[cfg(feature = "hooks-mut-traps")]
         let refresh_requested = Arc::new(AtomicBool::new(false));
 
         let log_fn = lua.create_function(|_, msg: String| {
@@ -164,7 +164,7 @@ impl LuaScriptHost {
         })?;
         lua.globals().set("log", log_fn)?;
 
-        #[cfg(feature = "scripting-mut-traps")]
+        #[cfg(feature = "hooks-mut-traps")]
         {
             let refresh_requested_fn = refresh_requested.clone();
             let refresh_fn = lua.create_function(move |_, ()| {
@@ -176,10 +176,10 @@ impl LuaScriptHost {
 
         lua.load(source).set_name(name).exec()?;
 
-        let mut host = LuaScriptHost {
+        let mut host = LuaHost {
             lua,
             flags: HookFlags::empty(),
-            #[cfg(feature = "scripting-mut-traps")]
+            #[cfg(feature = "hooks-mut-traps")]
             refresh_requested,
             cpu_pre: CpuHookDispatch::default(),
             cpu_post: CpuHookDispatch::default(),
@@ -192,7 +192,7 @@ impl LuaScriptHost {
         Ok(host)
     }
 
-    fn reload_dispatches(&mut self) -> LuaResult<ScriptHookState> {
+    fn reload_dispatches(&mut self) -> LuaResult<HookState> {
         let loaded = LoadedDispatches::from_lua(&self.lua)?;
         let state = loaded.state.clone();
         self.flags = state.flags;
@@ -202,7 +202,7 @@ impl LuaScriptHost {
         self.bus_read_post = loaded.bus_read_post;
         self.bus_write_pre = loaded.bus_write_pre;
         self.bus_write_post = loaded.bus_write_post;
-        #[cfg(feature = "scripting-mut-traps")]
+        #[cfg(feature = "hooks-mut-traps")]
         self.refresh_requested.store(false, Ordering::Relaxed);
         Ok(state)
     }
@@ -445,7 +445,7 @@ unsafe impl Send for GameCubeRef {}
 
 impl mlua::UserData for GameCubeRef {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        LuaScriptHost::register_emu_methods(methods);
+        LuaHost::register_emu_methods(methods);
     }
 }
 
@@ -463,11 +463,11 @@ impl std::ops::DerefMut for GameCubeRef {
     }
 }
 
-impl ScriptHost for LuaScriptHost {
-    fn hook_state(&self) -> ScriptHookState {
-        ScriptHookState {
+impl Host for LuaHost {
+    fn hook_state(&self) -> HookState {
+        HookState {
             flags: self.flags,
-            filters: ScriptHookFilters {
+            filters: HookFilters {
                 cpu_pre: AddressFilter::from_addresses(self.cpu_pre.keys().copied()),
                 cpu_post: AddressFilter::from_addresses(self.cpu_post.keys().copied()),
                 bus_read_pre: self.bus_read_pre.filter(),
@@ -478,13 +478,13 @@ impl ScriptHost for LuaScriptHost {
         }
     }
 
-    #[cfg(feature = "scripting-mut-traps")]
-    fn force_refresh_traps(&mut self) -> Result<ScriptHookState, String> {
+    #[cfg(feature = "hooks-mut-traps")]
+    fn force_refresh_traps(&mut self) -> Result<HookState, String> {
         self.reload_dispatches().map_err(|err| err.to_string())
     }
 
-    #[cfg(feature = "scripting-mut-traps")]
-    fn take_pending_hook_state(&mut self) -> Result<Option<ScriptHookState>, String> {
+    #[cfg(feature = "hooks-mut-traps")]
+    fn take_pending_hook_state(&mut self) -> Result<Option<HookState>, String> {
         if !self.refresh_requested.swap(false, Ordering::Relaxed) {
             return Ok(None);
         }
