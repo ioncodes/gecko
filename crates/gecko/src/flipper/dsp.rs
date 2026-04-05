@@ -124,6 +124,14 @@ impl Dsp {
             "ARAM DMA"
         );
 
+        if aram_addr + count > self.aram.len() {
+            // TODO: should we raise interrupt anyways?
+            // This happens during apploader and the console supports
+            // expanded memory shit, so maybe it detects a DEV unit?
+            tracing::error!("ARAM DMA out of bounds, ignored");
+            return;
+        }
+
         if self.aram_dma_control.direction() == regs::DmaDirection::AramToRam {
             let src = &self.aram[aram_addr..aram_addr + count];
             let dst = mmio.virt_slice_mut(ram_addr as u32, count);
