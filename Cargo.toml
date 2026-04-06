@@ -41,13 +41,8 @@ ecolor = { git = "https://github.com/ioncodes/egui.git" }
 egui-wgpu = { git = "https://github.com/ioncodes/egui.git" }
 egui-winit = { git = "https://github.com/ioncodes/egui.git" }
 
-[profile.release-max]
-inherits = "release"
-codegen-units = 1
-debug = false
-
 [profile.release]
-debug = true
+codegen-units = 1
 lto = "fat"
 
 [profile.dev]

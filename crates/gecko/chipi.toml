@@ -5,7 +5,7 @@ handler_mod = "crate::cpu::interpreter"
 ctx_type = "crate::gamecube::GameCube"
 instr_type = "crate::cpu::instruction::Instruction"
 lut_mod = "crate::cpu::lut"
-dispatch = "jump_table"
+dispatch = "fn_ptr_lut"
 instr_type_output = "$OUT_DIR/gekko_instr.rs"
 
 [lut.groups]
@@ -236,7 +236,7 @@ handler_mod = "crate::flipper::dsp::interpreter"
 ctx_type = "crate::gamecube::GameCube"
 instr_type = "crate::flipper::dsp::instruction::Instruction"
 lut_mod = "crate::flipper::dsp::lut"
-dispatch = "jump_table"
+dispatch = "fn_ptr_lut"
 instr_type_output = "$OUT_DIR/dsp_instr.rs"
 
 [lut.groups]
