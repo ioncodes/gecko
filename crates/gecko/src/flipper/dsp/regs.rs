@@ -251,6 +251,35 @@ crate::mmio_register! {
     AramDmaAramAddr: u32 @ 0xCC005024 => Dsp.aram_dma_aram_addr {}
 }
 
+// 0xCC005030 4 [W] Audio DMA Start Address (High + Low)
+
+crate::mmio_register! {
+    AudioDmaStartAddr: u32 @ 0xCC005030 => Dsp.audio_dma_start_addr {}
+}
+
+// 0xCC005036 2 [W] Audio DMA Control/Length
+
+crate::mmio_register! {
+    AudioDmaControl: u16 @ 0xCC005036 {
+        #[bits(0..=14)]
+        pub length: u16,
+
+        #[bits(15)]
+        pub play: bool,
+    }
+}
+
+impl MmioAccess<super::Dsp> for AudioDmaControl {
+    fn read(dsp: &super::Dsp) -> Self {
+        dsp.audio_dma_control
+    }
+
+    fn write(self, dsp: &mut super::Dsp) {
+        dsp.audio_dma_control = self;
+        dsp.pending_audio_dma = true;
+    }
+}
+
 // 0xCC005028 4 [R/W] ARAM DMA Count/Control
 
 #[derive(BitEnum, Debug, PartialEq, Eq)]

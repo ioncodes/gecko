@@ -18,8 +18,6 @@ pub struct ProcessorInterface {
     pub fifo_end: u32,
     /// CPU FIFO write pointer (32-byte aligned)
     pub fifo_wptr: u32,
-    /// The initial FIFO base set by GX_Init (0 = not yet set)
-    initial_fifo_base: u32,
 }
 
 /// Bitmask constants for each PI interrupt source
@@ -50,13 +48,14 @@ impl ProcessorInterface {
             fifo_base: 0,
             fifo_end: 0,
             fifo_wptr: 0,
-            initial_fifo_base: 0,
         }
     }
 
-    /// Returns true when the CPU FIFO is redirected to a display list buffer
-    pub fn is_fifo_redirected(&self) -> bool {
-        self.initial_fifo_base != 0 && self.fifo_base != self.initial_fifo_base
+    pub fn advance_fifo_wptr(&mut self, nbytes: u32) {
+        self.fifo_wptr = self.fifo_wptr.wrapping_add(nbytes);
+        if self.fifo_end != 0 && self.fifo_wptr >= self.fifo_end {
+            self.fifo_wptr = self.fifo_base;
+        }
     }
 
     pub fn assert_interrupt(&mut self, flag: InterruptFlag) {
@@ -89,10 +88,6 @@ impl MmioRw for ProcessorInterface {
         match offset {
             PI_FIFO_BASE_OFFSET => {
                 self.fifo_base = val;
-                // Record the first FIFO base as the "normal" GX FIFO
-                if self.initial_fifo_base == 0 {
-                    self.initial_fifo_base = val;
-                }
             }
             PI_FIFO_END_OFFSET => {
                 self.fifo_end = val;

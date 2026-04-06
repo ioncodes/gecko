@@ -315,7 +315,10 @@ impl Registers {
                 }
                 self.ac1_mid
             }
-            _ => unreachable!(),
+            _ => {
+                tracing::error!(index, "DSP read: invalid register index");
+                0
+            }
         }
     }
 
@@ -399,7 +402,9 @@ impl Registers {
                     self.ac1_low = 0;
                 }
             }
-            _ => unreachable!(),
+            _ => {
+                tracing::error!(index, "DSP write: invalid register index");
+            }
         }
     }
 }

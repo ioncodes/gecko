@@ -39,10 +39,7 @@ impl Scheduler {
     /// This may later be updated if an event is scheduled sooner than the current target.
     #[inline(always)]
     pub fn update_deadline(&mut self) {
-        self.next_deadline = self
-            .events
-            .peek()
-            .map_or(self.cycles, |Reverse((d, _))| *d);
+        self.next_deadline = self.events.peek().map_or(self.cycles, |Reverse((d, _))| *d);
     }
 
     pub fn timebase(&self) -> u64 {

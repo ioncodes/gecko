@@ -347,11 +347,10 @@ impl GameCube {
                 self.check_ai_interrupts();
             }
             BusTarget::Gx       => {
-                if self.pi.is_fifo_redirected() {
-                    let wptr = self.pi.fifo_wptr as usize;
-                    self.mmio.ram[wptr] = val;
-                    self.pi.fifo_wptr = self.pi.fifo_wptr.wrapping_add(1);
-                } else {
+                let wptr = self.pi.fifo_wptr as usize;
+                self.mmio.ram[wptr] = val;
+                self.pi.advance_fifo_wptr(1);
+                if self.cp.control.gp_link_enable() {
                     self.gx.mmio_write_u8(&mut self.mmio, val);
                     self.check_gx_pe_finish();
                 }
@@ -409,12 +408,11 @@ impl GameCube {
                 self.check_ai_interrupts();
             }
             BusTarget::Gx       => {
-                if self.pi.is_fifo_redirected() {
-                    let wptr = self.pi.fifo_wptr as usize;
-                    let bytes = val.to_be_bytes();
-                    self.mmio.ram[wptr..wptr + 2].copy_from_slice(&bytes);
-                    self.pi.fifo_wptr = self.pi.fifo_wptr.wrapping_add(2);
-                } else {
+                let wptr = self.pi.fifo_wptr as usize;
+                let bytes = val.to_be_bytes();
+                self.mmio.ram[wptr..wptr + 2].copy_from_slice(&bytes);
+                self.pi.advance_fifo_wptr(2);
+                if self.cp.control.gp_link_enable() {
                     self.gx.mmio_write_u16(&mut self.mmio, val);
                     self.check_gx_pe_finish();
                 }
@@ -472,12 +470,11 @@ impl GameCube {
                 self.check_ai_interrupts();
             }
             BusTarget::Gx       => {
-                if self.pi.is_fifo_redirected() {
-                    let wptr = self.pi.fifo_wptr as usize;
-                    let bytes = val.to_be_bytes();
-                    self.mmio.ram[wptr..wptr + 4].copy_from_slice(&bytes);
-                    self.pi.fifo_wptr = self.pi.fifo_wptr.wrapping_add(4);
-                } else {
+                let wptr = self.pi.fifo_wptr as usize;
+                let bytes = val.to_be_bytes();
+                self.mmio.ram[wptr..wptr + 4].copy_from_slice(&bytes);
+                self.pi.advance_fifo_wptr(4);
+                if self.cp.control.gp_link_enable() {
                     self.gx.mmio_write_u32(&mut self.mmio, val);
                     self.check_gx_pe_finish();
                 }

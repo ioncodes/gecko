@@ -45,6 +45,8 @@ pub struct Dsp {
     pub aram_dma_mmio_addr: regs::AramDmaMmioAddr,
     pub aram_dma_aram_addr: regs::AramDmaAramAddr,
     pub aram_dma_control: regs::AramDmaControl,
+    pub audio_dma_start_addr: regs::AudioDmaStartAddr,
+    pub audio_dma_control: regs::AudioDmaControl,
 
     // IFX Registers
     pub dma_control: core::regs::DspDmaControl,
@@ -56,6 +58,7 @@ pub struct Dsp {
     // Flags set by register write handlers, consumed by process_pending_dma
     pub pending_aram_dma: bool,
     pub pending_dsp_dma: bool,
+    pub pending_audio_dma: bool,
     pub pending_ucode_upload: bool,
 }
 
@@ -87,11 +90,14 @@ impl Dsp {
             aram_dma_mmio_addr: regs::AramDmaMmioAddr::from_raw(0),
             aram_dma_aram_addr: regs::AramDmaAramAddr::from_raw(0),
             aram_dma_control: regs::AramDmaControl::from_raw(0),
+            audio_dma_start_addr: regs::AudioDmaStartAddr::from_raw(0),
+            audio_dma_control: regs::AudioDmaControl::from_raw(0),
             dma_control: core::regs::DspDmaControl::new(),
             dma_length: 0,
             dma_dsp_addr: 0,
             dma_ram_addr_hi: 0,
             dma_ram_addr_lo: 0,
+            pending_audio_dma: false,
             pending_aram_dma: false,
             pending_dsp_dma: false,
             pending_ucode_upload: false,
@@ -103,6 +109,11 @@ impl Dsp {
         if self.pending_aram_dma {
             self.pending_aram_dma = false;
             self.process_aram_dma(mmio);
+        }
+
+        if self.pending_audio_dma {
+            self.pending_audio_dma = false;
+            self.process_audio_dma(mmio);
         }
 
         if self.pending_ucode_upload {
@@ -124,24 +135,39 @@ impl Dsp {
             "ARAM DMA"
         );
 
-        if aram_addr + count > self.aram.len() {
-            // TODO: should we raise interrupt anyways?
-            // This happens during apploader and the console supports
-            // expanded memory shit, so maybe it detects a DEV unit?
-            tracing::error!("ARAM DMA out of bounds, ignored");
+        let within_bounds = aram_addr + count <= self.aram.len();
+        match self.aram_dma_control.direction() {
+            regs::DmaDirection::AramToRam if within_bounds => {
+                let src = &self.aram[aram_addr..aram_addr + count];
+                let dst = mmio.virt_slice_mut(ram_addr as u32, count);
+                dst.copy_from_slice(src);
+            }
+            regs::DmaDirection::RamToAram if within_bounds => {
+                let src = mmio.virt_slice(ram_addr as u32, count);
+                self.aram[aram_addr..aram_addr + count].copy_from_slice(&src);
+            }
+            _ => tracing::warn!("Ignoring out-of-bounds ARAM DMA transfer"),
+        }
+
+        self.aram_dma_control.set_count(0);
+        self.csr.set_dma_status(false);
+        self.csr = self.csr.with_ar_interrupt(true);
+    }
+
+    fn process_audio_dma(&mut self, _mmio: &mut Mmio) {
+        if !self.audio_dma_control.play() {
             return;
         }
 
-        if self.aram_dma_control.direction() == regs::DmaDirection::AramToRam {
-            let src = &self.aram[aram_addr..aram_addr + count];
-            let dst = mmio.virt_slice_mut(ram_addr as u32, count);
-            dst.copy_from_slice(src);
-        } else {
-            let src = mmio.virt_slice(ram_addr as u32, count);
-            self.aram[aram_addr..aram_addr + count].copy_from_slice(&src);
-        }
+        let addr = self.audio_dma_start_addr.raw();
+        let len = self.audio_dma_control.length() as u32 * 32;
 
-        self.csr = self.csr.with_ar_interrupt(true);
+        tracing::debug!(addr = format!("{addr:08X}"), len, "Audio DMA");
+
+        // TODO: actually stream samples to audio output
+        self.audio_dma_control.set_length(0);
+        self.csr.set_dma_status(false);
+        self.csr.set_ai_interrupt(true);
     }
 
     fn process_ucode_upload(&mut self, mmio: &mut Mmio) {
@@ -155,6 +181,9 @@ impl Dsp {
             count = UCODE_SIZE,
             "DSP stub uploaded from RAM to IRAM, executing IRAM"
         );
+
+        self.csr.set_dma_status(false);
+        self.csr.set_dsp_interrupt(true);
     }
 
     fn process_dsp_dma(&mut self, mmio: &mut Mmio) {
@@ -206,18 +235,66 @@ impl GameCube {
         let buf = [(w0 >> 8) as u8, w0 as u8, (w1 >> 8) as u8, w1 as u8];
         let instr = Instruction::from_be_bytes(&buf);
         self.dsp.registers.cia = self.dsp.registers.pc;
-        self.dsp.registers.nia = self.dsp.registers.cia.wrapping_add(lut::instr_size(instr) as u16);
+        let natural_nia = self.dsp.registers.cia.wrapping_add(lut::instr_size(instr) as u16);
+        self.dsp.registers.nia = natural_nia;
+
+        // Save state before main instruction so extensions read pre-instruction values.
+        // Extensions see the old accumulators and status (for saturation/sign-extension).
+        let has_ext = instr.ext_opcode().is_some();
+        let saved = if has_ext {
+            Some((
+                self.dsp.registers.ac0_high,
+                self.dsp.registers.ac0_mid,
+                self.dsp.registers.ac0_low,
+                self.dsp.registers.ac1_high,
+                self.dsp.registers.ac1_mid,
+                self.dsp.registers.ac1_low,
+                self.dsp.registers.status,
+            ))
+        } else {
+            None
+        };
 
         lut::dispatch(self, instr);
 
-        // Dispatch extension opcode if present
+        // Dispatch extension opcode if present.
+        // Extensions read accumulator/status values from BEFORE the main instruction.
         if let Some(ext) = instr.ext_opcode() {
             let ext = instruction::GcDspExt(ext);
-            lut::dispatch_gc_dsp_ext(self, ext);
+            if let Some((h0, m0, l0, h1, m1, l1, old_sr)) = saved {
+                let new_ac = (
+                    self.dsp.registers.ac0_high,
+                    self.dsp.registers.ac0_mid,
+                    self.dsp.registers.ac0_low,
+                    self.dsp.registers.ac1_high,
+                    self.dsp.registers.ac1_mid,
+                    self.dsp.registers.ac1_low,
+                );
+                let new_sr = self.dsp.registers.status;
+                self.dsp.registers.ac0_high = h0;
+                self.dsp.registers.ac0_mid = m0;
+                self.dsp.registers.ac0_low = l0;
+                self.dsp.registers.ac1_high = h1;
+                self.dsp.registers.ac1_mid = m1;
+                self.dsp.registers.ac1_low = l1;
+                self.dsp.registers.status = old_sr;
+
+                lut::dispatch_gc_dsp_ext(self, ext);
+
+                self.dsp.registers.ac0_high = new_ac.0;
+                self.dsp.registers.ac0_mid = new_ac.1;
+                self.dsp.registers.ac0_low = new_ac.2;
+                self.dsp.registers.ac1_high = new_ac.3;
+                self.dsp.registers.ac1_mid = new_ac.4;
+                self.dsp.registers.ac1_low = new_ac.5;
+                self.dsp.registers.status = new_sr;
+            }
         }
 
-        // Check if we've reached the end of a loop
-        if !self.dsp.registers.loop_addr.is_empty() && self.dsp.registers.nia == self.dsp.registers.loop_addr.top() {
+        // Check if we've reached the end of a loop.
+        let at_loop_end =
+            !self.dsp.registers.loop_addr.is_empty() && self.dsp.registers.nia == self.dsp.registers.loop_addr.top();
+        if at_loop_end {
             let counter = self.dsp.registers.loop_counter.top().wrapping_sub(1);
             if counter != 0 {
                 self.dsp.registers.loop_counter.set_top(counter);
@@ -266,6 +343,8 @@ impl MmioRw for Dsp {
         regs::AramDmaMmioAddr,
         regs::AramDmaAramAddr,
         regs::AramDmaControl,
+        regs::AudioDmaStartAddr,
+        regs::AudioDmaControl,
     );
 }
 
