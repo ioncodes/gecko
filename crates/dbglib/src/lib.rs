@@ -127,7 +127,7 @@ impl Debugger {
                         break;
                     }
                 }
-                emulator.check_dsp_interrupts();
+                gecko::flipper::dsp::refresh_interrupts(emulator);
                 emulator
                     .scheduler
                     .schedule_in(CPU_CYCLES_PER_DSP_TICK * DSP_BATCH_SIZE, dsp_batch_handler);
@@ -152,7 +152,7 @@ impl Debugger {
                             break;
                         }
                     }
-                    emulator.check_dsp_interrupts();
+                    gecko::flipper::dsp::refresh_interrupts(emulator);
                     emulator
                         .scheduler
                         .schedule_in(CPU_CYCLES_PER_DSP_TICK * DSP_BATCH_SIZE, dsp_batch_handler);

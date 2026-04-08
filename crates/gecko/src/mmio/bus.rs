@@ -251,7 +251,7 @@ impl GameCube {
             BusTarget::Pe       => self.pe.mmio_read_u8(offset),
             BusTarget::Pi       => self.pi.mmio_read_u8(offset),
             BusTarget::Mi       => self.mi.mmio_read_u8(offset),
-            BusTarget::Dsp      => self.dsp.mmio_read_u8(offset),
+            BusTarget::Dsp      => crate::flipper::dsp::dsp_read(self, phys, 1).unwrap_or(0) as u8,
             BusTarget::Di       => self.di.mmio_read_u8(offset),
             BusTarget::Si       => self.si.mmio_read_u8(offset),
             BusTarget::Exi      => self.exi.mmio_read_u8(offset),
@@ -285,7 +285,7 @@ impl GameCube {
             BusTarget::Pe       => self.pe.mmio_read_u16(offset),
             BusTarget::Pi       => self.pi.mmio_read_u16(offset),
             BusTarget::Mi       => self.mi.mmio_read_u16(offset),
-            BusTarget::Dsp      => self.dsp.mmio_read_u16(offset),
+            BusTarget::Dsp      => crate::flipper::dsp::dsp_read(self, phys, 2).unwrap_or(0) as u16,
             BusTarget::Di       => self.di.mmio_read_u16(offset),
             BusTarget::Si       => self.si.mmio_read_u16(offset),
             BusTarget::Exi      => self.exi.mmio_read_u16(offset),
@@ -321,7 +321,7 @@ impl GameCube {
             BusTarget::Pe       => self.pe.mmio_read_u32(offset),
             BusTarget::Pi       => self.pi.mmio_read_u32(offset),
             BusTarget::Mi       => self.mi.mmio_read_u32(offset),
-            BusTarget::Dsp      => self.dsp.mmio_read_u32(offset),
+            BusTarget::Dsp      => crate::flipper::dsp::dsp_read(self, phys, 4).unwrap_or(0),
             BusTarget::Di       => self.di.mmio_read_u32(offset),
             BusTarget::Si       => self.si.mmio_read_u32(offset),
             BusTarget::Exi      => self.exi.mmio_read_u32(offset),
@@ -362,12 +362,7 @@ impl GameCube {
             }
             BusTarget::Pi       => self.pi.mmio_write_u8(offset, val),
             BusTarget::Mi       => self.mi.mmio_write_u8(offset, val),
-            BusTarget::Dsp      => {
-                self.dsp.mmio_write_u8(offset, val);
-                self.dsp.process_pending_dma(&mut self.mmio);
-                self.maybe_schedule_aram_dma();
-                self.check_dsp_interrupts();
-            }
+            BusTarget::Dsp      => { crate::flipper::dsp::dsp_write(self, phys, 1, val as u32); }
             BusTarget::Di       => {
                 self.di.mmio_write_u8(offset, val);
                 self.start_dvd_transfer();
@@ -424,12 +419,7 @@ impl GameCube {
             }
             BusTarget::Pi       => self.pi.mmio_write_u16(offset, val),
             BusTarget::Mi       => self.mi.mmio_write_u16(offset, val),
-            BusTarget::Dsp      => {
-                self.dsp.mmio_write_u16(offset, val);
-                self.dsp.process_pending_dma(&mut self.mmio);
-                self.maybe_schedule_aram_dma();
-                self.check_dsp_interrupts();
-            }
+            BusTarget::Dsp      => { crate::flipper::dsp::dsp_write(self, phys, 2, val as u32); }
             BusTarget::Di       => {
                 self.di.mmio_write_u16(offset, val);
                 self.start_dvd_transfer();
@@ -487,12 +477,7 @@ impl GameCube {
             }
             BusTarget::Pi       => self.pi.mmio_write_u32(offset, val),
             BusTarget::Mi       => self.mi.mmio_write_u32(offset, val),
-            BusTarget::Dsp      => {
-                self.dsp.mmio_write_u32(offset, val);
-                self.dsp.process_pending_dma(&mut self.mmio);
-                self.maybe_schedule_aram_dma();
-                self.check_dsp_interrupts();
-            }
+            BusTarget::Dsp      => { crate::flipper::dsp::dsp_write(self, phys, 4, val); }
             BusTarget::Di       => {
                 self.di.mmio_write_u32(offset, val);
                 self.start_dvd_transfer();

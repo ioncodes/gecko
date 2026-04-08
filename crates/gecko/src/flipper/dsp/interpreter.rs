@@ -1,10 +1,13 @@
+use crate::flipper::dsp;
 use crate::flipper::dsp::condition::BranchControl;
-use crate::flipper::dsp::core::reg;
 use crate::flipper::dsp::core::regs::{SignExtensionMode, StatusRegister};
+use crate::flipper::dsp::core::{Registers, reg};
+use crate::flipper::dsp::instruction::Instruction;
 use crate::flipper::dsp::lut::*;
+use crate::gamecube::GameCube;
 
 #[inline(always)]
-fn multiply(regs: &mut crate::flipper::dsp::core::Registers, a: i16, b: i16) {
+fn multiply(regs: &mut Registers, a: i16, b: i16) {
     let mut result = a as i32 as i64 * b as i32 as i64;
     if !regs.status.am() {
         result <<= 1;
@@ -14,7 +17,7 @@ fn multiply(regs: &mut crate::flipper::dsp::core::Registers, a: i16, b: i16) {
 
 /// Compute a * b (with AM shift), then add/sub to current product.
 #[inline(always)]
-fn multiply_accumulate<const ADD: bool>(regs: &mut crate::flipper::dsp::core::Registers, a: i16, b: i16) {
+fn multiply_accumulate<const ADD: bool>(regs: &mut Registers, a: i16, b: i16) {
     let mut mul_result = a as i32 as i64 * b as i32 as i64;
     if !regs.status.am() {
         mul_result <<= 1;
@@ -30,7 +33,7 @@ fn multiply_accumulate<const ADD: bool>(regs: &mut crate::flipper::dsp::core::Re
 
 /// Apply product carry/overflow to status: set O and OS from product flags.
 #[inline(always)]
-fn apply_product_oc(regs: &mut crate::flipper::dsp::core::Registers, carry: bool, overflow: bool) {
+fn apply_product_oc(regs: &mut Registers, carry: bool, overflow: bool) {
     regs.status.set_o(overflow);
     if overflow {
         regs.status.set_os(true);
@@ -56,7 +59,7 @@ fn round_half_to_even(val: i64) -> (i64, bool) {
 /// Apply combined arithmetic + product carry/overflow for ADD+product operations.
 /// Preserves OS from before the arithmetic flag update, then sets based on the XORed values.
 #[inline(always)]
-fn apply_combined_add_product_oc(regs: &mut crate::flipper::dsp::core::Registers, pc: bool, po: bool, os_before: bool) {
+fn apply_combined_add_product_oc(regs: &mut Registers, pc: bool, po: bool, os_before: bool) {
     regs.status.set_os(os_before);
     let c = regs.status.c();
     let o = regs.status.o();
@@ -68,7 +71,7 @@ fn apply_combined_add_product_oc(regs: &mut crate::flipper::dsp::core::Registers
 }
 
 #[inline(always)]
-fn move_prod_to_ac(ctx: &mut crate::gamecube::GameCube, r: u8) {
+fn move_prod_to_ac(ctx: &mut GameCube, r: u8) {
     let prod = ctx.dsp.registers.product();
     let (carry, overflow) = ctx.dsp.registers.product_flags();
     ctx.dsp.registers.set_ac(r, prod);
@@ -77,7 +80,7 @@ fn move_prod_to_ac(ctx: &mut crate::gamecube::GameCube, r: u8) {
 }
 
 #[inline(always)]
-fn move_prod_to_ac_zero(ctx: &mut crate::gamecube::GameCube, r: u8) {
+fn move_prod_to_ac_zero(ctx: &mut GameCube, r: u8) {
     let (carry, overflow) = ctx.dsp.registers.product_flags();
     let raw = ctx.dsp.registers.product();
     let (prod, rounding_carry) = round_half_to_even(raw);
@@ -87,7 +90,7 @@ fn move_prod_to_ac_zero(ctx: &mut crate::gamecube::GameCube, r: u8) {
 }
 
 #[inline(always)]
-fn add_prod_to_ac(ctx: &mut crate::gamecube::GameCube, r: u8) {
+fn add_prod_to_ac(ctx: &mut GameCube, r: u8) {
     let a = ctx.dsp.registers.ac(r);
     let (pc, po) = ctx.dsp.registers.product_flags();
     let b = ctx.dsp.registers.product();
@@ -102,11 +105,7 @@ fn add_prod_to_ac(ctx: &mut crate::gamecube::GameCube, r: u8) {
 /// REVERSED controls direction: when false (ASRN/LSRN), bit6=LEFT/!bit6=RIGHT.
 /// When true (ASRNR/NRX variants), bit6=RIGHT/!bit6=LEFT.
 #[inline(always)]
-fn dynamic_shift<const LOGICAL: bool, const REVERSED: bool>(
-    regs: &mut crate::flipper::dsp::core::Registers,
-    d: u8,
-    shift_val: i16,
-) {
+fn dynamic_shift<const LOGICAL: bool, const REVERSED: bool>(regs: &mut Registers, d: u8, shift_val: i16) {
     let low6 = (shift_val & 63) as u32;
     let bit6 = shift_val & 64 != 0;
     let amount = if bit6 { (64 - low6) % 64 } else { low6 };
@@ -130,7 +129,7 @@ fn dynamic_shift<const LOGICAL: bool, const REVERSED: bool>(
 
 /// Get the ax0/ax1 operands for MULX instructions.
 #[inline(always)]
-fn mulx_operands(regs: &crate::flipper::dsp::core::Registers, s: u8, t: u8) -> (u16, u16) {
+fn mulx_operands(regs: &Registers, s: u8, t: u8) -> (u16, u16) {
     let a = if s != 0 { regs.axh[0] } else { regs.ax[0] };
     let b = if t != 0 { regs.axh[1] } else { regs.ax[1] };
     (a, b)
@@ -138,7 +137,7 @@ fn mulx_operands(regs: &crate::flipper::dsp::core::Registers, s: u8, t: u8) -> (
 
 /// Multiply for MULX family: handles unsigned/mixed modes based on SU flag and s/t operands.
 #[inline(always)]
-fn multiply_mulx(regs: &mut crate::flipper::dsp::core::Registers, s: u8, t: u8) {
+fn multiply_mulx(regs: &mut Registers, s: u8, t: u8) {
     let (a_raw, b_raw) = mulx_operands(regs, s, t);
     let unsigned = regs.status.su();
     let (a, b) = if !unsigned {
@@ -161,17 +160,14 @@ fn multiply_mulx(regs: &mut crate::flipper::dsp::core::Registers, s: u8, t: u8) 
 
 /// Get the acS.m / axT.h operands for MULC instructions.
 #[inline(always)]
-fn mulc_operands(regs: &crate::flipper::dsp::core::Registers, s: u8, t: u8) -> (i16, i16) {
+fn mulc_operands(regs: &Registers, s: u8, t: u8) -> (i16, i16) {
     let a = regs.ac_mid(s) as i16;
     let b = regs.axh[t as usize] as i16;
     (a, b)
 }
 
 #[inline(always)]
-pub fn add_sub<const OP: u32>(
-    ctx: &mut crate::gamecube::GameCube,
-    instr: crate::flipper::dsp::instruction::Instruction,
-) {
+pub fn add_sub<const OP: u32>(ctx: &mut GameCube, instr: Instruction) {
     match OP {
         OP_ADDR => {
             let ss = instr.ss() as usize;
@@ -282,10 +278,7 @@ pub fn add_sub<const OP: u32>(
 }
 
 #[inline(always)]
-pub fn addr_reg<const OP: u32>(
-    ctx: &mut crate::gamecube::GameCube,
-    instr: crate::flipper::dsp::instruction::Instruction,
-) {
+pub fn addr_reg<const OP: u32>(ctx: &mut GameCube, instr: Instruction) {
     match OP {
         OP_DAR => {
             let d = instr.d_14_15() as usize;
@@ -311,10 +304,7 @@ pub fn addr_reg<const OP: u32>(
 }
 
 #[inline(always)]
-pub fn cmp_test<const OP: u32>(
-    ctx: &mut crate::gamecube::GameCube,
-    instr: crate::flipper::dsp::instruction::Instruction,
-) {
+pub fn cmp_test<const OP: u32>(ctx: &mut GameCube, instr: Instruction) {
     match OP {
         OP_CMP => {
             let a = ctx.dsp.registers.ac(0);
@@ -386,10 +376,7 @@ pub fn cmp_test<const OP: u32>(
 }
 
 #[inline(always)]
-pub fn control<const OP: u32>(
-    ctx: &mut crate::gamecube::GameCube,
-    instr: crate::flipper::dsp::instruction::Instruction,
-) {
+pub fn control<const OP: u32>(ctx: &mut GameCube, instr: Instruction) {
     match OP {
         OP_JCC => {
             let branch_control = BranchControl::from(instr.cond());
@@ -445,10 +432,7 @@ pub fn control<const OP: u32>(
 }
 
 #[inline(always)]
-pub fn imm_alu<const OP: u32>(
-    ctx: &mut crate::gamecube::GameCube,
-    instr: crate::flipper::dsp::instruction::Instruction,
-) {
+pub fn imm_alu<const OP: u32>(ctx: &mut GameCube, instr: Instruction) {
     match OP {
         OP_ADDI => {
             let d = instr.d_7_7();
@@ -527,10 +511,7 @@ pub fn imm_alu<const OP: u32>(
 }
 
 #[inline(always)]
-pub fn inc_dec<const OP: u32>(
-    ctx: &mut crate::gamecube::GameCube,
-    instr: crate::flipper::dsp::instruction::Instruction,
-) {
+pub fn inc_dec<const OP: u32>(ctx: &mut GameCube, instr: Instruction) {
     match OP {
         OP_INCM => {
             let d = instr.d_7_7();
@@ -588,21 +569,18 @@ pub fn inc_dec<const OP: u32>(
 }
 
 #[inline(always)]
-pub fn load_store<const OP: u32>(
-    ctx: &mut crate::gamecube::GameCube,
-    instr: crate::flipper::dsp::instruction::Instruction,
-) {
+pub fn load_store<const OP: u32>(ctx: &mut GameCube, instr: Instruction) {
     match OP {
         OP_LRI => {
             ctx.dsp.registers.write::<true>(instr.d_11_15(), instr.imm_16_31());
         }
         OP_LR => {
-            let value = ctx.dsp.read_dmem(instr.imm_16_31());
+            let value = dsp::read_dmem(ctx, instr.imm_16_31());
             ctx.dsp.registers.write::<true>(instr.d_11_15(), value);
         }
         OP_SR => {
             let value = ctx.dsp.registers.read::<true>(instr.d_11_15());
-            ctx.dsp.write_dmem(instr.imm_16_31(), value);
+            dsp::write_dmem(ctx, instr.imm_16_31(), value);
         }
         OP_MRR => {
             let value = ctx.dsp.registers.read::<true>(instr.src());
@@ -610,12 +588,13 @@ pub fn load_store<const OP: u32>(
         }
         OP_SI => {
             let addr = 0xFF00 | (instr.mem_8_15_u16());
-            ctx.dsp.write_dmem(addr, instr.imm_16_31());
+            dsp::write_dmem(ctx, addr, instr.imm_16_31());
         }
         OP_LRR | OP_LRRD | OP_LRRI | OP_LRRN => {
             let s = instr.s_9_10() as usize;
             let d = instr.d_11_15();
-            let value = ctx.dsp.read_dmem(ctx.dsp.registers.ar[s]);
+            let addr = ctx.dsp.registers.ar[s];
+            let value = dsp::read_dmem(ctx, addr);
             // Compute new AR before the write (write may modify WR/IX used by AR increment)
             let new_ar = match OP {
                 OP_LRRD => Some(ctx.dsp.registers.decrement_ar(s)),
@@ -647,7 +626,8 @@ pub fn load_store<const OP: u32>(
                 }
                 _ => None,
             };
-            ctx.dsp.write_dmem(ctx.dsp.registers.ar[d], value);
+            let addr = ctx.dsp.registers.ar[d];
+            dsp::write_dmem(ctx, addr, value);
             if let Some(ar) = new_ar {
                 ctx.dsp.registers.ar[d] = ar;
             }
@@ -655,7 +635,7 @@ pub fn load_store<const OP: u32>(
         OP_LRS => {
             let dst = reg::AX0L + instr.reg_5_7();
             let addr = (ctx.dsp.registers.config << 8) | instr.mem_8_15_u16();
-            let value = ctx.dsp.read_dmem(addr);
+            let value = dsp::read_dmem(ctx, addr);
             ctx.dsp.registers.write::<true>(dst, value);
         }
         OP_SRSH | OP_SRS => {
@@ -672,7 +652,7 @@ pub fn load_store<const OP: u32>(
                 _ => unreachable!(),
             };
             let value = ctx.dsp.registers.read::<true>(src);
-            ctx.dsp.write_dmem(addr, value);
+            dsp::write_dmem(ctx, addr, value);
         }
         OP_ILRR | OP_ILRRD | OP_ILRRI | OP_ILRRN => {
             let src = instr.s_14_15() as usize;
@@ -694,7 +674,7 @@ pub fn load_store<const OP: u32>(
 }
 
 #[inline(always)]
-pub fn logic<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::flipper::dsp::instruction::Instruction) {
+pub fn logic<const OP: u32>(ctx: &mut GameCube, instr: Instruction) {
     match OP {
         OP_XORR => {
             let s = instr.s_6_6() as usize;
@@ -767,7 +747,7 @@ pub fn logic<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::f
 }
 
 #[inline(always)]
-pub fn loops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::flipper::dsp::instruction::Instruction) {
+pub fn loops<const OP: u32>(ctx: &mut GameCube, instr: Instruction) {
     match OP {
         OP_LOOP_REG | OP_LOOPI => {
             let counter = match OP {
@@ -804,10 +784,7 @@ pub fn loops<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::f
 }
 
 #[inline(always)]
-pub fn move_ops<const OP: u32>(
-    ctx: &mut crate::gamecube::GameCube,
-    instr: crate::flipper::dsp::instruction::Instruction,
-) {
+pub fn move_ops<const OP: u32>(ctx: &mut GameCube, instr: Instruction) {
     match OP {
         OP_MOVR => {
             let ss = instr.ss();
@@ -862,7 +839,7 @@ pub fn move_ops<const OP: u32>(
 }
 
 #[inline(always)]
-pub fn mul<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::flipper::dsp::instruction::Instruction) {
+pub fn mul<const OP: u32>(ctx: &mut GameCube, instr: Instruction) {
     match OP {
         OP_MUL => {
             let s = instr.r_4_4() as usize;
@@ -959,10 +936,7 @@ pub fn mul<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::fli
 }
 
 #[inline(always)]
-pub fn shifts<const OP: u32>(
-    ctx: &mut crate::gamecube::GameCube,
-    instr: crate::flipper::dsp::instruction::Instruction,
-) {
+pub fn shifts<const OP: u32>(ctx: &mut GameCube, instr: Instruction) {
     match OP {
         OP_LSL | OP_ASL => {
             let r = instr.r_7_7();
@@ -1060,10 +1034,7 @@ pub fn shifts<const OP: u32>(
 }
 
 #[inline(always)]
-pub fn status<const OP: u32>(
-    ctx: &mut crate::gamecube::GameCube,
-    instr: crate::flipper::dsp::instruction::Instruction,
-) {
+pub fn status<const OP: u32>(ctx: &mut GameCube, instr: Instruction) {
     match OP {
         OP_SBCLR => {
             let idx = 6 + instr.bit();
@@ -1100,13 +1071,13 @@ pub fn status<const OP: u32>(
 }
 
 // Extension opcode handlers
-use crate::flipper::dsp::instruction::GcDspExt;
+use dsp::instruction::GcDspExt;
 
 #[inline(always)]
-pub fn ext_nop(_ctx: &mut crate::gamecube::GameCube, _instr: GcDspExt) {}
+pub fn ext_nop(_ctx: &mut GameCube, _instr: GcDspExt) {}
 
 #[inline(always)]
-pub fn ext_addr<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+pub fn ext_addr<const OP: u32>(ctx: &mut GameCube, instr: GcDspExt) {
     let r = instr.r_6_7() as usize;
     match OP {
         OP_EXT_DR => ctx.dsp.registers.ar[r] = ctx.dsp.registers.decrement_ar(r),
@@ -1120,7 +1091,7 @@ pub fn ext_addr<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDsp
 }
 
 #[inline(always)]
-pub fn ext_mv(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+pub fn ext_mv(ctx: &mut GameCube, instr: GcDspExt) {
     let d = instr.d_4_5();
     let s = instr.s_6_7();
     let value = ctx.dsp.registers.read::<true>(reg::AC0L + s);
@@ -1128,11 +1099,12 @@ pub fn ext_mv(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
 }
 
 #[inline(always)]
-pub fn ext_store<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+pub fn ext_store<const OP: u32>(ctx: &mut GameCube, instr: GcDspExt) {
     let d = instr.d_6_7() as usize;
     let s = instr.s_3_4();
     let value = ctx.dsp.registers.read::<true>(reg::AC0L + s);
-    ctx.dsp.write_dmem(ctx.dsp.registers.ar[d], value);
+    let addr = ctx.dsp.registers.ar[d];
+    dsp::write_dmem(ctx, addr, value);
     match OP {
         OP_EXT_S => {
             ctx.dsp.registers.ar[d] = ctx.dsp.registers.increment_ar(d);
@@ -1146,10 +1118,11 @@ pub fn ext_store<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDs
 }
 
 #[inline(always)]
-pub fn ext_load<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+pub fn ext_load<const OP: u32>(ctx: &mut GameCube, instr: GcDspExt) {
     let d = instr.d_2_4();
     let s = instr.s_6_7() as usize;
-    let value = ctx.dsp.read_dmem(ctx.dsp.registers.ar[s]);
+    let addr = ctx.dsp.registers.ar[s];
+    let value = dsp::read_dmem(ctx, addr);
     ctx.dsp.registers.write::<true>(reg::AX0L + d, value);
     match OP {
         OP_EXT_L => {
@@ -1164,7 +1137,7 @@ pub fn ext_load<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDsp
 }
 
 #[inline(always)]
-pub fn ext_load_store<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+pub fn ext_load_store<const OP: u32>(ctx: &mut GameCube, instr: GcDspExt) {
     let s = instr.s_7_7() as usize;
     let d = instr.d_2_3();
 
@@ -1172,16 +1145,20 @@ pub fn ext_load_store<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr:
     // SL variants: Store ac[s].m to ar[0], Load from ar[3] to AX
     match OP {
         OP_EXT_LS | OP_EXT_LSM | OP_EXT_LSN | OP_EXT_LSNM => {
-            let load_value = ctx.dsp.read_dmem(ctx.dsp.registers.ar[0]);
+            let load_addr = ctx.dsp.registers.ar[0];
+            let load_value = dsp::read_dmem(ctx, load_addr);
             ctx.dsp.registers.write::<true>(reg::AX0L + d, load_value);
             let store_value = ctx.dsp.registers.ac_mid(s as u8);
-            ctx.dsp.write_dmem(ctx.dsp.registers.ar[3], store_value);
+            let store_addr = ctx.dsp.registers.ar[3];
+            dsp::write_dmem(ctx, store_addr, store_value);
         }
         _ => {
             // SL: Store first, then Load
             let store_value = ctx.dsp.registers.ac_mid(s as u8);
-            ctx.dsp.write_dmem(ctx.dsp.registers.ar[0], store_value);
-            let load_value = ctx.dsp.read_dmem(ctx.dsp.registers.ar[3]);
+            let store_addr = ctx.dsp.registers.ar[0];
+            dsp::write_dmem(ctx, store_addr, store_value);
+            let load_addr = ctx.dsp.registers.ar[3];
+            let load_value = dsp::read_dmem(ctx, load_addr);
             ctx.dsp.registers.write::<true>(reg::AX0L + d, load_value);
         }
     }
@@ -1215,19 +1192,21 @@ pub fn ext_load_store<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr:
 }
 
 #[inline(always)]
-pub fn ext_ld<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+pub fn ext_ld<const OP: u32>(ctx: &mut GameCube, instr: GcDspExt) {
     let d = instr.d_2_2();
     let r = instr.r_3_3();
     let s = instr.s_6_7() as usize;
 
     // First load from ar[s] -> AX0 half (d selects low/high)
     let d_reg = if d != 0 { reg::AX0H } else { reg::AX0L };
-    let value0 = ctx.dsp.read_dmem(ctx.dsp.registers.ar[s]);
+    let addr0 = ctx.dsp.registers.ar[s];
+    let value0 = dsp::read_dmem(ctx, addr0);
     ctx.dsp.registers.write::<true>(d_reg, value0);
 
     // Second load from ar[3] -> AX1 half (r selects low/high)
     let r_reg = if r != 0 { reg::AX1H } else { reg::AX1L };
-    let value1 = ctx.dsp.read_dmem(ctx.dsp.registers.ar[3]);
+    let addr1 = ctx.dsp.registers.ar[3];
+    let value1 = dsp::read_dmem(ctx, addr1);
     ctx.dsp.registers.write::<true>(r_reg, value1);
 
     // AR increments: "" = +1/+1, "N" = +ix[s]/+1, "M" = +1/+ix[3], "NM" = +ix[s]/+ix[3]
@@ -1257,14 +1236,16 @@ pub fn ext_ld<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspEx
 }
 
 #[inline(always)]
-pub fn ext_ldax<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+pub fn ext_ldax<const OP: u32>(ctx: &mut GameCube, instr: GcDspExt) {
     let s = instr.d_2_2() as usize;
     let r = instr.r_3_3() as usize;
 
     // Load high from ar[s]
-    let high = ctx.dsp.read_dmem(ctx.dsp.registers.ar[s]);
+    let addr_s = ctx.dsp.registers.ar[s];
+    let high = dsp::read_dmem(ctx, addr_s);
     // Load low from ar[3]
-    let low = ctx.dsp.read_dmem(ctx.dsp.registers.ar[3]);
+    let addr_3 = ctx.dsp.registers.ar[3];
+    let low = dsp::read_dmem(ctx, addr_3);
 
     // Write to ax[r] (high and low)
     ctx.dsp.registers.axh[r] = high;
