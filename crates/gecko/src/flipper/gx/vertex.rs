@@ -55,7 +55,7 @@ impl GraphicsProcessor {
 
         let vertex_count = data.len() / vf.vertex_stride;
 
-        let mut vertices: Vec<draw::Vertex> = Vec::with_capacity(vertex_count);
+        let mut vertices = self.draw_commands.take_vertex_buf(vertex_count);
         let mut cur = Cursor::new(&data);
 
         for i in 0..vertex_count {

@@ -308,7 +308,7 @@ impl State {
             self.surface_config.width,
             self.surface_config.height,
         );
-        emulator.gx.draw_commands.commands.clear();
+        emulator.gx.draw_commands.recycle();
     }
 
     fn render_xfb(&mut self, emulator: &GameCube, view: &wgpu::TextureView) {

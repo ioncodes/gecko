@@ -11,6 +11,15 @@ use pipeline::PipelineKey;
 use std::collections::HashMap;
 use triangulate::{GpuVertex, align_up};
 
+type TexKey = (usize, u32, u32, TextureFormat);
+type SamplerKey = (WrapMode, WrapMode, MagFilter, MinFilter);
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(crate) struct BindGroupCacheKey {
+    tex_keys: [Option<TexKey>; 8],
+    sampler_keys: [Option<SamplerKey>; 8],
+}
+
 #[derive(encase::ShaderType)]
 pub(crate) struct FrameUniforms {
     tev_color_regs: [glam::Vec4; 4],
@@ -64,6 +73,7 @@ pub struct GxRenderer {
     pub(crate) scratch_vertices: Vec<GpuVertex>,
     pub(crate) scratch_draws: Vec<(u32, u32)>,
     pub(crate) scratch_uniform_bytes: Vec<u8>,
+    pub(crate) bind_group_cache: HashMap<BindGroupCacheKey, wgpu::BindGroup>,
 }
 
 impl GxRenderer {
@@ -93,7 +103,7 @@ impl GxRenderer {
                 visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
+                    has_dynamic_offset: true,
                     min_binding_size: Some(FrameUniforms::min_size()),
                 },
                 count: None,
@@ -230,6 +240,7 @@ impl GxRenderer {
             scratch_vertices: Vec::new(),
             scratch_draws: Vec::new(),
             scratch_uniform_bytes: Vec::new(),
+            bind_group_cache: HashMap::new(),
         }
     }
 

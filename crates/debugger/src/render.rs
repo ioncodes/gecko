@@ -440,7 +440,7 @@ impl RenderState {
 
         // Clear after egui so the GX state window can inspect the draw calls from this frame.
         if used_gx {
-            emulator.gx.draw_commands.commands.clear();
+            emulator.gx.draw_commands.recycle();
         }
     }
 

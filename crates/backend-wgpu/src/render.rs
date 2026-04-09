@@ -1,3 +1,4 @@
+use crate::BindGroupCacheKey;
 use crate::pipeline::PipelineKey;
 use crate::triangulate::{self, GpuVertex, align_up};
 use crate::{DrawUniforms, FrameUniforms, GxRenderer, helpers, texture};
@@ -166,6 +167,7 @@ impl GxRenderer {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
+            self.bind_group_cache.clear();
         }
 
         queue.write_buffer(&self.frame_uniform_buffer, 0, frame_uniform_bytes);
@@ -174,7 +176,7 @@ impl GxRenderer {
     }
 
     fn execute_render_pass(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         commands: &DrawCommands,
@@ -186,6 +188,66 @@ impl GxRenderer {
             FrameUniforms::min_size().get(),
             device.limits().min_uniform_buffer_offset_alignment as u64,
         ) as usize;
+
+        // Pre-build bind groups for each unique texture/sampler configuration.
+        for &dc_idx in draw_call_indices {
+            let dc = &commands.commands[dc_idx];
+            let mut tex_keys: [Option<_>; 8] = [None; 8];
+            let mut sampler_keys: [Option<_>; 8] = [None; 8];
+            
+            for slot in 0..8 {
+                if let Some(desc) = &dc.textures[slot] {
+                    tex_keys[slot] = Some((desc.ram_addr, desc.width, desc.height, desc.format));
+                    sampler_keys[slot] = Some((desc.wrap_s, desc.wrap_t, desc.mag_filter, desc.min_filter));
+                }
+            }
+
+            let bg_key = BindGroupCacheKey { tex_keys, sampler_keys };
+            self.bind_group_cache.entry(bg_key).or_insert_with(|| {
+                let mut tex_views: [&wgpu::TextureView; 8] = [&self.fallback_view; 8];
+                let mut tex_samplers: [&wgpu::Sampler; 8] = [&self.sampler_cache[&fallback_sampler_key]; 8];
+                
+                for slot in 0..8 {
+                    if let Some(tk) = &tex_keys[slot] {
+                        tex_views[slot] = &self.texture_cache[tk].1;
+                        tex_samplers[slot] = &self.sampler_cache[&sampler_keys[slot].unwrap()];
+                    }
+                }
+                
+                let entries: [wgpu::BindGroupEntry; 18] = std::array::from_fn(|i| match i {
+                    0 => wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.frame_uniform_buffer,
+                            offset: 0,
+                            size: Some(FrameUniforms::min_size()),
+                        }),
+                    },
+                    1 => wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.draw_uniform_buffer,
+                            offset: 0,
+                            size: Some(DrawUniforms::min_size()),
+                        }),
+                    },
+                    2..=9 => wgpu::BindGroupEntry {
+                        binding: i as u32,
+                        resource: wgpu::BindingResource::TextureView(tex_views[i - 2]),
+                    },
+                    _ => wgpu::BindGroupEntry {
+                        binding: i as u32,
+                        resource: wgpu::BindingResource::Sampler(tex_samplers[i - 10]),
+                    },
+                });
+
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: None,
+                    layout: &self.bind_group_layout,
+                    entries: &entries,
+                })
+            });
+        }
 
         let mut encoder = device.create_command_encoder(&Default::default());
         {
@@ -220,57 +282,21 @@ impl GxRenderer {
                 let pipeline = &self.pipeline_cache[&pipeline_key];
                 rpass.set_pipeline(pipeline);
 
-                let mut tex_views: [&wgpu::TextureView; 8] = [&self.fallback_view; 8];
-                let mut tex_samplers: [&wgpu::Sampler; 8] = [&self.sampler_cache[&fallback_sampler_key]; 8];
+                let mut tex_keys: [Option<_>; 8] = [None; 8];
+                let mut sampler_keys: [Option<_>; 8] = [None; 8];
                 for slot in 0..8 {
                     if let Some(desc) = &dc.textures[slot] {
-                        let tex_key = (desc.ram_addr, desc.width, desc.height, desc.format);
-                        let sampler_key = (desc.wrap_s, desc.wrap_t, desc.mag_filter, desc.min_filter);
-                        tex_views[slot] = &self.texture_cache[&tex_key].1;
-                        tex_samplers[slot] = &self.sampler_cache[&sampler_key];
+                        tex_keys[slot] = Some((desc.ram_addr, desc.width, desc.height, desc.format));
+                        sampler_keys[slot] = Some((desc.wrap_s, desc.wrap_t, desc.mag_filter, desc.min_filter));
                     }
                 }
+                
+                let bg_key = BindGroupCacheKey { tex_keys, sampler_keys };
+                let bind_group = &self.bind_group_cache[&bg_key];
 
-                let frame_offset = (index as u64 * frame_stride as u64) as wgpu::BufferAddress;
+                let frame_offset = (index * frame_stride) as u32;
                 let draw_offset = (index as u64 * self.draw_uniform_stride) as u32;
-
-                let mut entries = vec![
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &self.frame_uniform_buffer,
-                            offset: frame_offset,
-                            size: Some(FrameUniforms::min_size()),
-                        }),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &self.draw_uniform_buffer,
-                            offset: 0,
-                            size: Some(DrawUniforms::min_size()),
-                        }),
-                    },
-                ];
-                for i in 0..8u32 {
-                    entries.push(wgpu::BindGroupEntry {
-                        binding: 2 + i,
-                        resource: wgpu::BindingResource::TextureView(tex_views[i as usize]),
-                    });
-                }
-                for i in 0..8u32 {
-                    entries.push(wgpu::BindGroupEntry {
-                        binding: 10 + i,
-                        resource: wgpu::BindingResource::Sampler(tex_samplers[i as usize]),
-                    });
-                }
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: None,
-                    layout: &self.bind_group_layout,
-                    entries: &entries,
-                });
-
-                rpass.set_bind_group(0, &bind_group, &[draw_offset]);
+                rpass.set_bind_group(0, bind_group, &[frame_offset, draw_offset]);
                 rpass.draw(first_vertex..first_vertex + vertex_count, 0..1);
             }
         }
@@ -290,6 +316,7 @@ impl GxRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        self.bind_group_cache.clear();
     }
 }
 

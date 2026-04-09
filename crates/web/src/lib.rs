@@ -318,7 +318,7 @@ impl State {
         frame.present();
 
         if used_gx {
-            emulator.gx.draw_commands.commands.clear();
+            emulator.gx.draw_commands.recycle();
         }
     }
 

@@ -134,4 +134,24 @@ impl std::ops::Mul for Matrix4 {
 pub struct DrawCommands {
     pub projection: Matrix4,
     pub commands: Vec<DrawCall>,
+    vertex_pool: Vec<Vec<Vertex>>,
+}
+
+impl DrawCommands {
+    pub fn recycle(&mut self) {
+        for dc in self.commands.drain(..) {
+            let mut buf = dc.vertices;
+            buf.clear();
+            self.vertex_pool.push(buf);
+        }
+    }
+
+    pub fn take_vertex_buf(&mut self, capacity: usize) -> Vec<Vertex> {
+        if let Some(mut buf) = self.vertex_pool.pop() {
+            buf.reserve(capacity.saturating_sub(buf.capacity()));
+            buf
+        } else {
+            Vec::with_capacity(capacity)
+        }
+    }
 }
