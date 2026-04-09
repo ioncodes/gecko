@@ -25,14 +25,7 @@ pub fn branch<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: crate::
                 ctx.cpu.spr.ctr = ctx.cpu.spr.ctr.wrapping_sub(1);
             }
 
-            let (crf, bit) = (instr.bi() >> 2, instr.bi() & 0b11);
-            let condition = match bit {
-                0 => ctx.cpu.cr.get_field(crf).lt(),
-                1 => ctx.cpu.cr.get_field(crf).gt(),
-                2 => ctx.cpu.cr.get_field(crf).eq(),
-                3 => ctx.cpu.cr.get_field(crf).so(),
-                _ => panic!("Invalid CR bit index: {}", bit),
-            };
+            let condition = ctx.cpu.cr.get_bit(instr.bi());
             if !ctrl.should_branch(ctx.cpu.spr.ctr, condition) {
                 return;
             }

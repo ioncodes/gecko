@@ -54,35 +54,41 @@ impl Cpu {
 
     #[inline(always)]
     pub fn read_gpr(&self, index: u8) -> u32 {
-        self.gprs[index as usize]
+        debug_assert!(index < 32);
+        unsafe { *self.gprs.get_unchecked(index as usize) }
     }
 
     #[inline(always)]
     pub fn write_gpr(&mut self, index: u8, value: u32) {
-        self.gprs[index as usize] = value;
+        debug_assert!(index < 32);
+        unsafe { *self.gprs.get_unchecked_mut(index as usize) = value }
     }
 
     #[inline(always)]
     pub fn read_fpr(&self, index: u8) -> f64 {
-        self.fprs[index as usize]
+        debug_assert!(index < 32);
+        unsafe { *self.fprs.get_unchecked(index as usize) }
     }
 
     #[inline(always)]
     pub fn write_fpr(&mut self, index: u8, value: f64) {
-        self.fprs[index as usize] = value;
+        debug_assert!(index < 32);
+        unsafe { *self.fprs.get_unchecked_mut(index as usize) = value }
     }
 
     #[inline(always)]
     pub fn read_ps1(&self, index: u8) -> f64 {
-        self.ps1s[index as usize]
+        debug_assert!(index < 32);
+        unsafe { *self.ps1s.get_unchecked(index as usize) }
     }
 
     #[inline(always)]
     pub fn write_ps1(&mut self, index: u8, value: f64) {
-        self.ps1s[index as usize] = value;
+        debug_assert!(index < 32);
+        unsafe { *self.ps1s.get_unchecked_mut(index as usize) = value }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn update_cr0(&mut self, val: u32) {
         let so = self.spr.xer.summary_overflow(); // SO is copied from XER[SO]
         self.cr.set_cr0(
@@ -95,7 +101,7 @@ impl Cpu {
     }
 
     /// Update CR1 with FPSCR[0:3] (used by Rc=1 FP instructions)
-    #[inline]
+    #[inline(always)]
     pub fn update_cr1(&mut self) {
         let cr1 = condition::ConditionField::from((self.fpscr >> 28) as u8);
         self.cr.set_field(1, cr1);
@@ -104,7 +110,12 @@ impl Cpu {
     /// Read GPR with the PowerPC "rA|0" convention: returns 0 when index is 0
     #[inline(always)]
     pub fn read_gpr_or_zero(&self, index: u8) -> u32 {
-        if index == 0 { 0 } else { self.gprs[index as usize] }
+        debug_assert!(index < 32);
+        if index == 0 {
+            0
+        } else {
+            unsafe { *self.gprs.get_unchecked(index as usize) }
+        }
     }
 
     /// Get XER carry bit

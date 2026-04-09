@@ -14,23 +14,27 @@ impl<const N: usize> DspStack<N> {
 
     #[inline(always)]
     pub fn top(&self) -> u16 {
-        self.data[self.ptr as usize]
+        debug_assert!((self.ptr as usize) < N);
+        unsafe { *self.data.get_unchecked(self.ptr as usize) }
     }
 
     #[inline(always)]
     pub fn set_top(&mut self, value: u16) {
-        self.data[self.ptr as usize] = value;
+        debug_assert!((self.ptr as usize) < N);
+        unsafe { *self.data.get_unchecked_mut(self.ptr as usize) = value }
     }
 
     #[inline(always)]
     pub fn push(&mut self, value: u16) {
         self.ptr = (self.ptr + 1) & Self::MASK;
-        self.data[self.ptr as usize] = value;
+        debug_assert!((self.ptr as usize) < N);
+        unsafe { *self.data.get_unchecked_mut(self.ptr as usize) = value }
     }
 
     #[inline(always)]
     pub fn pop(&mut self) -> u16 {
-        let value = self.data[self.ptr as usize];
+        debug_assert!((self.ptr as usize) < N);
+        let value = unsafe { *self.data.get_unchecked(self.ptr as usize) };
         self.ptr = (self.ptr.wrapping_sub(1)) & Self::MASK;
         value
     }

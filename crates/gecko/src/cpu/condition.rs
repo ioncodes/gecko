@@ -12,6 +12,7 @@ pub enum BranchControl {
 }
 
 impl BranchControl {
+    #[inline(always)]
     pub fn from_bo(value: u8) -> Self {
         let branch_hint = value & 0b1 == 0;
         tracing::trace!("Branch hint: {branch_hint}");
@@ -29,6 +30,7 @@ impl BranchControl {
         }
     }
 
+    #[inline(always)]
     pub fn should_branch(&self, ctr: u32, condition: bool) -> bool {
         match self {
             Self::BranchIfConditionTrue => condition,
@@ -43,6 +45,7 @@ impl BranchControl {
         }
     }
 
+    #[inline(always)]
     pub fn should_decrement_ctr(&self) -> bool {
         matches!(
             self,
@@ -91,7 +94,7 @@ pub struct ConditionRegister {
 }
 
 impl ConditionRegister {
-    #[inline]
+    #[inline(always)]
     pub fn set_field(&mut self, index: u8, value: ConditionField) {
         match index {
             0 => self.set_cr0(value),
@@ -106,18 +109,19 @@ impl ConditionRegister {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn get_bit(&self, bit: u8) -> bool {
         (self.raw() >> (31 - bit)) & 1 != 0
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn set_bit(&mut self, bit: u8, val: bool) {
         let mask = 1u32 << (31 - bit);
         let raw = if val { self.raw() | mask } else { self.raw() & !mask };
         *self = Self::from(raw);
     }
 
+    #[inline(always)]
     pub fn field_from_ord(ord: std::cmp::Ordering) -> ConditionField {
         match ord {
             std::cmp::Ordering::Less => ConditionField::new().with_lt(true),
@@ -126,7 +130,7 @@ impl ConditionRegister {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn get_field(&self, index: u8) -> ConditionField {
         match index {
             0 => self.cr0(),

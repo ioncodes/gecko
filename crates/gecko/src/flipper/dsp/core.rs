@@ -79,6 +79,7 @@ pub struct Registers {
 }
 
 impl Registers {
+    #[inline(always)]
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             ac0_high: self.ac0_high,
@@ -91,6 +92,7 @@ impl Registers {
         }
     }
 
+    #[inline(always)]
     pub fn restore(&mut self, snap: &Snapshot) {
         self.ac0_high = snap.ac0_high;
         self.ac0_mid = snap.ac0_mid;
@@ -314,9 +316,18 @@ impl Registers {
     #[inline(always)]
     pub fn read<const ALLOW_SATURATION: bool>(&mut self, index: u8) -> u16 {
         match index {
-            0..=3 => self.ar[index as usize],
-            4..=7 => self.ix[(index - 4) as usize],
-            8..=11 => self.wr[(index - 8) as usize],
+            0 => self.ar[0],
+            1 => self.ar[1],
+            2 => self.ar[2],
+            3 => self.ar[3],
+            4 => self.ix[0],
+            5 => self.ix[1],
+            6 => self.ix[2],
+            7 => self.ix[3],
+            8 => self.wr[0],
+            9 => self.wr[1],
+            10 => self.wr[2],
+            11 => self.wr[3],
             12 => self.call_stack.pop(),
             13 => self.data_stack.pop(),
             14 => self.loop_addr.pop(),
@@ -332,8 +343,10 @@ impl Registers {
             21 => self.product_mid1,
             22 => self.product_high & 0xFF,
             23 => self.product_mid2,
-            24..=25 => self.ax[(index - 24) as usize],
-            26..=27 => self.axh[(index - 26) as usize],
+            24 => self.ax[0],
+            25 => self.ax[1],
+            26 => self.axh[0],
+            27 => self.axh[1],
             28 => self.ac0_low,
             29 => self.ac1_low,
             30 => {
@@ -399,9 +412,18 @@ impl Registers {
     #[inline(always)]
     pub fn write<const ALLOW_SIGN_EXTENSION: bool>(&mut self, index: u8, value: u16) {
         match index {
-            0..=3 => self.ar[index as usize] = value,
-            4..=7 => self.ix[(index - 4) as usize] = value,
-            8..=11 => self.wr[(index - 8) as usize] = value,
+            0 => self.ar[0] = value,
+            1 => self.ar[1] = value,
+            2 => self.ar[2] = value,
+            3 => self.ar[3] = value,
+            4 => self.ix[0] = value,
+            5 => self.ix[1] = value,
+            6 => self.ix[2] = value,
+            7 => self.ix[3] = value,
+            8 => self.wr[0] = value,
+            9 => self.wr[1] = value,
+            10 => self.wr[2] = value,
+            11 => self.wr[3] = value,
             12 => self.call_stack.push(value),
             13 => self.data_stack.push(value),
             14 => self.loop_addr.push(value),
@@ -417,8 +439,10 @@ impl Registers {
             21 => self.product_mid1 = value,
             22 => self.product_high = value,
             23 => self.product_mid2 = value,
-            24..=25 => self.ax[(index - 24) as usize] = value,
-            26..=27 => self.axh[(index - 26) as usize] = value,
+            24 => self.ax[0] = value,
+            25 => self.ax[1] = value,
+            26 => self.axh[0] = value,
+            27 => self.axh[1] = value,
             28 => self.ac0_low = value,
             29 => self.ac1_low = value,
             30 => {

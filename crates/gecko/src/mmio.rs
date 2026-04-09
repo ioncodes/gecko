@@ -4,7 +4,6 @@ pub mod fp;
 pub mod macros;
 pub mod traits;
 
-
 use constants::*;
 
 pub struct Mmio {

@@ -1,6 +1,4 @@
-use std::cmp::Ordering;
-use std::collections::BinaryHeap;
-use std::collections::binary_heap::PeekMut;
+use std::collections::VecDeque;
 
 use crate::gamecube::GameCube;
 
@@ -11,42 +9,26 @@ pub const DSP_BATCH_SIZE: u64 = 1024;
 
 pub type ScheduledFn = fn(&mut GameCube);
 
-#[derive(Clone, Copy, Eq)]
+#[derive(Clone, Copy)]
 struct ScheduledEvent {
     deadline: u64,
     f: ScheduledFn,
-}
-
-impl PartialEq for ScheduledEvent {
-    fn eq(&self, other: &Self) -> bool {
-        self.deadline == other.deadline
-    }
-}
-impl Ord for ScheduledEvent {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other.deadline.cmp(&self.deadline)
-    }
-}
-impl PartialOrd for ScheduledEvent {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
 }
 
 pub struct Scheduler {
     pub cycles: u64,
     next_deadline: u64,
     timebase_offset: i64,
-    events: BinaryHeap<ScheduledEvent>,
+    events: VecDeque<ScheduledEvent>,
 }
 
 impl Scheduler {
     pub fn new() -> Self {
         let mut s = Scheduler {
             cycles: 0,
-            next_deadline: 0,
+            next_deadline: u64::MAX,
             timebase_offset: 0,
-            events: BinaryHeap::new(),
+            events: VecDeque::with_capacity(8),
         };
         s.schedule_at(CYCLES_PER_VSYNC, crate::scheduler::vsync_handler);
         s.schedule_at(
@@ -56,12 +38,17 @@ impl Scheduler {
         s
     }
 
+    #[inline(always)]
+    fn refresh_deadline(&mut self) {
+        self.next_deadline = self.events.front().map_or(u64::MAX, |e| e.deadline);
+    }
+
     /// Set `next_deadline` to the next event deadline so the CPU knows
     /// how far it can run before an event must be serviced.
     /// This may later be updated if an event is scheduled sooner than the current target.
     #[inline(always)]
     pub fn update_deadline(&mut self) {
-        self.next_deadline = self.events.peek().map_or(self.cycles, |e| e.deadline);
+        self.refresh_deadline();
     }
 
     pub fn timebase(&self) -> u64 {
@@ -88,11 +75,11 @@ impl Scheduler {
         (self.timebase() >> 32) as u32
     }
 
+    /// Insert an event keeping the deque sorted by deadline (earliest first).
     pub fn schedule_at(&mut self, deadline: u64, f: ScheduledFn) {
-        self.events.push(ScheduledEvent { deadline, f });
-        if deadline < self.next_deadline {
-            self.next_deadline = deadline;
-        }
+        let pos = self.events.partition_point(|e| e.deadline <= deadline);
+        self.events.insert(pos, ScheduledEvent { deadline, f });
+        self.next_deadline = self.next_deadline.min(deadline);
     }
 
     pub fn schedule_in(&mut self, delay: u64, f: ScheduledFn) {
@@ -100,10 +87,13 @@ impl Scheduler {
         self.schedule_at(deadline, f);
     }
 
+    #[inline(always)]
     pub fn poll(&mut self) -> Option<ScheduledFn> {
-        let top = self.events.peek_mut()?;
-        if self.cycles >= top.deadline {
-            Some(PeekMut::pop(top).f)
+        let front = self.events.front()?;
+        if self.cycles >= front.deadline {
+            let f = self.events.pop_front().unwrap().f;
+            self.refresh_deadline();
+            Some(f)
         } else {
             None
         }
