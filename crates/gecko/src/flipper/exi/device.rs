@@ -1,4 +1,4 @@
-pub trait ExiDevice {
+pub trait ExiDevice: Send {
     fn on_select(&mut self) {}
     fn transfer_byte(&mut self, byte: &mut u8);
 

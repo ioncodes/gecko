@@ -194,7 +194,7 @@ impl GxRenderer {
             let dc = &commands.commands[dc_idx];
             let mut tex_keys: [Option<_>; 8] = [None; 8];
             let mut sampler_keys: [Option<_>; 8] = [None; 8];
-            
+
             for slot in 0..8 {
                 if let Some(desc) = &dc.textures[slot] {
                     tex_keys[slot] = Some((desc.ram_addr, desc.width, desc.height, desc.format));
@@ -206,14 +206,14 @@ impl GxRenderer {
             self.bind_group_cache.entry(bg_key).or_insert_with(|| {
                 let mut tex_views: [&wgpu::TextureView; 8] = [&self.fallback_view; 8];
                 let mut tex_samplers: [&wgpu::Sampler; 8] = [&self.sampler_cache[&fallback_sampler_key]; 8];
-                
+
                 for slot in 0..8 {
                     if let Some(tk) = &tex_keys[slot] {
                         tex_views[slot] = &self.texture_cache[tk].1;
                         tex_samplers[slot] = &self.sampler_cache[&sampler_keys[slot].unwrap()];
                     }
                 }
-                
+
                 let entries: [wgpu::BindGroupEntry; 18] = std::array::from_fn(|i| match i {
                     0 => wgpu::BindGroupEntry {
                         binding: 0,
@@ -290,7 +290,7 @@ impl GxRenderer {
                         sampler_keys[slot] = Some((desc.wrap_s, desc.wrap_t, desc.mag_filter, desc.min_filter));
                     }
                 }
-                
+
                 let bg_key = BindGroupCacheKey { tex_keys, sampler_keys };
                 let bind_group = &self.bind_group_cache[&bg_key];
 
