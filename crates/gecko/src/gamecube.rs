@@ -247,7 +247,7 @@ impl GameCube {
     pub fn run_until_vsync(&mut self) {
         self.prepare_frame();
         while !self.vsync_pending {
-            self.scheduler.update_deadline();
+            self.scheduler.refresh_deadline();
             // Execute a slice of CPU instructions until the next event deadline
             while self.scheduler.cycles < self.scheduler.next_deadline() {
                 self.step_cpu();

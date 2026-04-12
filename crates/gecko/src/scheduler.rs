@@ -40,16 +40,8 @@ impl Scheduler {
     }
 
     #[inline(always)]
-    fn refresh_deadline(&mut self) {
+    pub fn refresh_deadline(&mut self) {
         self.next_deadline = self.events.front().map_or(u64::MAX, |e| e.deadline);
-    }
-
-    /// Set `next_deadline` to the next event deadline so the CPU knows
-    /// how far it can run before an event must be serviced.
-    /// This may later be updated if an event is scheduled sooner than the current target.
-    #[inline(always)]
-    pub fn update_deadline(&mut self) {
-        self.refresh_deadline();
     }
 
     pub fn timebase(&self) -> u64 {

@@ -6,8 +6,11 @@ pub mod math;
 pub mod regs;
 pub mod tev;
 mod texgen;
+pub mod texture;
 mod vertex;
 mod xf;
+
+use std::collections::HashMap;
 
 use crate::flipper::gx::constants::{BP_REG_SIZE, CP_REG_SIZE, XF_MEM_SIZE};
 use crate::flipper::gx::draw::Matrix4;
@@ -52,6 +55,9 @@ pub struct GraphicsProcessor {
     // XFB copies accumulated since the last vblank. `present_xfb()` drains
     // this at each field boundary to emit a PresentXfb action.
     pub xfb_copies: Vec<XfbCopy>,
+    // Hash of the raw texture data at each RAM address; used to detect when
+    // texture content changes and avoid redundant decodes + LoadTexture sends.
+    pub texture_hashes: HashMap<u32, u64>,
 }
 
 /// A single EFB-to-XFB copy, stored until `present_xfb` computes the layout.
@@ -91,6 +97,7 @@ impl GraphicsProcessor {
             cur_scissor_offset_x: 0,
             cur_scissor_offset_y: 0,
             xfb_copies: Vec::new(),
+            texture_hashes: HashMap::new(),
         }
     }
 
@@ -114,7 +121,7 @@ impl GraphicsProcessor {
             match cmd {
                 FifoCmd::Cp(data) => self.load_cp(&data),
                 FifoCmd::Xf(data) => self.load_xf(renderer, &data),
-                FifoCmd::Bp(data) => self.load_bp(renderer, &data),
+                FifoCmd::Bp(data) => self.load_bp(renderer, &mmio.ram, &data),
                 FifoCmd::CallDisplayList { phys_addr, nbytes } => {
                     let addr = (phys_addr & 0x3FFFFFFF) as usize;
                     let len = nbytes as usize;

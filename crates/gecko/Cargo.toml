@@ -17,3 +17,4 @@ tracing = { version = "0.1.44", features = ["release_max_level_off"] }
 image = { path = "../image" }
 glam = { version = "0.32.1", features = ["bytemuck"] }
 bytemuck = { version = "1.25.0", features = ["derive"] }
+twox-hash = "2.1.2"

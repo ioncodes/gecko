@@ -1,5 +1,9 @@
-use crate::flipper::gx::draw::{EfbCopyCmd, Primitive, Scissor, TextureDescriptor, Viewport};
-use crate::flipper::gx::regs::{AlphaCompare, BlendMode, ChanCtrl, CullMode, ZMode};
+use crate::flipper::gx::draw::{EfbCopyCmd, Primitive, Scissor, Viewport};
+use crate::flipper::gx::regs::{AlphaCompare, BlendMode, ChanCtrl, CullMode, MagFilter, MinFilter, WrapMode, ZMode};
+
+/// Identifies a texture by its RAM base address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TextureId(pub u32);
 
 #[derive(Debug)]
 pub enum GxAction {
@@ -16,9 +20,24 @@ pub enum GxAction {
     SetBlendMode(BlendMode),
     SetAlphaCompare(AlphaCompare),
     SetCullMode(CullMode),
+
+    /// Upload pre-decoded texture data. Emitted when texture content at a
+    /// given address changes (detected by hash).
+    LoadTexture {
+        id: TextureId,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    },
+
+    /// Bind a previously loaded texture to a TEV texture slot.
     SetTexture {
         slot: usize,
-        descriptor: TextureDescriptor,
+        id: TextureId,
+        wrap_s: WrapMode,
+        wrap_t: WrapMode,
+        mag_filter: MagFilter,
+        min_filter: MinFilter,
     },
 
     /// Issue a draw call. The renderer uses its tracked state (projection,

@@ -4,12 +4,11 @@ mod helpers;
 mod pipeline;
 mod render;
 pub mod sink;
-pub mod texture;
 
 use encase::ShaderType as _;
-use gecko::flipper::gx::draw::TextureFormat;
-use gecko::flipper::gx::draw::{Scissor, TextureDescriptor, Viewport};
+use gecko::flipper::gx::draw::{Scissor, Viewport};
 use gecko::flipper::gx::regs::{AlphaCompare, BlendMode, CompareFunc, CullMode, MagFilter, MinFilter, WrapMode, ZMode};
+use gecko::host::TextureId;
 use glam::Mat4;
 use pipeline::PipelineKey;
 use std::collections::HashMap;
@@ -36,12 +35,11 @@ pub(crate) fn align_up(value: u64, alignment: u64) -> u64 {
     (value + alignment - 1) & !(alignment - 1)
 }
 
-type TexKey = (usize, u32, u32, TextureFormat);
 type SamplerKey = (WrapMode, WrapMode, MagFilter, MinFilter);
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct BindGroupCacheKey {
-    tex_keys: [Option<TexKey>; 8],
+    tex_keys: [Option<TextureId>; 8],
     sampler_keys: [Option<SamplerKey>; 8],
 }
 
@@ -106,7 +104,7 @@ pub struct GxRenderer {
     pub(crate) efb_depth_view: wgpu::TextureView,
     pub(crate) efb_needs_clear: bool,
     pub(crate) sampler_cache: HashMap<(WrapMode, WrapMode, MagFilter, MinFilter), wgpu::Sampler>,
-    pub(crate) texture_cache: HashMap<(usize, u32, u32, TextureFormat), (wgpu::Texture, wgpu::TextureView)>,
+    pub(crate) texture_cache: HashMap<TextureId, (wgpu::Texture, wgpu::TextureView)>,
     pub(crate) fallback_view: wgpu::TextureView,
     pub(crate) scratch_vertices: Vec<GpuVertex>,
     pub(crate) scratch_draws: Vec<(u32, u32)>,
@@ -120,7 +118,8 @@ pub struct GxRenderer {
     pub(crate) current_blend_mode: BlendMode,
     pub(crate) current_alpha_compare: AlphaCompare,
     pub(crate) current_cull_mode: CullMode,
-    pub(crate) current_textures: [Option<TextureDescriptor>; 8],
+    pub(crate) current_texture_ids: [Option<TextureId>; 8],
+    pub(crate) current_sampler_keys: [Option<SamplerKey>; 8],
     // Blit pipeline (EFB -> swapchain)
     pub(crate) blit_pipeline: wgpu::RenderPipeline,
     pub(crate) blit_bind_group_layout: wgpu::BindGroupLayout,
@@ -448,7 +447,8 @@ impl GxRenderer {
             current_alpha_compare: AlphaCompare::from_raw(0)
                 .with_comp0(CompareFunc::Always)
                 .with_comp1(CompareFunc::Always),
-            current_textures: Default::default(),
+            current_texture_ids: Default::default(),
+            current_sampler_keys: Default::default(),
             blit_pipeline,
             blit_bind_group_layout,
             blit_sampler,

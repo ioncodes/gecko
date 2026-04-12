@@ -1,5 +1,6 @@
-use gecko::flipper::gx::draw::{TextureDescriptor, TextureFormat};
+use super::draw::{TextureDescriptor, TextureFormat};
 
+/// Decode a GX-format texture from RAM into RGBA8 pixels.
 pub fn decode_to_rgba(ram: &[u8], desc: &TextureDescriptor) -> Vec<u8> {
     let w = desc.width as usize;
     let h = desc.height as usize;
@@ -14,50 +15,30 @@ pub fn decode_to_rgba(ram: &[u8], desc: &TextureDescriptor) -> Vec<u8> {
         TextureFormat::RGB5A3 => decode_rgb5a3(ram, desc, &mut rgba, w, h),
         TextureFormat::RGBA8 => decode_rgba8(ram, desc, &mut rgba, w, h),
         TextureFormat::CMPR => decode_cmpr(ram, desc, &mut rgba, w, h),
-        _ => panic!("Unsupported texture format: {:?}", desc.format),
+        _ => tracing::error!(?desc.format, "unsupported texture format"),
     }
 
     rgba
 }
 
-pub fn upload_texture(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    ram: &[u8],
-    desc: &TextureDescriptor,
-) -> (wgpu::Texture, wgpu::TextureView) {
-    let rgba = decode_to_rgba(ram, desc);
-
-    let tex = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("gx_tex"),
-        size: wgpu::Extent3d {
-            width: desc.width,
-            height: desc.height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    queue.write_texture(
-        tex.as_image_copy(),
-        &rgba,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(desc.width * 4),
-            rows_per_image: None,
-        },
-        wgpu::Extent3d {
-            width: desc.width,
-            height: desc.height,
-            depth_or_array_layers: 1,
-        },
-    );
-    let view = tex.create_view(&Default::default());
-    (tex, view)
+/// Compute the number of raw bytes a GX texture occupies in RAM.
+pub fn raw_data_size(width: u32, height: u32, format: TextureFormat) -> usize {
+    let (block_w, block_h, block_bytes): (u32, u32, u32) = match format {
+        TextureFormat::I4 => (8, 8, 32),
+        TextureFormat::I8 => (8, 4, 32),
+        TextureFormat::IA4 => (8, 4, 32),
+        TextureFormat::IA8 => (4, 4, 32),
+        TextureFormat::RGB565 => (4, 4, 32),
+        TextureFormat::RGB5A3 => (4, 4, 32),
+        TextureFormat::RGBA8 => (4, 4, 64),
+        TextureFormat::CMPR => (8, 8, 32),
+        TextureFormat::CI4 => (8, 8, 32),
+        TextureFormat::CI8 => (8, 4, 32),
+        TextureFormat::CI14 => (4, 4, 32),
+    };
+    let blocks_x = width.div_ceil(block_w);
+    let blocks_y = height.div_ceil(block_h);
+    (blocks_x * blocks_y * block_bytes) as usize
 }
 
 #[inline(always)]
@@ -86,10 +67,6 @@ fn rgb565_to_rgba(packed: u16) -> [u8; 4] {
         255,
     ]
 }
-
-// GX textures are stored in a tiled layout. The image is divided into
-// fixed-size blocks (e.g. 4x4 or 8x8 pixels). Blocks are stored left-to-right,
-// top-to-bottom, and within each block pixels are also stored row by row.
 
 fn decode_i4(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], width: usize, height: usize) {
     const BLOCK_W: usize = 8;

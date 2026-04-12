@@ -1,8 +1,7 @@
 use crate::pipeline::PipelineKey;
-use crate::{BindGroupCacheKey, DrawUniforms, FrameUniforms, GxRenderer, helpers, texture};
+use crate::{BindGroupCacheKey, DrawUniforms, FrameUniforms, GxRenderer, SamplerKey, helpers};
 use crate::{GpuVertex, align_up};
 use encase::{ShaderType as _, UniformBuffer};
-use gecko::flipper::gx::draw::TextureDescriptor;
 use gecko::flipper::gx::regs::{MagFilter, MinFilter, WrapMode};
 use gecko::host::{DrawData, GxAction};
 use glam::{Mat4, UVec4, Vec4};
@@ -37,20 +36,15 @@ impl GxRenderer {
 
     /// Build a bind-group cache key from the current tracked textures.
     fn current_bind_group_key(&self) -> BindGroupCacheKey {
-        let mut tex_keys = [None; 8];
-        let mut sampler_keys = [None; 8];
-        for slot in 0..8 {
-            if let Some(desc) = &self.current_textures[slot] {
-                tex_keys[slot] = Some((desc.ram_addr, desc.width, desc.height, desc.format));
-                sampler_keys[slot] = Some((desc.wrap_s, desc.wrap_t, desc.mag_filter, desc.min_filter));
-            }
+        BindGroupCacheKey {
+            tex_keys: self.current_texture_ids,
+            sampler_keys: self.current_sampler_keys,
         }
-        BindGroupCacheKey { tex_keys, sampler_keys }
     }
 
     /// Process a batch of [`GxAction`] values, rendering draw calls into the
     /// internal EFB and handling EFB copies / XFB presentation.
-    pub fn render_actions(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, actions: &[GxAction], ram: &[u8]) {
+    pub fn render_actions(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, actions: &[GxAction]) {
         self.scratch_vertices.clear();
         self.scratch_draws.clear();
         self.scratch_uniform_bytes.clear();
@@ -92,21 +86,65 @@ impl GxRenderer {
                 GxAction::SetAlphaCompare(ac) => {
                     self.current_alpha_compare = *ac;
                 }
-                GxAction::SetTexture { slot, descriptor } => {
-                    self.current_textures[*slot] = Some(*descriptor);
+                GxAction::LoadTexture {
+                    id,
+                    width,
+                    height,
+                    rgba,
+                } => {
+                    let tex = device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("gx_tex"),
+                        size: wgpu::Extent3d {
+                            width: *width,
+                            height: *height,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                        view_formats: &[],
+                    });
+                    queue.write_texture(
+                        tex.as_image_copy(),
+                        rgba,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(*width * 4),
+                            rows_per_image: None,
+                        },
+                        wgpu::Extent3d {
+                            width: *width,
+                            height: *height,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                    let view = tex.create_view(&Default::default());
+                    // Invalidate bind groups that referenced the old texture.
+                    let tid = *id;
+                    self.bind_group_cache
+                        .retain(|key, _| !key.tex_keys.iter().any(|k| *k == Some(tid)));
+                    self.texture_cache.insert(*id, (tex, view));
+                }
+                GxAction::SetTexture {
+                    slot,
+                    id,
+                    wrap_s,
+                    wrap_t,
+                    mag_filter,
+                    min_filter,
+                } => {
+                    self.current_texture_ids[*slot] = Some(*id);
+                    let sampler_key: SamplerKey = (*wrap_s, *wrap_t, *mag_filter, *min_filter);
+                    self.current_sampler_keys[*slot] = Some(sampler_key);
+                    self.ensure_sampler(device, &sampler_key);
                 }
                 GxAction::SetCullMode(mode) => {
                     self.current_cull_mode = *mode;
                 }
 
                 GxAction::Draw(draw) => {
-                    // Copy tracked textures to avoid borrow conflict with &mut self.
-                    let tex_snapshot = self.current_textures;
-                    for desc in tex_snapshot.iter().flatten() {
-                        self.ensure_texture(device, queue, ram, desc);
-                        self.ensure_sampler(device, desc);
-                    }
-
                     // Ensure pipeline for current tracked blend/depth state.
                     let pipeline_key = self.current_pipeline_key();
                     if !self.pipeline_cache.contains_key(&pipeline_key) {
@@ -313,8 +351,8 @@ impl GxRenderer {
                 let mut tex_samplers: [&wgpu::Sampler; 8] = [&self.sampler_cache[&fallback_sampler_key]; 8];
 
                 for slot in 0..8 {
-                    if let Some(tk) = &bg_key.tex_keys[slot] {
-                        if let Some((_, view)) = self.texture_cache.get(tk) {
+                    if let Some(tid) = &bg_key.tex_keys[slot] {
+                        if let Some((_, view)) = self.texture_cache.get(tid) {
                             tex_views[slot] = view;
                         }
                         if let Some(sk) = &bg_key.sampler_keys[slot] {
@@ -412,11 +450,13 @@ impl GxRenderer {
                 let draw_offset = (index as u64 * self.draw_uniform_stride) as u32;
                 rpass.set_bind_group(0, bind_group, &[frame_offset, draw_offset]);
 
-                // TODO: verify?
                 let vp = &viewports[index];
-                let vp_w = vp.w.max(1.0);
-                let vp_h = vp.h.max(1.0);
-                rpass.set_viewport(vp.x, vp.y, vp_w, vp_h, vp.min_depth, vp.max_depth);
+                let max_dim = target_width.max(target_height) as f32;
+                let vp_w = vp.w.clamp(1.0, max_dim);
+                let vp_h = vp.h.clamp(1.0, max_dim);
+                if vp.x.is_finite() && vp.y.is_finite() && vp_w.is_finite() && vp_h.is_finite() {
+                    rpass.set_viewport(vp.x, vp.y, vp_w, vp_h, vp.min_depth, vp.max_depth);
+                }
 
                 let sc = &scissors[index];
                 let sc_w = sc.w.max(1).min(target_width.saturating_sub(sc.x));
@@ -430,16 +470,8 @@ impl GxRenderer {
         queue.submit([encoder.finish()]);
     }
 
-    fn ensure_texture(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, ram: &[u8], desc: &TextureDescriptor) {
-        let key = (desc.ram_addr, desc.width, desc.height, desc.format);
-        self.texture_cache
-            .entry(key)
-            .or_insert_with(|| texture::upload_texture(device, queue, ram, desc));
-    }
-
-    fn ensure_sampler(&mut self, device: &wgpu::Device, desc: &TextureDescriptor) {
-        let key = (desc.wrap_s, desc.wrap_t, desc.mag_filter, desc.min_filter);
-        self.sampler_cache.entry(key).or_insert_with(|| {
+    fn ensure_sampler(&mut self, device: &wgpu::Device, key: &SamplerKey) {
+        self.sampler_cache.entry(*key).or_insert_with(|| {
             device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("gx_sampler"),
                 address_mode_u: helpers::map_wrap_mode(key.0),

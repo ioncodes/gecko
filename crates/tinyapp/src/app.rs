@@ -136,7 +136,6 @@ impl State {
         };
         let view = frame.texture.create_view(&Default::default());
 
-        let ram = msg.ram;
         self.action_buf.clear();
         self.action_rx.drain(&mut self.action_buf);
 
@@ -144,7 +143,7 @@ impl State {
         // and updates the snapshot on CopyEfb).
         if !self.action_buf.is_empty() {
             self.gx_renderer
-                .render_actions(&self.device, &self.queue, &self.action_buf, &ram);
+                .render_actions(&self.device, &self.queue, &self.action_buf);
         }
 
         // Blit the latest EFB snapshot to the swapchain.

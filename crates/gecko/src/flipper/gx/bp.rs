@@ -11,11 +11,11 @@ use super::regs::{
     PeClearZ, PeCopyCmd, SuScisOffset, SuScisRect, TevAlphaEnv, TevColorEnv, TevOrder, TevRegType, TevRegisterH,
     TevRegisterL, TxSetImage0, TxSetImage3, TxSetMode0, ZMode,
 };
-use super::{GraphicsProcessor, draw};
-use crate::host::{GxAction, RenderSink};
+use super::{GraphicsProcessor, draw, texture};
+use crate::host::{GxAction, RenderSink, TextureId};
 
 impl GraphicsProcessor {
-    pub fn load_bp(&mut self, renderer: &mut dyn RenderSink, data: &[u8]) {
+    pub fn load_bp(&mut self, renderer: &mut dyn RenderSink, ram: &[u8], data: &[u8]) {
         let idx = data[0] as usize;
         let val = u32::from_be_bytes([0, data[1], data[2], data[3]]);
         self.bp_regs[idx] = val;
@@ -37,7 +37,7 @@ impl GraphicsProcessor {
         };
 
         if let Some(slot) = texture_slot {
-            self.snapshot_texture(renderer, slot, val);
+            self.snapshot_texture(renderer, ram, slot, val);
         }
 
         // Forward PE render state
@@ -132,7 +132,7 @@ impl GraphicsProcessor {
         }
     }
 
-    fn snapshot_texture(&mut self, renderer: &mut dyn RenderSink, slot: usize, image3_val: u32) {
+    fn snapshot_texture(&mut self, renderer: &mut dyn RenderSink, ram: &[u8], slot: usize, image3_val: u32) {
         let image0_reg = if slot < 4 {
             BP_TX_SETIMAGE0_I0 + slot
         } else {
@@ -149,26 +149,49 @@ impl GraphicsProcessor {
         };
         let mode0 = TxSetMode0::from_raw(self.bp_regs[mode0_reg]);
 
-        let width = image0.width() + 1;
-        let height = image0.height() + 1;
+        let width = (image0.width() + 1) as u32;
+        let height = (image0.height() + 1) as u32;
         let ram_addr = image3.ram_addr();
+        let format = image0.format();
+        let id = TextureId(ram_addr as u32);
 
         tracing::debug!(
             slot,
             width,
             height,
-            format = format!("{:?}", image0.format()),
+            format = format!("{:?}", format),
             ram_addr = format!("{ram_addr:#010X}"),
             wrap_s = format!("{:?}", mode0.wrap_s()),
             wrap_t = format!("{:?}", mode0.wrap_t()),
             "texture descriptor updated"
         );
 
+        let changed = self::texture_data_changed(&mut self.texture_hashes, ram, ram_addr, width, height, format);
+
+        if changed {
+            let desc = draw::TextureDescriptor {
+                ram_addr,
+                width,
+                height,
+                format,
+                wrap_s: mode0.wrap_s(),
+                wrap_t: mode0.wrap_t(),
+                mag_filter: mode0.mag_filter(),
+                min_filter: mode0.min_filter(),
+            };
+            renderer.exec(GxAction::LoadTexture {
+                id,
+                width,
+                height,
+                rgba: texture::decode_to_rgba(ram, &desc)
+            });
+        }
+
         self.cur_textures[slot] = Some(draw::TextureDescriptor {
             ram_addr,
-            width: width as u32,
-            height: height as u32,
-            format: image0.format(),
+            width,
+            height,
+            format,
             wrap_s: mode0.wrap_s(),
             wrap_t: mode0.wrap_t(),
             mag_filter: mode0.mag_filter(),
@@ -177,7 +200,11 @@ impl GraphicsProcessor {
 
         renderer.exec(GxAction::SetTexture {
             slot,
-            descriptor: self.cur_textures[slot].unwrap(),
+            id,
+            wrap_s: mode0.wrap_s(),
+            wrap_t: mode0.wrap_t(),
+            mag_filter: mode0.mag_filter(),
+            min_filter: mode0.min_filter(),
         });
     }
 
@@ -357,4 +384,23 @@ impl GraphicsProcessor {
         self.cur_scissor_offset_x = reg.x() as i32 * 2 - 342;
         self.cur_scissor_offset_y = reg.y() as i32 * 2 - 342;
     }
+}
+
+/// Returns `true` when the raw texture data in RAM differs from the last
+/// hash recorded for the given address.
+fn texture_data_changed(
+    hashes: &mut std::collections::HashMap<u32, u64>,
+    ram: &[u8],
+    addr: usize,
+    width: u32,
+    height: u32,
+    format: draw::TextureFormat,
+) -> bool {
+    let size = texture::raw_data_size(width, height, format);
+    let Some(slice) = ram.get(addr..addr + size) else {
+        return true;
+    };
+    let hash = twox_hash::xxhash3_64::Hasher::oneshot(slice);
+    let prev = hashes.insert(addr as u32, hash);
+    prev != Some(hash)
 }
