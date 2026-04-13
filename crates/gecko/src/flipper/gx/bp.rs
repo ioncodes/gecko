@@ -12,6 +12,7 @@ use super::regs::{
     TevRegisterL, TxSetImage0, TxSetImage3, TxSetMode0, ZMode,
 };
 use super::{GraphicsProcessor, draw, texture};
+use crate::common::Address;
 use crate::host::{GxAction, RenderSink};
 
 impl GraphicsProcessor {
@@ -153,7 +154,6 @@ impl GraphicsProcessor {
         let height = (image0.height() + 1) as u32;
         let ram_addr = image3.ram_addr();
         let format = image0.format();
-        let id = ram_addr as TextureId;
 
         tracing::debug!(
             slot,
@@ -180,7 +180,7 @@ impl GraphicsProcessor {
                 min_filter: mode0.min_filter(),
             };
             renderer.exec(GxAction::LoadTexture {
-                id,
+                id: ram_addr as Address,
                 width,
                 height,
                 rgba: texture::decode_to_rgba(ram, &desc),
@@ -200,7 +200,7 @@ impl GraphicsProcessor {
 
         renderer.exec(GxAction::SetTexture {
             slot,
-            id,
+            id: ram_addr as Address,
             wrap_s: mode0.wrap_s(),
             wrap_t: mode0.wrap_t(),
             mag_filter: mode0.mag_filter(),

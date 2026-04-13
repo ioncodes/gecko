@@ -6,9 +6,9 @@ mod render;
 pub mod sink;
 
 use encase::ShaderType as _;
+use gecko::common::Address;
 use gecko::flipper::gx::draw::{Scissor, Viewport};
 use gecko::flipper::gx::regs::{AlphaCompare, BlendMode, CompareFunc, CullMode, MagFilter, MinFilter, WrapMode, ZMode};
-use gecko::host::TextureId;
 use glam::Mat4;
 use pipeline::PipelineKey;
 use std::collections::HashMap;
@@ -39,7 +39,7 @@ type SamplerKey = (WrapMode, WrapMode, MagFilter, MinFilter);
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct BindGroupCacheKey {
-    tex_keys: [Option<TextureId>; 8],
+    tex_keys: [Option<Address>; 8],
     sampler_keys: [Option<SamplerKey>; 8],
 }
 
@@ -104,7 +104,7 @@ pub struct GxRenderer {
     pub(crate) efb_depth_view: wgpu::TextureView,
     pub(crate) efb_needs_clear: bool,
     pub(crate) sampler_cache: HashMap<(WrapMode, WrapMode, MagFilter, MinFilter), wgpu::Sampler>,
-    pub(crate) texture_cache: HashMap<TextureId, (wgpu::Texture, wgpu::TextureView)>,
+    pub(crate) texture_cache: HashMap<Address, (wgpu::Texture, wgpu::TextureView)>,
     pub(crate) fallback_view: wgpu::TextureView,
     pub(crate) scratch_vertices: Vec<GpuVertex>,
     pub(crate) scratch_draws: Vec<(u32, u32)>,
@@ -127,7 +127,7 @@ pub struct GxRenderer {
     pub(crate) current_blend_mode: BlendMode,
     pub(crate) current_alpha_compare: AlphaCompare,
     pub(crate) current_cull_mode: CullMode,
-    pub(crate) current_texture_ids: [Option<TextureId>; 8],
+    pub(crate) current_texture_ids: [Option<Address>; 8],
     pub(crate) current_sampler_keys: [Option<SamplerKey>; 8],
     // XFB output texture: composited from per-copy snapshots by PresentXfb.
     pub(crate) xfb_texture: wgpu::Texture,

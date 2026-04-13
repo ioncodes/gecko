@@ -171,7 +171,7 @@ pub fn present_xfb(gc: &mut GameCube) {
             let delta_pixels = (delta_bytes / 2) as u32;
             let offset_x = delta_pixels % stride_in_pixels;
             let offset_y = delta_pixels / stride_in_pixels;
-            
+
             // Real XFB copies always land at row boundaries (offset_x == 0).
             // A non-zero offset_x means this copy belongs to a different
             // buffer that happens to sit nearby in memory, reject it? TODO

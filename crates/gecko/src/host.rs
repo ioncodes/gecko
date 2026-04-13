@@ -1,3 +1,4 @@
+use crate::common::Address;
 use crate::flipper::gx::draw::{Primitive, Scissor, Viewport};
 use crate::flipper::gx::regs::{AlphaCompare, BlendMode, ChanCtrl, CullMode, MagFilter, MinFilter, WrapMode, ZMode};
 
@@ -20,7 +21,7 @@ pub enum GxAction {
     /// Upload pre-decoded texture data. Emitted when texture content at a
     /// given address changes (detected by hash).
     LoadTexture {
-        id: u32,
+        id: Address,
         width: u32,
         height: u32,
         rgba: Vec<u8>,
@@ -29,7 +30,7 @@ pub enum GxAction {
     /// Bind a previously loaded texture to a TEV texture slot.
     SetTexture {
         slot: usize,
-        id: u32,
+        id: Address,
         wrap_s: WrapMode,
         wrap_t: WrapMode,
         mag_filter: MagFilter,
@@ -45,7 +46,7 @@ pub enum GxAction {
     /// The renderer stores this until the next [`PresentXfb`] composites it
     /// into the output framebuffer.
     CopyXfb {
-        id: u32,
+        id: Address,
         src_x: u32,
         src_y: u32,
         src_w: u32,
@@ -70,7 +71,7 @@ pub enum GxAction {
 /// are the pixel coordinates in the output framebuffer.
 #[derive(Debug, Clone, Copy)]
 pub struct XfbPart {
-    pub id: u32,
+    pub id: Address,
     pub offset_x: u32,
     pub offset_y: u32,
 }
