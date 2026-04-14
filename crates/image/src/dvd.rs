@@ -11,7 +11,7 @@ pub const DVD_HEADER_OFFSET: usize = 0x00000000;
 pub const DVD_HEADER_INFO_OFFSET: usize = DVD_HEADER_OFFSET + DVD_HEADER_SIZE;
 pub const DVD_APPLOADER_OFFSET: usize = DVD_HEADER_INFO_OFFSET + DVD_HEADER_INFO_SIZE;
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(FromBytes, IntoBytes, Immutable, KnownLayout, Debug)]
 pub struct Header {
     pub game_code: [u8; 4],
@@ -35,7 +35,7 @@ pub struct Header {
     _unused3: [u8; 0x8],
 }
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(FromBytes, IntoBytes, Immutable, KnownLayout, Debug)]
 pub struct HeaderInfo {
     pub debug_monitor_size: U32,
@@ -48,7 +48,7 @@ pub struct HeaderInfo {
     _unused0: [u8; DVD_HEADER_INFO_SIZE - 0x1C],
 }
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(FromBytes, IntoBytes, Immutable, KnownLayout, Debug)]
 pub struct Apploader {
     pub timestamp: [u8; 10],

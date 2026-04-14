@@ -18,6 +18,7 @@ Gecko is in early development. The IPL works flawlessly as far as I can tell. Ma
 - `wesl` based shader compiler
 - LUA scripting/hooks system for runtime introspection
 - egui-based debugging UI
+- Symbol parsing from ELFs and IDA Pro databases
 - [Support for web browser](https://gecko.layle.dev)
   - [incl. debugging capabilities](https://gecko.layle.dev/dbg)
 - Terrible idle skipping :^)
