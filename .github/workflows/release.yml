@@ -25,8 +25,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Init submodules
+        run: |
+          git submodule update --init --depth 1 --recursive submodules/chipi-spec
+          git submodule update --init --depth 1 --recursive submodules/solstice
 
       - uses: dtolnay/rust-toolchain@stable
         with:
