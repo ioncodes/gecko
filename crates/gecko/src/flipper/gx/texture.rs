@@ -21,9 +21,21 @@ pub fn decode_to_rgba(ram: &[u8], desc: &TextureDescriptor) -> Vec<u8> {
     rgba
 }
 
-/// Compute the number of raw bytes a GX texture occupies in RAM.
-pub fn raw_data_size(width: u32, height: u32, format: TextureFormat) -> usize {
-    let (block_w, block_h, block_bytes): (u32, u32, u32) = match format {
+#[derive(Clone, Copy, Debug)]
+pub struct BlockDims {
+    pub tile_w: u32,
+    pub tile_h: u32,
+    pub bytes_per_tile: u32,
+}
+
+impl BlockDims {
+    pub const fn bytes_for(self, w: u32, h: u32) -> usize {
+        (w.div_ceil(self.tile_w) * h.div_ceil(self.tile_h) * self.bytes_per_tile) as usize
+    }
+}
+
+pub const fn block_dims(format: TextureFormat) -> BlockDims {
+    let (tw, th, bb) = match format {
         TextureFormat::I4 => (8, 8, 32),
         TextureFormat::I8 => (8, 4, 32),
         TextureFormat::IA4 => (8, 4, 32),
@@ -36,9 +48,17 @@ pub fn raw_data_size(width: u32, height: u32, format: TextureFormat) -> usize {
         TextureFormat::CI8 => (8, 4, 32),
         TextureFormat::CI14 => (4, 4, 32),
     };
-    let blocks_x = width.div_ceil(block_w);
-    let blocks_y = height.div_ceil(block_h);
-    (blocks_x * blocks_y * block_bytes) as usize
+    BlockDims {
+        tile_w: tw,
+        tile_h: th,
+        bytes_per_tile: bb,
+    }
+}
+
+/// Compute the number of raw bytes a GX texture occupies in RAM.
+#[inline(always)]
+pub fn raw_data_size(width: u32, height: u32, format: TextureFormat) -> usize {
+    block_dims(format).bytes_for(width, height)
 }
 
 fn decode_i4(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, h: usize) {
@@ -67,10 +87,13 @@ fn decode_i4(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, h:
             for ty in 0..th {
                 for tx in 0..tw {
                     unsafe {
-                        let byte = read_u8_unchecked(src, blk + (ty * BW + tx) / 2);
+                        let byte = *src.add(blk + (ty * BW + tx) / 2);
                         let nibble = if tx & 1 == 0 { byte >> 4 } else { byte & 0x0F };
-                        let i = expand_4_to_8(nibble);
-                        write_pixel(dst, ((base_y + ty) * w + base_x + tx) * 4, [i, i, i, i]);
+                        let i = expand_to_8::<4>(nibble);
+                        std::ptr::write(
+                            dst.add(((base_y + ty) * w + base_x + tx) * 4).cast::<[u8; 4]>(),
+                            [i, i, i, i],
+                        );
                     }
                 }
             }
@@ -104,8 +127,11 @@ fn decode_i8(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, h:
             for ty in 0..th {
                 for tx in 0..tw {
                     unsafe {
-                        let i = read_u8_unchecked(src, blk + ty * BW + tx);
-                        write_pixel(dst, ((base_y + ty) * w + base_x + tx) * 4, [i, i, i, i]);
+                        let i = *src.add(blk + ty * BW + tx);
+                        std::ptr::write(
+                            dst.add(((base_y + ty) * w + base_x + tx) * 4).cast::<[u8; 4]>(),
+                            [i, i, i, i],
+                        );
                     }
                 }
             }
@@ -139,10 +165,13 @@ fn decode_ia4(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, h
             for ty in 0..th {
                 for tx in 0..tw {
                     unsafe {
-                        let packed = read_u8_unchecked(src, blk + ty * BW + tx);
-                        let a = expand_4_to_8(packed >> 4);
-                        let i = expand_4_to_8(packed & 0x0F);
-                        write_pixel(dst, ((base_y + ty) * w + base_x + tx) * 4, [i, i, i, a]);
+                        let packed = *src.add(blk + ty * BW + tx);
+                        let a = expand_to_8::<4>(packed >> 4);
+                        let i = expand_to_8::<4>(packed & 0x0F);
+                        std::ptr::write(
+                            dst.add(((base_y + ty) * w + base_x + tx) * 4).cast::<[u8; 4]>(),
+                            [i, i, i, a],
+                        );
                     }
                 }
             }
@@ -178,9 +207,12 @@ fn decode_ia8(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, h
                 for tx in 0..tw {
                     unsafe {
                         let off = blk + (ty * BW + tx) * 2;
-                        let a = read_u8_unchecked(src, off);
-                        let i = read_u8_unchecked(src, off + 1);
-                        write_pixel(dst, ((base_y + ty) * w + base_x + tx) * 4, [i, i, i, a]);
+                        let a = *src.add(off);
+                        let i = *src.add(off + 1);
+                        std::ptr::write(
+                            dst.add(((base_y + ty) * w + base_x + tx) * 4).cast::<[u8; 4]>(),
+                            [i, i, i, a],
+                        );
                     }
                 }
             }
@@ -214,9 +246,12 @@ fn decode_rgb565(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize
             for ty in 0..th {
                 for tx in 0..tw {
                     unsafe {
-                        let packed = read_be_u16_unchecked(src, blk + (ty * BW + tx) * 2);
+                        let packed = u16::from_be_bytes([
+                            *src.add(blk + (ty * BW + tx) * 2),
+                            *src.add(blk + (ty * BW + tx) * 2 + 1),
+                        ]);
                         let pixel = self::rgb565_to_rgba(packed);
-                        write_pixel(dst, ((base_y + ty) * w + base_x + tx) * 4, pixel);
+                        std::ptr::write(dst.add(((base_y + ty) * w + base_x + tx) * 4).cast::<[u8; 4]>(), pixel);
                     }
                 }
             }
@@ -250,20 +285,23 @@ fn decode_rgb5a3(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize
             for ty in 0..th {
                 for tx in 0..tw {
                     unsafe {
-                        let packed = read_be_u16_unchecked(src, blk + (ty * BW + tx) * 2);
+                        let packed = u16::from_be_bytes([
+                            *src.add(blk + (ty * BW + tx) * 2),
+                            *src.add(blk + (ty * BW + tx) * 2 + 1),
+                        ]);
                         let pixel = if packed & 0x8000 != 0 {
-                            let r = expand_5_to_8(((packed >> 10) & 0x1F) as u8);
-                            let g = expand_5_to_8(((packed >> 5) & 0x1F) as u8);
-                            let b = expand_5_to_8((packed & 0x1F) as u8);
+                            let r = expand_to_8::<5>(((packed >> 10) & 0x1F) as u8);
+                            let g = expand_to_8::<5>(((packed >> 5) & 0x1F) as u8);
+                            let b = expand_to_8::<5>((packed & 0x1F) as u8);
                             [r, g, b, 255]
                         } else {
-                            let a = expand_3_to_8(((packed >> 12) & 0x7) as u8);
-                            let r = expand_4_to_8(((packed >> 8) & 0xF) as u8);
-                            let g = expand_4_to_8(((packed >> 4) & 0xF) as u8);
-                            let b = expand_4_to_8((packed & 0xF) as u8);
+                            let a = expand_to_8::<3>(((packed >> 12) & 0x7) as u8);
+                            let r = expand_to_8::<4>(((packed >> 8) & 0xF) as u8);
+                            let g = expand_to_8::<4>(((packed >> 4) & 0xF) as u8);
+                            let b = expand_to_8::<4>((packed & 0xF) as u8);
                             [r, g, b, a]
                         };
-                        write_pixel(dst, ((base_y + ty) * w + base_x + tx) * 4, pixel);
+                        std::ptr::write(dst.add(((base_y + ty) * w + base_x + tx) * 4).cast::<[u8; 4]>(), pixel);
                     }
                 }
             }
@@ -300,11 +338,14 @@ fn decode_rgba8(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize,
                         let ti = ty * BW + tx;
                         let ar = blk + ti * 2;
                         let gb = blk + 32 + ti * 2;
-                        let a = read_u8_unchecked(src, ar);
-                        let r = read_u8_unchecked(src, ar + 1);
-                        let g = read_u8_unchecked(src, gb);
-                        let b = read_u8_unchecked(src, gb + 1);
-                        write_pixel(dst, ((base_y + ty) * w + base_x + tx) * 4, [r, g, b, a]);
+                        let a = *src.add(ar);
+                        let r = *src.add(ar + 1);
+                        let g = *src.add(gb);
+                        let b = *src.add(gb + 1);
+                        std::ptr::write(
+                            dst.add(((base_y + ty) * w + base_x + tx) * 4).cast::<[u8; 4]>(),
+                            [r, g, b, a],
+                        );
                     }
                 }
             }
@@ -345,15 +386,18 @@ fn decode_cmpr(ram: &[u8], desc: &TextureDescriptor, rgba: &mut [u8], w: usize, 
                 let th = 4usize.min(h - sub_y);
 
                 unsafe {
-                    let c0 = read_be_u16_unchecked(src, sub_off);
-                    let c1 = read_be_u16_unchecked(src, sub_off + 2);
+                    let c0 = u16::from_be_bytes([*src.add(sub_off), *src.add(sub_off + 1)]);
+                    let c1 = u16::from_be_bytes([*src.add(sub_off + 2), *src.add(sub_off + 3)]);
                     let palette = self::build_dxt1_palette(c0, c1);
 
                     for row in 0..th {
-                        let idx = read_u8_unchecked(src, sub_off + 4 + row);
+                        let idx = *src.add(sub_off + 4 + row);
                         for col in 0..tw {
                             let pi = ((idx >> ((3 - col) * 2)) & 0x03) as usize;
-                            write_pixel(dst, ((sub_y + row) * w + sub_x + col) * 4, palette[pi]);
+                            std::ptr::write(
+                                dst.add(((sub_y + row) * w + sub_x + col) * 4).cast::<[u8; 4]>(),
+                                palette[pi],
+                            );
                         }
                     }
                 }
@@ -395,24 +439,21 @@ fn build_dxt1_palette(c0: u16, c1: u16) -> [[u8; 4]; 4] {
     p
 }
 
+// i have cancer
 #[inline(always)]
-fn expand_3_to_8(v: u8) -> u8 {
-    (v << 5) | (v << 2) | (v >> 1)
-}
-
-#[inline(always)]
-fn expand_4_to_8(v: u8) -> u8 {
-    (v << 4) | v
-}
-
-#[inline(always)]
-fn expand_5_to_8(v: u8) -> u8 {
-    (v << 3) | (v >> 2)
-}
-
-#[inline(always)]
-fn expand_6_to_8(v: u8) -> u8 {
-    (v << 2) | (v >> 4)
+const fn expand_to_8<const BITS: u32>(v: u8) -> u8 {
+    let mut result = v << (8 - BITS);
+    let mut pos = 8 - BITS;
+    while pos > 0 {
+        if pos >= BITS {
+            pos -= BITS;
+            result |= v << pos;
+        } else {
+            result |= v >> (BITS - pos);
+            break;
+        }
+    }
+    result
 }
 
 #[inline(always)]
@@ -420,20 +461,381 @@ fn rgb565_to_rgba(packed: u16) -> [u8; 4] {
     let r = ((packed >> 11) & 0x1F) as u8;
     let g = ((packed >> 5) & 0x3F) as u8;
     let b = (packed & 0x1F) as u8;
-    [expand_5_to_8(r), expand_6_to_8(g), expand_5_to_8(b), 255]
+    [expand_to_8::<5>(r), expand_to_8::<6>(g), expand_to_8::<5>(b), 255]
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum CopyFormat {
+    I8 = 0x1,
+    RGB565 = 0x4,
+    RGB5A3 = 0x5,
+    RGBA8 = 0x6,
+    A8 = 0x7,
+    R8 = 0x8,
+    RG8 = 0xB,
+}
+
+impl CopyFormat {
+    pub fn from_u8(code: u8) -> Option<Self> {
+        Some(match code {
+            0x1 => Self::I8,
+            0x4 => Self::RGB565,
+            0x5 => Self::RGB5A3,
+            0x6 => Self::RGBA8,
+            0x7 => Self::A8,
+            0x8 => Self::R8,
+            0xB => Self::RG8,
+            _ => return None,
+        })
+    }
+}
+
+pub fn encoded_size(w: u32, h: u32, format: CopyFormat) -> usize {
+    let dims = match format {
+        CopyFormat::I8 => block_dims(TextureFormat::I8),
+        CopyFormat::RGB565 => block_dims(TextureFormat::RGB565),
+        CopyFormat::RGB5A3 => block_dims(TextureFormat::RGB5A3),
+        CopyFormat::RGBA8 => block_dims(TextureFormat::RGBA8),
+        CopyFormat::A8 | CopyFormat::R8 => BlockDims {
+            tile_w: 8,
+            tile_h: 4,
+            bytes_per_tile: 32,
+        },
+        CopyFormat::RG8 => BlockDims {
+            tile_w: 4,
+            tile_h: 4,
+            bytes_per_tile: 32,
+        },
+    };
+    dims.bytes_for(w, h)
+}
+
+// ref downsample_rgba_buffer_by_2 @ beanwii, zayd is smarter than me
+
+pub fn downsample_box_2x(src: &[u8], w: u32, h: u32) -> Vec<u8> {
+    let nw = (w / 2) as usize;
+    let nh = (h / 2) as usize;
+    let sw = w as usize;
+    let mut out = vec![0u8; nw * nh * 4];
+
+    for y in 0..nh {
+        for x in 0..nw {
+            let sx = x * 2;
+            let sy = y * 2;
+            let s0 = (sy * sw + sx) * 4;
+            let s1 = (sy * sw + sx + 1) * 4;
+            let s2 = ((sy + 1) * sw + sx) * 4;
+            let s3 = ((sy + 1) * sw + sx + 1) * 4;
+            let d = (y * nw + x) * 4;
+            for c in 0..4 {
+                out[d + c] =
+                    ((src[s0 + c] as u16 + src[s1 + c] as u16 + src[s2 + c] as u16 + src[s3 + c] as u16) / 4) as u8;
+            }
+        }
+    }
+    out
+}
+
+/// Encode a linear RGBA8 buffer into a freshly-allocated tiled GX copy
+/// format. Mirror of [`decode_to_rgba`] for the EFB-to-texture direction.
+pub fn encode_from_rgba(rgba: &[u8], w: usize, h: usize, format: CopyFormat) -> Vec<u8> {
+    let size = encoded_size(w as u32, h as u32, format);
+    let mut out = vec![0u8; size];
+    match format {
+        CopyFormat::I8 => encode_i8(rgba, &mut out, w, h),
+        CopyFormat::A8 => encode_a8(rgba, &mut out, w, h),
+        CopyFormat::R8 => encode_r8(rgba, &mut out, w, h),
+        CopyFormat::RG8 => encode_rg8(rgba, &mut out, w, h),
+        CopyFormat::RGB565 => encode_rgb565(rgba, &mut out, w, h),
+        CopyFormat::RGB5A3 => encode_rgb5a3(rgba, &mut out, w, h),
+        CopyFormat::RGBA8 => encode_rgba8(rgba, &mut out, w, h),
+    }
+    out
 }
 
 #[inline(always)]
-unsafe fn write_pixel(dst: *mut u8, offset: usize, pixel: [u8; 4]) {
-    unsafe { std::ptr::write(dst.add(offset).cast::<[u8; 4]>(), pixel) };
+fn luminance(r: u8, g: u8, b: u8) -> u8 {
+    ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8
 }
 
-#[inline(always)]
-unsafe fn read_u8_unchecked(src: *const u8, offset: usize) -> u8 {
-    unsafe { *src.add(offset) }
+fn encode_i8(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
+    const BW: usize = 8;
+    const BH: usize = 4;
+    const BB: usize = 32;
+
+    let bcx = w.div_ceil(BW);
+    let bcy = h.div_ceil(BH);
+    if bcx * bcy * BB > out.len() || rgba.len() < w * h * 4 {
+        tracing::warn!(w, h, "encode_i8: buffer OOB, skipping");
+        return;
+    }
+
+    let src = rgba.as_ptr();
+    let dst = out.as_mut_ptr();
+
+    for by in 0..bcy {
+        let base_y = by * BH;
+        let th = BH.min(h - base_y);
+        for bx in 0..bcx {
+            let base_x = bx * BW;
+            let tw = BW.min(w - base_x);
+            let blk = (by * bcx + bx) * BB;
+
+            for ty in 0..th {
+                for tx in 0..tw {
+                    unsafe {
+                        let s = ((base_y + ty) * w + base_x + tx) * 4;
+                        let r = *src.add(s);
+                        let g = *src.add(s + 1);
+                        let b = *src.add(s + 2);
+                        *dst.add(blk + ty * BW + tx) = luminance(r, g, b);
+                    }
+                }
+            }
+        }
+    }
 }
 
-#[inline(always)]
-unsafe fn read_be_u16_unchecked(src: *const u8, offset: usize) -> u16 {
-    unsafe { u16::from_be_bytes([*src.add(offset), *src.add(offset + 1)]) }
+fn encode_a8(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
+    const BW: usize = 8;
+    const BH: usize = 4;
+    const BB: usize = 32;
+
+    let bcx = w.div_ceil(BW);
+    let bcy = h.div_ceil(BH);
+    if bcx * bcy * BB > out.len() || rgba.len() < w * h * 4 {
+        tracing::warn!(w, h, "encode_a8: buffer OOB, skipping");
+        return;
+    }
+
+    let src = rgba.as_ptr();
+    let dst = out.as_mut_ptr();
+
+    for by in 0..bcy {
+        let base_y = by * BH;
+        let th = BH.min(h - base_y);
+        for bx in 0..bcx {
+            let base_x = bx * BW;
+            let tw = BW.min(w - base_x);
+            let blk = (by * bcx + bx) * BB;
+
+            for ty in 0..th {
+                for tx in 0..tw {
+                    unsafe {
+                        let s = ((base_y + ty) * w + base_x + tx) * 4;
+                        *dst.add(blk + ty * BW + tx) = *src.add(s + 3);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn encode_r8(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
+    const BW: usize = 8;
+    const BH: usize = 4;
+    const BB: usize = 32;
+
+    let bcx = w.div_ceil(BW);
+    let bcy = h.div_ceil(BH);
+    if bcx * bcy * BB > out.len() || rgba.len() < w * h * 4 {
+        tracing::warn!(w, h, "encode_r8: buffer OOB, skipping");
+        return;
+    }
+
+    let src = rgba.as_ptr();
+    let dst = out.as_mut_ptr();
+
+    for by in 0..bcy {
+        let base_y = by * BH;
+        let th = BH.min(h - base_y);
+        for bx in 0..bcx {
+            let base_x = bx * BW;
+            let tw = BW.min(w - base_x);
+            let blk = (by * bcx + bx) * BB;
+
+            for ty in 0..th {
+                for tx in 0..tw {
+                    unsafe {
+                        let s = ((base_y + ty) * w + base_x + tx) * 4;
+                        *dst.add(blk + ty * BW + tx) = *src.add(s);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn encode_rg8(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
+    const BW: usize = 4;
+    const BH: usize = 4;
+    const BB: usize = 32;
+
+    let bcx = w.div_ceil(BW);
+    let bcy = h.div_ceil(BH);
+    if bcx * bcy * BB > out.len() || rgba.len() < w * h * 4 {
+        tracing::warn!(w, h, "encode_rg8: buffer OOB, skipping");
+        return;
+    }
+
+    let src = rgba.as_ptr();
+    let dst = out.as_mut_ptr();
+
+    for by in 0..bcy {
+        let base_y = by * BH;
+        let th = BH.min(h - base_y);
+        for bx in 0..bcx {
+            let base_x = bx * BW;
+            let tw = BW.min(w - base_x);
+            let blk = (by * bcx + bx) * BB;
+
+            for ty in 0..th {
+                for tx in 0..tw {
+                    unsafe {
+                        let s = ((base_y + ty) * w + base_x + tx) * 4;
+                        let off = blk + (ty * BW + tx) * 2;
+                        std::ptr::write(dst.add(off).cast::<[u8; 2]>(), [*src.add(s), *src.add(s + 1)]);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn encode_rgb565(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
+    const BW: usize = 4;
+    const BH: usize = 4;
+    const BB: usize = 32;
+
+    let bcx = w.div_ceil(BW);
+    let bcy = h.div_ceil(BH);
+    if bcx * bcy * BB > out.len() || rgba.len() < w * h * 4 {
+        tracing::warn!(w, h, "encode_rgb565: buffer OOB, skipping");
+        return;
+    }
+
+    let src = rgba.as_ptr();
+    let dst = out.as_mut_ptr();
+
+    for by in 0..bcy {
+        let base_y = by * BH;
+        let th = BH.min(h - base_y);
+        for bx in 0..bcx {
+            let base_x = bx * BW;
+            let tw = BW.min(w - base_x);
+            let blk = (by * bcx + bx) * BB;
+
+            for ty in 0..th {
+                for tx in 0..tw {
+                    unsafe {
+                        let s = ((base_y + ty) * w + base_x + tx) * 4;
+                        let r = (*src.add(s) >> 3) as u16;
+                        let g = (*src.add(s + 1) >> 2) as u16;
+                        let b = (*src.add(s + 2) >> 3) as u16;
+                        let pixel = (r << 11) | (g << 5) | b;
+                        let off = blk + (ty * BW + tx) * 2;
+                        std::ptr::write(
+                            dst.add(off).cast::<[u8; 2]>(),
+                            [(pixel >> 8) as u8, (pixel & 0xFF) as u8],
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn encode_rgb5a3(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
+    const BW: usize = 4;
+    const BH: usize = 4;
+    const BB: usize = 32;
+
+    let bcx = w.div_ceil(BW);
+    let bcy = h.div_ceil(BH);
+    if bcx * bcy * BB > out.len() || rgba.len() < w * h * 4 {
+        tracing::warn!(w, h, "encode_rgb5a3: buffer OOB, skipping");
+        return;
+    }
+
+    let src = rgba.as_ptr();
+    let dst = out.as_mut_ptr();
+
+    for by in 0..bcy {
+        let base_y = by * BH;
+        let th = BH.min(h - base_y);
+        for bx in 0..bcx {
+            let base_x = bx * BW;
+            let tw = BW.min(w - base_x);
+            let blk = (by * bcx + bx) * BB;
+
+            for ty in 0..th {
+                for tx in 0..tw {
+                    unsafe {
+                        let s = ((base_y + ty) * w + base_x + tx) * 4;
+                        let r = *src.add(s);
+                        let g = *src.add(s + 1);
+                        let b = *src.add(s + 2);
+                        let a = *src.add(s + 3);
+                        let pixel: u16 = if a == 255 {
+                            // RGB555 with high bit set.
+                            0x8000 | (((r >> 3) as u16) << 10) | (((g >> 3) as u16) << 5) | ((b >> 3) as u16)
+                        } else {
+                            // RGBA4443 with high bit clear.
+                            (((a >> 5) as u16) << 12)
+                                | (((r >> 4) as u16) << 8)
+                                | (((g >> 4) as u16) << 4)
+                                | ((b >> 4) as u16)
+                        };
+                        let off = blk + (ty * BW + tx) * 2;
+                        std::ptr::write(
+                            dst.add(off).cast::<[u8; 2]>(),
+                            [(pixel >> 8) as u8, (pixel & 0xFF) as u8],
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn encode_rgba8(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
+    const BW: usize = 4;
+    const BH: usize = 4;
+    const BB: usize = 64;
+
+    let bcx = w.div_ceil(BW);
+    let bcy = h.div_ceil(BH);
+    if bcx * bcy * BB > out.len() || rgba.len() < w * h * 4 {
+        tracing::warn!(w, h, "encode_rgba8: buffer OOB, skipping");
+        return;
+    }
+
+    let src = rgba.as_ptr();
+    let dst = out.as_mut_ptr();
+
+    // 4x4 tiles split into two 32-byte half-blocks per tile: AR pairs
+    // first, then GB pairs, both indexed by `ty * BW + tx`. Inverse of
+    // `decode_rgba8`'s unpack.
+    for by in 0..bcy {
+        let base_y = by * BH;
+        let th = BH.min(h - base_y);
+        for bx in 0..bcx {
+            let base_x = bx * BW;
+            let tw = BW.min(w - base_x);
+            let blk = (by * bcx + bx) * BB;
+
+            for ty in 0..th {
+                for tx in 0..tw {
+                    unsafe {
+                        let s = ((base_y + ty) * w + base_x + tx) * 4;
+                        let ti = ty * BW + tx;
+                        let ar = blk + ti * 2;
+                        let gb = blk + 32 + ti * 2;
+                        std::ptr::write(dst.add(ar).cast::<[u8; 2]>(), [*src.add(s + 3), *src.add(s)]);
+                        std::ptr::write(dst.add(gb).cast::<[u8; 2]>(), [*src.add(s + 1), *src.add(s + 2)]);
+                    }
+                }
+            }
+        }
+    }
 }

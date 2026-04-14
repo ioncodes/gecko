@@ -237,6 +237,9 @@ fn main() {
     // Install the renderer as the emulator's render sink.
     emulator.render_sink = Box::new(renderer.clone());
 
+    // Install the EFB-to-texture writeback receiver.
+    emulator.gx.efb_writeback_rx = renderer.take_writeback_rx();
+
     let ui = DebuggerUi {
         symbols,
         ..DebuggerUi::default()

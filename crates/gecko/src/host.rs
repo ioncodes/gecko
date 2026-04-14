@@ -64,6 +64,44 @@ pub enum GxAction {
         height: u32,
         parts: Vec<XfbPart>,
     },
+
+    /// Copy an EFB region back into system RAM, encoded in a GX texture
+    /// format. The renderer does a GPU readback, converts the pixels to
+    /// `copy_format`, and ships the encoded bytes back over the writeback
+    /// channel. The emu side spits them into `Mmio::ram` synchronously so
+    /// subsequent texture loads see fresh data.
+    ///
+    /// Per Dolphin (`BPFunctions::ClearScreen`), the `clear` bit on BP 0x52
+    /// only affects channels whose write mask is enabled. We carry the
+    /// current `color_update`/`alpha_update`/`z_update` so the backend can
+    /// gate the post-copy clear correctly; when color writes are off, the
+    /// clear must be a no-op for color?
+    CopyEfbToTexture {
+        dest_addr: Address,
+        src_x: u32,
+        src_y: u32,
+        src_w: u32,
+        src_h: u32,
+        copy_format: u8,
+        mipmap: bool,
+        stride: u32,
+        clear: bool,
+        clear_color: [f32; 4],
+        clear_z: f32,
+        color_update: bool,
+        alpha_update: bool,
+        z_update: bool,
+    },
+}
+
+/// Payload sent from the renderer worker back to the emulator thread after
+/// an EFB-to-texture copy completes. The emu thread copies `bytes` into
+/// `Mmio::ram` at `dest_addr` and invalidates the texture-hash cache so the
+/// next `TX_SETIMAGE3` at that address re-decodes.
+#[derive(Debug)]
+pub struct EfbWriteback {
+    pub dest_addr: Address,
+    pub bytes: Vec<u8>,
 }
 
 /// Identifies one tile in a composited XFB frame. The `id` matches the

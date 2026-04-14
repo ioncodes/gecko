@@ -228,6 +228,46 @@ impl GxRenderer {
                 self.flush_pending_draws(device, queue);
                 self.execute_present_xfb(device, queue, *width, *height, parts);
             }
+
+            GxAction::CopyEfbToTexture {
+                dest_addr,
+                src_x,
+                src_y,
+                src_w,
+                src_h,
+                copy_format,
+                mipmap,
+                stride: _,
+                clear,
+                clear_color,
+                clear_z,
+                color_update,
+                alpha_update: _,
+                z_update: _,
+            } => {
+                // Dolphin (`BPFunctions::ClearScreen`) clears per-channel
+                // using the current blend/depth write masks; if a channel
+                // is not write-enabled it is not cleared. Our
+                // `clear_region` wipes color+depth together.
+                // TODO: split `clear_region` into color- and depth-only
+                // variants and gate on each mask independently.
+                let effective_clear = *clear && *color_update;
+                self.flush_pending_draws(device, queue);
+                self.execute_copy_efb_to_texture(
+                    device,
+                    queue,
+                    *dest_addr,
+                    *src_x,
+                    *src_y,
+                    *src_w,
+                    *src_h,
+                    *copy_format,
+                    *mipmap,
+                    effective_clear,
+                    *clear_color,
+                    *clear_z,
+                );
+            }
         }
     }
 

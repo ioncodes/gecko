@@ -1273,6 +1273,7 @@ dependencies = [
  "bytemuck",
  "chapa",
  "chipi-build",
+ "crossbeam-channel",
  "glam",
  "image 0.1.0",
  "tracing",

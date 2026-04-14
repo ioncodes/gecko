@@ -1,6 +1,6 @@
 use crate::GxRenderer;
 use crossbeam_channel::{Receiver, Sender, bounded};
-use gecko::host::{GxAction, RenderSink};
+use gecko::host::{EfbWriteback, GxAction, RenderSink};
 use std::sync::{Arc, Mutex};
 
 const CHANNEL_CAPACITY: usize = 8192;
@@ -32,13 +32,23 @@ pub struct Renderer {
     blit_pipeline: wgpu::RenderPipeline,
     blit_bind_group_layout: wgpu::BindGroupLayout,
     blit_sampler: wgpu::Sampler,
+    /// Receiver end of the EFB-to-texture writeback channel. Taken by the
+    /// emulator setup code (via [`Renderer::take_writeback_rx`]) and
+    /// installed into `GraphicsProcessor::efb_writeback_rx`. Wrapped in
+    /// `Arc<Mutex<Option<_>>>` so `Renderer` stays `Clone`.
+    writeback_rx: Arc<Mutex<Option<Receiver<EfbWriteback>>>>,
 }
 
 impl Renderer {
     /// Create the renderer, spawning the worker thread. The caller must
     /// provide a wgpu device and queue.
     pub fn new(device: wgpu::Device, queue: wgpu::Queue, surface_format: wgpu::TextureFormat) -> Self {
-        let gx = GxRenderer::new(&device, &queue, surface_format);
+        let mut gx = GxRenderer::new(&device, &queue, surface_format);
+
+        // Writeback channel: GxRenderer sends encoded EFB-to-texture bytes,
+        // GraphicsProcessor consumes them synchronously on the emu thread.
+        let (writeback_tx, writeback_rx) = bounded::<EfbWriteback>(CHANNEL_CAPACITY);
+        gx.set_efb_writeback_tx(writeback_tx);
 
         // Initial shared output: the XFB view (black until first PresentXfb).
         let shared = Arc::new(Shared {
@@ -129,7 +139,15 @@ impl Renderer {
             blit_pipeline,
             blit_bind_group_layout,
             blit_sampler,
+            writeback_rx: Arc::new(Mutex::new(Some(writeback_rx))),
         }
+    }
+
+    /// Take the writeback receiver once. Returns `Some` on the first call,
+    /// `None` thereafter. The caller installs it into
+    /// `GraphicsProcessor::efb_writeback_rx`.
+    pub fn take_writeback_rx(&self) -> Option<Receiver<EfbWriteback>> {
+        self.writeback_rx.lock().ok()?.take()
     }
 
     /// Blit the latest XFB output to the given render target. Called by the

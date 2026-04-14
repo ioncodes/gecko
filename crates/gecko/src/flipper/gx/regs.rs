@@ -1111,6 +1111,14 @@ pub struct PeCopyCmd {
     #[bits(0..=1)]
     pub clamp: u8,
 
+    // Texture copy format: bit 3 is the high nibble-bit, bits 4-6 are the low
+    // three bits.
+    #[bits(3)]
+    pub fmt_hi: bool,
+
+    #[bits(4..=6)]
+    pub fmt_lo: u8,
+
     #[bits(9)]
     pub half: bool,
 
@@ -1125,6 +1133,14 @@ pub struct PeCopyCmd {
 
     #[bits(14)]
     pub copy_to_xfb: bool,
+}
+
+impl PeCopyCmd {
+    /// 4-bit GX texture copy destination format (only valid when
+    /// `copy_to_xfb == false`).
+    pub fn copy_format(&self) -> u8 {
+        ((self.fmt_hi() as u8) << 3) | self.fmt_lo()
+    }
 }
 
 // BP 0x4F BPMEM_CLEAR_AR (PE clear alpha/red)

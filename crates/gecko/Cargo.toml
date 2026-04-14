@@ -18,3 +18,4 @@ image = { path = "../image", default-features = false }
 glam = { version = "0.32.1", features = ["bytemuck"] }
 bytemuck = { version = "1.25.0", features = ["derive"] }
 twox-hash = "2.1.2"
+crossbeam-channel = "0.5.15"

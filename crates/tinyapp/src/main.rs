@@ -138,6 +138,10 @@ fn main() {
     // Install the renderer as the emulator's render sink.
     emulator.render_sink = Box::new(renderer.clone());
 
+    // Install the EFB-to-texture writeback receiver so the emu thread
+    // can copy encoded texture bytes back into RAM after each readback.
+    emulator.gx.efb_writeback_rx = renderer.take_writeback_rx();
+
     let input = Arc::new(Mutex::new(*emulator.primary_controller_mut()));
 
     let (frame_tx, frame_rx) = bounded::<thread::FrameMessage>(2);

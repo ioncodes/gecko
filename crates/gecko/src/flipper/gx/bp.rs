@@ -14,9 +14,10 @@ use super::regs::{
 use super::{GraphicsProcessor, draw, texture};
 use crate::common::Address;
 use crate::host::{GxAction, RenderSink};
+use std::time::Duration;
 
 impl GraphicsProcessor {
-    pub fn load_bp(&mut self, renderer: &mut dyn RenderSink, ram: &[u8], data: &[u8]) {
+    pub fn load_bp(&mut self, renderer: &mut dyn RenderSink, ram: &mut [u8], data: &[u8]) {
         let idx = data[0] as usize;
         let val = u32::from_be_bytes([0, data[1], data[2], data[3]]);
         self.bp_regs[idx] = val;
@@ -129,7 +130,7 @@ impl GraphicsProcessor {
 
         // EFB copy trigger (BP 0x52)
         if idx == BP_PE_COPY_CMD {
-            self.efb_copy(renderer, val);
+            self.efb_copy(renderer, ram, val);
         }
     }
 
@@ -274,7 +275,7 @@ impl GraphicsProcessor {
         }
     }
 
-    fn efb_copy(&mut self, renderer: &mut dyn RenderSink, trigger: u32) {
+    fn efb_copy(&mut self, renderer: &mut dyn RenderSink, ram: &mut [u8], trigger: u32) {
         let src = EfbCopySrc::from_raw(self.bp_regs[BP_PE_COPY_SRC]);
         let dims = EfbCopyDims::from_raw(self.bp_regs[BP_PE_COPY_DIMS]);
         let src_x = src.left() as u32;
@@ -331,7 +332,57 @@ impl GraphicsProcessor {
                 clear_z,
             });
         } else {
-            let _ = (dest_addr, dest_stride, clear, half, r, g, b, a, clear_z);
+            let copy_format = cmd.copy_format();
+            // Per Dolphin BPFunctions::ClearScreen: the `clear` bit only
+            // affects channels whose write mask is currently enabled.
+            // Carry the masks along so the backend can gate correctly.
+            let color_update = self.cur_blend_mode.color_update();
+            let alpha_update = self.cur_blend_mode.alpha_update();
+            let z_update = self.cur_zmode.update_enable();
+
+            renderer.exec(GxAction::CopyEfbToTexture {
+                dest_addr,
+                src_x,
+                src_y,
+                src_w,
+                src_h,
+                copy_format,
+                mipmap: half,
+                stride: dest_stride,
+                clear,
+                clear_color: [r, g, b, a],
+                clear_z,
+                color_update,
+                alpha_update,
+                z_update,
+            });
+
+            // Block until the renderer finishes the readback + encode and
+            // ships the encoded bytes back. This preserves ordering with
+            // subsequent FIFO commands (e.g. a TX_SETIMAGE3 at `dest_addr`
+            // immediately after this copy): by the time efb_copy returns,
+            // RAM is up to date and the next texture load re-hashes.
+            if let Some(rx) = &self.efb_writeback_rx {
+                match rx.recv_timeout(Duration::from_secs(2)) {
+                    Ok(wb) => {
+                        let start = wb.dest_addr as usize;
+                        let end = start + wb.bytes.len();
+                        if end <= ram.len() {
+                            ram[start..end].copy_from_slice(&wb.bytes);
+                            self.texture_hashes.remove(&wb.dest_addr);
+                        } else {
+                            tracing::warn!(
+                                addr = format!("{:#010X}", wb.dest_addr),
+                                len = wb.bytes.len(),
+                                "efb writeback OOB, dropping"
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(?err, "efb writeback recv timed out");
+                    }
+                }
+            }
         }
     }
 

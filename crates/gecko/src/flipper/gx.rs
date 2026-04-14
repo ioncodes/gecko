@@ -14,7 +14,7 @@ use crate::flipper::gx::constants::{BP_REG_SIZE, CP_REG_SIZE, XF_MEM_SIZE};
 use crate::flipper::gx::draw::Matrix4;
 use crate::flipper::gx::regs::{AlphaCompare, BlendMode, TevAlphaEnv, TevColorEnv, TevRegisterH, TevRegisterL, ZMode};
 use crate::gamecube::GameCube;
-use crate::host::{GxAction, RenderSink, XfbPart};
+use crate::host::{EfbWriteback, GxAction, RenderSink, XfbPart};
 use crate::mmio::Mmio;
 use fifo::FifoCmd;
 use std::collections::HashMap;
@@ -57,6 +57,12 @@ pub struct GraphicsProcessor {
     // Hash of the raw texture data at each RAM address; used to detect when
     // texture content changes and avoid redundant decodes + LoadTexture sends.
     pub texture_hashes: HashMap<u32, u64>,
+    // Receiver for encoded EFB-to-texture bytes coming back from the
+    // renderer worker. `efb_copy` drains this synchronously right after
+    // emitting the copy action, so the next FIFO command in the same burst
+    // (usually a `TX_SETIMAGE3` that samples the just-written region)
+    // sees fresh RAM.
+    pub efb_writeback_rx: Option<crossbeam_channel::Receiver<EfbWriteback>>,
 }
 
 /// A single EFB-to-XFB copy, stored until `present_xfb` computes the layout.
@@ -97,6 +103,7 @@ impl GraphicsProcessor {
             cur_scissor_offset_y: 0,
             xfb_copies: Vec::new(),
             texture_hashes: HashMap::new(),
+            efb_writeback_rx: None,
         }
     }
 
@@ -120,7 +127,7 @@ impl GraphicsProcessor {
             match cmd {
                 FifoCmd::Cp(data) => self.load_cp(&data),
                 FifoCmd::Xf(data) => self.load_xf(renderer, &data),
-                FifoCmd::Bp(data) => self.load_bp(renderer, &mmio.ram, &data),
+                FifoCmd::Bp(data) => self.load_bp(renderer, &mut mmio.ram, &data),
                 FifoCmd::LoadIndexedXf {
                     cp_array_index,
                     index,
