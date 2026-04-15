@@ -886,6 +886,7 @@ dependencies = [
 name = "dsptestrunner"
 version = "0.1.0"
 dependencies = [
+ "disasm",
  "gecko",
  "image 0.1.0",
 ]

@@ -56,6 +56,20 @@ fn round_half_to_even(val: i64) -> (i64, bool) {
     }
 }
 
+#[inline(always)]
+fn round_addpaxz_product(val: i64, addend: i64) -> (i64, bool) {
+    let val40 = val as u64 & 0xFF_FFFF_FFFF;
+    let sum40 = val40.wrapping_add(addend as u64) & 0xFF_FFFF_FFFF;
+    let lower = (val40 & 0xFFFF) as u16;
+    let round_up = lower > 0x8000 || (lower == 0x8000 && sum40 & 0x10000 != 0);
+    if round_up {
+        let sum = val40.wrapping_add(0x10000);
+        ((sum & !0xFFFFu64) as i64, sum > 0xFF_FFFF_FFFF)
+    } else {
+        ((val40 & !0xFFFFu64) as i64, false)
+    }
+}
+
 /// Apply combined arithmetic + product carry/overflow for ADD+product operations.
 /// Preserves OS from before the arithmetic flag update, then sets based on the XORed values.
 #[inline(always)]
@@ -266,7 +280,7 @@ pub fn add_sub<const OP: u32>(ctx: &mut GameCube, instr: Instruction) {
             let (pc, po) = ctx.dsp.registers.product_flags();
             let a = ctx.dsp.registers.product();
             let b = (ctx.dsp.registers.axh[s] as i16 as i64) << 16;
-            let (rounded, rounding_carry) = round_half_to_even(a);
+            let (rounded, rounding_carry) = self::round_addpaxz_product(a, b);
             let result = rounded.wrapping_add(b) & !0xFFFFi64;
             let os_before = ctx.dsp.registers.status.os();
             ctx.dsp.registers.set_ac(d, result);
@@ -1197,16 +1211,19 @@ pub fn ext_ld<const OP: u32>(ctx: &mut GameCube, instr: GcDspExt) {
     let r = instr.r_3_3();
     let s = instr.s_6_7() as usize;
 
-    // First load from ar[s] -> AX0 half (d selects low/high)
+    let ar_s = ctx.dsp.registers.ar[s];
+    let ar_3 = ctx.dsp.registers.ar[3];
+    let same_bank = (ar_s >> 10) == (ar_3 >> 10);
     let d_reg = if d != 0 { reg::AX0H } else { reg::AX0L };
-    let addr0 = ctx.dsp.registers.ar[s];
-    let value0 = dsp::read_dmem(ctx, addr0);
+    let value0 = dsp::read_dmem(ctx, ar_s);
     ctx.dsp.registers.write::<true>(d_reg, value0);
 
-    // Second load from ar[3] -> AX1 half (r selects low/high)
     let r_reg = if r != 0 { reg::AX1H } else { reg::AX1L };
-    let addr1 = ctx.dsp.registers.ar[3];
-    let value1 = dsp::read_dmem(ctx, addr1);
+    let value1 = if same_bank {
+        value0
+    } else {
+        dsp::read_dmem(ctx, ar_3)
+    };
     ctx.dsp.registers.write::<true>(r_reg, value1);
 
     // AR increments: "" = +1/+1, "N" = +ix[s]/+1, "M" = +1/+ix[3], "NM" = +ix[s]/+ix[3]
@@ -1240,14 +1257,16 @@ pub fn ext_ldax<const OP: u32>(ctx: &mut GameCube, instr: GcDspExt) {
     let s = instr.d_2_2() as usize;
     let r = instr.r_3_3() as usize;
 
-    // Load high from ar[s]
-    let addr_s = ctx.dsp.registers.ar[s];
-    let high = dsp::read_dmem(ctx, addr_s);
-    // Load low from ar[3]
-    let addr_3 = ctx.dsp.registers.ar[3];
-    let low = dsp::read_dmem(ctx, addr_3);
+    let ar_s = ctx.dsp.registers.ar[s];
+    let ar_3 = ctx.dsp.registers.ar[3];
+    let same_bank = (ar_s >> 10) == (ar_3 >> 10);
+    let high = dsp::read_dmem(ctx, ar_s);
+    let low = if same_bank {
+        high
+    } else {
+        dsp::read_dmem(ctx, ar_3)
+    };
 
-    // Write to ax[r] (high and low)
     ctx.dsp.registers.axh[r] = high;
     ctx.dsp.registers.ax[r] = low;
 

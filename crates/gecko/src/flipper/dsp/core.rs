@@ -120,24 +120,31 @@ impl Registers {
     }
 
     /// Decrease address register by signed IX with WR wrapping (ar -= ix).
+    /// As per beanwii, uses the hrydgard/calc84maniac one's-complement algorithm:
+    /// subtract = add(!ix) + 1 with WR-modular wrap.
     #[inline(always)]
     pub fn decrease_ar_ix(&self, reg: usize, ix: i16) -> u16 {
-        let ar = self.ar[reg] as u32;
-        let wr = self.wr[reg] as u32;
-        let mx = (wr | 1) << 1;
-        let nar = ar.wrapping_sub(ix as i32 as u32);
-        let dar = (nar ^ ar ^ !(ix as i32) as u32) & mx;
-        if (ix as u32) > 0xFFFF8000 {
-            if dar > wr {
-                nar.wrapping_sub(wr + 1) as u16
-            } else {
-                nar as u16
+        let ar = self.ar[reg];
+        let wr = self.wr[reg];
+        let value = !ix;
+        let n = (16 - wr.leading_zeros()).max(1);
+        let mask = 1u16.checked_shl(n).map_or(!0, |r| r - 1);
+        let carry = ((ar & mask) as u32 + (value as u16 & mask) as u32 + 1) > mask as u32;
+        let mut result = ar.wrapping_add_signed(value).wrapping_add(1);
+        let vp1 = value.wrapping_add(1);
+        if vp1 > 0 || vp1 == i16::MIN {
+            if carry {
+                result = result.wrapping_sub(wr.wrapping_add(1));
             }
-        } else if (((nar.wrapping_add(wr + 1)) ^ nar) & dar) <= wr {
-            nar.wrapping_add(wr + 1) as u16
         } else {
-            nar as u16
+            let low_sum = result & mask;
+            let low_not_wrap = (!wr) & mask;
+            let carry_again = low_sum < low_not_wrap;
+            if !carry || carry_again {
+                result = result.wrapping_add(wr.wrapping_add(1));
+            }
         }
+        result
     }
 
     /// Increase address register by signed IX with WR wrapping.

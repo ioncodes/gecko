@@ -4,7 +4,7 @@ use gecko::gamecube::GameCube;
 use gecko::hooks::{AddressFilter, BusAddressFilter, HookFilters, HookFlags, HookState, Host};
 use image::Dol;
 
-const DSP_IROM: &[u8] = include_bytes!("../../../private/dsp_rom.bin");
+const DSP_IROM: &[u8] = include_bytes!("../../../../private/dsp_rom.bin");
 
 const STDOUT_ADDR: u32 = 0x0C00_7000;
 const FAIL_COUNT_ADDR: u32 = 0x0C00_7004;
@@ -104,7 +104,7 @@ impl Host for DspTestHarness {
 }
 
 fn main() {
-    let path = std::env::args().nth(1).expect("Usage: dsptestrunner <path-to-dol>");
+    let path = std::env::args().nth(1).expect("Usage: hazel <path-to-dol>");
 
     let dol = Dol::parse(std::fs::read(&path).expect("Failed to read DOL file"));
     let mut gamecube = GameCube::with_image(&dol);
