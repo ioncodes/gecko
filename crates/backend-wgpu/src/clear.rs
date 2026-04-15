@@ -6,6 +6,19 @@ struct ClearUniforms {
     _pad: [f32; 3],
 }
 
+fn clear_mask_label(color_update: bool, alpha_update: bool, z_update: bool) -> &'static str {
+    match (color_update, alpha_update, z_update) {
+        (true, true, true) => "rgba+z",
+        (true, false, true) => "rgb+z",
+        (false, true, true) => "alpha+z",
+        (false, false, true) => "z",
+        (true, true, false) => "rgba",
+        (true, false, false) => "rgb",
+        (false, true, false) => "alpha",
+        (false, false, false) => "none",
+    }
+}
+
 pub(crate) struct EfbClear {
     pipeline_all_depth: wgpu::RenderPipeline,
     pipeline_rgb_depth: wgpu::RenderPipeline,
@@ -238,14 +251,14 @@ impl EfbClear {
         }
 
         // im gonna vomit
-        let pipeline = match (color_update, alpha_update, z_update) {
-            (true, true, true) => &self.pipeline_all_depth,
-            (true, false, true) => &self.pipeline_rgb_depth,
-            (false, true, true) => &self.pipeline_alpha_depth,
-            (false, false, true) => &self.pipeline_none_depth,
-            (true, true, false) => &self.pipeline_all,
-            (true, false, false) => &self.pipeline_rgb,
-            (false, true, false) => &self.pipeline_alpha,
+        let (pipeline, pipeline_label) = match (color_update, alpha_update, z_update) {
+            (true, true, true) => (&self.pipeline_all_depth, "all+depth"),
+            (true, false, true) => (&self.pipeline_rgb_depth, "rgb+depth"),
+            (false, true, true) => (&self.pipeline_alpha_depth, "alpha+depth"),
+            (false, false, true) => (&self.pipeline_none_depth, "depth-only"),
+            (true, true, false) => (&self.pipeline_all, "all"),
+            (true, false, false) => (&self.pipeline_rgb, "rgb"),
+            (false, true, false) => (&self.pipeline_alpha, "alpha"),
             (false, false, false) => unreachable!(),
         };
 
@@ -256,7 +269,18 @@ impl EfbClear {
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        let mut encoder = device.create_command_encoder(&Default::default());
+        let group_label = format!(
+            "EFB Clear rect=({},{} {}x{}) masks={}",
+            x,
+            y,
+            w,
+            h,
+            clear_mask_label(color_update, alpha_update, z_update)
+        );
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("efb_clear_encoder"),
+        });
+        encoder.push_debug_group(&group_label);
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("efb_clear_region"),
@@ -291,10 +315,18 @@ impl EfbClear {
             });
 
             rpass.set_pipeline(pipeline);
+            let pipeline_marker = format!("Clear pipeline: {pipeline_label}");
+            rpass.insert_debug_marker(&pipeline_marker);
             rpass.set_bind_group(0, &self.bind_group, &[]);
             rpass.set_scissor_rect(x, y, w, h);
+            let values_marker = format!(
+                "Clear values: color=({:.3},{:.3},{:.3},{:.3}) depth={:.6}",
+                color[0], color[1], color[2], color[3], depth
+            );
+            rpass.insert_debug_marker(&values_marker);
             rpass.draw(0..3, 0..1);
         }
+        encoder.pop_debug_group();
         queue.submit([encoder.finish()]);
     }
 }

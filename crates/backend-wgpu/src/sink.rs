@@ -94,7 +94,7 @@ impl Renderer {
             ],
         });
         let blit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
+            label: Some("blit_layout"),
             bind_group_layouts: &[&blit_bind_group_layout],
             immediate_size: 0,
         });
@@ -185,7 +185,10 @@ impl Renderer {
         });
         drop(output);
 
-        let mut encoder = self.device.create_command_encoder(&Default::default());
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("xfb_blit_encoder"),
+        });
+        encoder.push_debug_group("XFB Blit To Surface");
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("xfb_blit"),
@@ -205,8 +208,10 @@ impl Renderer {
             });
             rpass.set_pipeline(&self.blit_pipeline);
             rpass.set_bind_group(0, &bind_group, &[]);
+            rpass.insert_debug_marker("Draw fullscreen XFB blit");
             rpass.draw(0..3, 0..1);
         }
+        encoder.pop_debug_group();
         queue.submit([encoder.finish()]);
     }
 }

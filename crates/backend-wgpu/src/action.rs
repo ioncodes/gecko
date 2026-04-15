@@ -76,8 +76,9 @@ impl GxRenderer {
                 height,
                 rgba,
             } => {
+                let texture_label = format!("gx_tex addr={:#010x} size={}x{}", *id, *width, *height);
                 let tex = device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("gx_tex"),
+                    label: Some(&texture_label),
                     size: wgpu::Extent3d {
                         width: *width,
                         height: *height,
@@ -395,7 +396,15 @@ impl GxRenderer {
             });
         }
 
-        let mut encoder = device.create_command_encoder(&Default::default());
+        let group_label = format!(
+            "GX Draw Flush: draws={} vertices={}",
+            self.scratch_draws.len(),
+            self.scratch_vertices.len()
+        );
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("gx_draw_flush_encoder"),
+        });
+        encoder.push_debug_group(&group_label);
         {
             let needs_initial_clear = self.efb_needs_clear;
             self.efb_needs_clear = false;
@@ -442,11 +451,32 @@ impl GxRenderer {
                 multiview_mask: None,
             });
             rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            if needs_initial_clear {
+                rpass.insert_debug_marker("EFB initial clear: color=black depth=1.0");
+            } else {
+                rpass.insert_debug_marker("EFB load existing color/depth");
+            }
+            if crate::EFB_SAMPLE_COUNT == 1 {
+                rpass.insert_debug_marker("EFB target: resolved color, no MSAA resolve");
+            } else {
+                rpass.insert_debug_marker("EFB target: MSAA color, resolve to efb_color_resolved");
+            }
 
             for (index, (first_vertex, vertex_count)) in self.scratch_draws.iter().copied().enumerate() {
+                let draw_label = format!("GX Draw {index}: first_vertex={first_vertex} vertex_count={vertex_count}");
+                rpass.push_debug_group(&draw_label);
                 let pipeline_key = &self.draw_pipeline_keys[index];
                 let pipeline = &self.pipeline_cache[pipeline_key];
                 rpass.set_pipeline(pipeline);
+                let pipeline_marker = format!(
+                    "Pipeline: blend={} z={} z_write={} color_update={} alpha_update={}",
+                    pipeline_key.blend_enable,
+                    pipeline_key.z_enable,
+                    pipeline_key.z_write,
+                    pipeline_key.color_update,
+                    pipeline_key.alpha_update
+                );
+                rpass.insert_debug_marker(&pipeline_marker);
 
                 let bg_key = &self.draw_bg_keys[index];
                 let bind_group = &self.bind_group_cache[bg_key];
@@ -454,6 +484,8 @@ impl GxRenderer {
                 let frame_offset = (index * frame_stride) as u32;
                 let draw_offset = (index as u64 * self.draw_uniform_stride) as u32;
                 rpass.set_bind_group(0, bind_group, &[frame_offset, draw_offset]);
+                let bind_marker = format!("Bind group offsets: frame={frame_offset} draw={draw_offset}");
+                rpass.insert_debug_marker(&bind_marker);
 
                 let vp = &self.draw_viewports[index];
                 let max_dim = target_width.max(target_height) as f32;
@@ -475,10 +507,17 @@ impl GxRenderer {
                 let sc_w = sc.w.max(1).min(target_width.saturating_sub(sc.x));
                 let sc_h = sc.h.max(1).min(target_height.saturating_sub(sc.y));
                 rpass.set_scissor_rect(sc.x, sc.y, sc_w, sc_h);
+                let raster_marker = format!(
+                    "Raster state: viewport=({:.1},{:.1} {:.1}x{:.1}) scissor=({},{} {}x{})",
+                    vp.x, vp.y, vp_w, vp_h, sc.x, sc.y, sc_w, sc_h
+                );
+                rpass.insert_debug_marker(&raster_marker);
 
                 rpass.draw(first_vertex..first_vertex + vertex_count, 0..1);
+                rpass.pop_debug_group();
             }
         }
+        encoder.pop_debug_group();
 
         queue.submit([encoder.finish()]);
     }

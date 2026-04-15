@@ -87,8 +87,9 @@ impl GxRenderer {
         }
 
         let entry = self.xfb_copies.entry(id).or_insert_with(|| {
+            let texture_label = format!("xfb_copy_tmp id={id} size={width}x{dst_h}");
             let tex = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("xfb_copy_tmp"),
+                label: Some(&texture_label),
                 size: wgpu::Extent3d {
                     width,
                     height: dst_h,
@@ -110,8 +111,9 @@ impl GxRenderer {
         // Recreate if size changed.
         let existing_size = entry.0.size();
         if existing_size.width != width || existing_size.height != dst_h {
+            let texture_label = format!("xfb_copy_tmp id={id} size={width}x{dst_h}");
             let tex = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("xfb_copy_tmp"),
+                label: Some(&texture_label),
                 size: wgpu::Extent3d {
                     width,
                     height: dst_h,
@@ -131,9 +133,16 @@ impl GxRenderer {
             *entry = (tex, view);
         }
 
-        let mut encoder = device.create_command_encoder(&Default::default());
         let needs_shader_copy = dst_h != height || (gamma - 1.0).abs() > f32::EPSILON;
+        let group_label = format!(
+            "CopyXfb id={id} src=({src_x},{src_y} {width}x{height}) dst_h={dst_h} gamma={gamma:.3} clear={clear}"
+        );
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("copy_xfb_encoder"),
+        });
+        encoder.push_debug_group(&group_label);
         if needs_shader_copy {
+            encoder.insert_debug_marker("CopyXfb path: shader copy for scale/gamma");
             let uniforms = XfbCopyUniforms {
                 src_rect: [src_x as f32, src_y as f32, width as f32, height as f32],
                 dst_size: [width as f32, dst_h as f32],
@@ -180,6 +189,10 @@ impl GxRenderer {
                 });
                 rpass.set_pipeline(&self.xfb_copy_pipeline);
                 rpass.set_bind_group(0, &bind_group, &[]);
+                let marker = format!(
+                    "XFB shader uniforms: src=({src_x},{src_y} {width}x{height}) dst={width}x{dst_h} gamma={gamma:.3}"
+                );
+                rpass.insert_debug_marker(&marker);
                 rpass.draw(0..3, 0..1);
             }
         } else {
@@ -188,6 +201,7 @@ impl GxRenderer {
             // the image even when no scaling or gamma is requested.
             // TODO: We could just call it a trade-off and just have it all go
             // through? It looks a bit fuzzy, has it's own charm.
+            encoder.insert_debug_marker("CopyXfb path: raw texture copy");
             encoder.copy_texture_to_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &self.efb_texture,
@@ -212,6 +226,7 @@ impl GxRenderer {
                 },
             );
         }
+        encoder.pop_debug_group();
         queue.submit([encoder.finish()]);
 
         // Region-scoped EFB clear after copy (if requested).
@@ -251,8 +266,9 @@ impl GxRenderer {
         // Resize the XFB output texture if the frame dimensions changed.
         let cur = self.xfb_texture.size();
         if cur.width != width || cur.height != height {
+            let texture_label = format!("xfb_accum size={width}x{height}");
             self.xfb_texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("xfb_accum"),
+                label: Some(&texture_label),
                 size: wgpu::Extent3d {
                     width,
                     height,
@@ -270,7 +286,11 @@ impl GxRenderer {
             self.xfb_view = self.xfb_texture.create_view(&Default::default());
         }
 
-        let mut encoder = device.create_command_encoder(&Default::default());
+        let group_label = format!("PresentXfb size={width}x{height} parts={}", parts.len());
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("present_xfb_encoder"),
+        });
+        encoder.push_debug_group(&group_label);
 
         // Don't clear the XFB: let previous content persist so partial
         // frames show the last valid content instead of a black flash.
@@ -280,6 +300,8 @@ impl GxRenderer {
         for part in parts {
             let Some((tex, _)) = self.xfb_copies.get(&part.id) else {
                 tracing::warn!(id = part.id, "present_xfb: XFB copy not found in cache, skipping part");
+                let marker = format!("PresentXfb skip: missing part id={}", part.id);
+                encoder.insert_debug_marker(&marker);
                 continue;
             };
             let src_size = tex.size();
@@ -287,8 +309,15 @@ impl GxRenderer {
             let height = src_size.height.min(xfb_size.height.saturating_sub(part.offset_y));
             if width == 0 || height == 0 {
                 tracing::warn!(id = part.id, "present_xfb: zero-area XFB part after clamping, skipping");
+                let marker = format!("PresentXfb skip: zero-area part id={}", part.id);
+                encoder.insert_debug_marker(&marker);
                 continue;
             }
+            let marker = format!(
+                "XFB part id={} dst=({},{} {}x{})",
+                part.id, part.offset_x, part.offset_y, width, height
+            );
+            encoder.insert_debug_marker(&marker);
             encoder.copy_texture_to_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: tex,
@@ -314,6 +343,7 @@ impl GxRenderer {
             );
         }
 
+        encoder.pop_debug_group();
         queue.submit([encoder.finish()]);
         self.xfb_has_content = true;
     }
@@ -445,9 +475,18 @@ impl GxRenderer {
         let staging = self.efb_readback_staging.as_ref().unwrap();
 
         // Submit the EFB -> staging copy.
+        let group_label = format!(
+            "CopyEfbToTexture addr={dest_addr:#010x} src=({src_x},{src_y} {width}x{height}) fmt={copy_format_enum:?} mip={mipmap} stride={stride} depth={depth_copy}"
+        );
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("efb_to_texture_copy"),
+            label: Some("efb_to_texture_copy_encoder"),
         });
+        encoder.push_debug_group(&group_label);
+        let copy_marker = format!(
+            "EFB readback copy: bytes_per_row={} staging_size={}",
+            bytes_per_row, staging_size
+        );
+        encoder.insert_debug_marker(&copy_marker);
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.efb_texture,
@@ -473,6 +512,7 @@ impl GxRenderer {
                 depth_or_array_layers: 1,
             },
         );
+        encoder.pop_debug_group();
         queue.submit([encoder.finish()]);
 
         // Map and wait. This stalls the renderer worker (not the emu

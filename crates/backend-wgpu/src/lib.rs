@@ -217,12 +217,12 @@ impl GxRenderer {
             });
         }
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: None,
+            label: Some("gx_bind_group_layout"),
             entries: &layout_entries,
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
+            label: Some("gx_pipeline_layout"),
             bind_group_layouts: &[&bind_group_layout],
             immediate_size: 0,
         });
