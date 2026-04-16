@@ -30,6 +30,13 @@ impl RenderState {
         let egui_ctx = egui::Context::default();
         let mut fonts = egui::FontDefinitions::default();
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+        fonts
+            .font_data
+            .insert("phosphor-fill".into(), egui_phosphor::Variant::Fill.font_data().into());
+        fonts.families.insert(
+            egui::FontFamily::Name("phosphor-fill".into()),
+            vec!["phosphor-fill".into()],
+        );
         egui_ctx.set_fonts(fonts);
         egui_ctx.global_style_mut(|style| {
             let f = &style.visuals.window_fill;
@@ -169,6 +176,7 @@ impl RenderState {
                         ui.checkbox(&mut debugger_ui.show_exi, "EXI");
                         ui.checkbox(&mut debugger_ui.show_irqs, "IRQ");
                         ui.checkbox(&mut debugger_ui.show_controls, "Controls");
+                        ui.checkbox(&mut debugger_ui.show_breakpoints, "Breakpoints");
                         ui.checkbox(&mut debugger_ui.show_lua, "Lua");
                     });
                 });
@@ -181,6 +189,7 @@ impl RenderState {
                     cpu,
                     mmio,
                     debugger_ui.symbols.as_ref(),
+                    debugger_ui.debugger.breakpoints(),
                 );
             }
             if debugger_ui.show_callstack {
@@ -250,6 +259,14 @@ impl RenderState {
             }
             if debugger_ui.show_irqs {
                 dbglib::windows::irq::show_irq(&ctx, &mut debugger_ui.show_irqs, &emulator.cpu, &emulator.pi);
+            }
+            if debugger_ui.show_breakpoints {
+                dbglib::windows::breakpoints::show_breakpoints(
+                    &ctx,
+                    &mut debugger_ui.show_breakpoints,
+                    &mut debugger_ui.debugger,
+                    &mut debugger_ui.breakpoint_addr_input,
+                );
             }
             if debugger_ui.show_lua {
                 let mut load_script = false;

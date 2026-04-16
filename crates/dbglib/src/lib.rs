@@ -23,8 +23,15 @@ pub enum EmulatorState {
     RunUntilDsp,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Breakpoint {
+    pub addr: u32,
+    pub enabled: bool,
+}
+
 pub struct Debugger {
     state: EmulatorState,
+    breakpoints: Vec<Breakpoint>,
     #[cfg(not(target_arch = "wasm32"))]
     trace_writer: Option<Box<dyn Write>>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -35,11 +42,44 @@ impl Debugger {
     pub fn new() -> Self {
         Debugger {
             state: EmulatorState::Paused,
+            breakpoints: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             trace_writer: None,
             #[cfg(not(target_arch = "wasm32"))]
             dsp_trace_writer: None,
         }
+    }
+
+    pub fn breakpoints(&self) -> &[Breakpoint] {
+        &self.breakpoints
+    }
+
+    pub fn add_breakpoint(&mut self, addr: u32) {
+        if !self.breakpoints.iter().any(|b| b.addr == addr) {
+            self.breakpoints.push(Breakpoint { addr, enabled: true });
+        }
+    }
+
+    pub fn remove_breakpoint(&mut self, index: usize) {
+        if index < self.breakpoints.len() {
+            self.breakpoints.remove(index);
+        }
+    }
+
+    pub fn toggle_breakpoint(&mut self, index: usize) {
+        if let Some(bp) = self.breakpoints.get_mut(index) {
+            bp.enabled = !bp.enabled;
+        }
+    }
+
+    #[inline(always)]
+    fn breakpoint_hit(&self, pc: u32) -> bool {
+        self.breakpoints.iter().any(|b| b.enabled && b.addr == pc)
+    }
+
+    #[inline(always)]
+    fn has_active_breakpoints(&self) -> bool {
+        self.breakpoints.iter().any(|b| b.enabled)
     }
 
     pub fn state(&self) -> EmulatorState {
@@ -174,12 +214,16 @@ impl Debugger {
     pub fn tick(&mut self, emulator: &mut GameCube) {
         match self.state {
             EmulatorState::Running => {
-                if self.is_tracing() || self.is_dsp_tracing() {
+                if self.is_tracing() || self.is_dsp_tracing() || self.has_active_breakpoints() {
                     emulator.prepare_frame();
                     while !emulator.vsync_pending {
                         self.drain_events(emulator);
                         self.trace_step(emulator);
                         emulator.step_cpu();
+                        if self.breakpoint_hit(emulator.cpu.pc) {
+                            self.state = EmulatorState::Paused;
+                            return;
+                        }
                     }
                 } else {
                     emulator.run_until_vsync();
@@ -191,12 +235,16 @@ impl Debugger {
                 self.state = EmulatorState::Paused;
             }
             EmulatorState::RunUntilVsync => {
-                if self.is_tracing() || self.is_dsp_tracing() {
+                if self.is_tracing() || self.is_dsp_tracing() || self.has_active_breakpoints() {
                     emulator.prepare_frame();
                     while !emulator.vsync_pending {
                         self.drain_events(emulator);
                         self.trace_step(emulator);
                         emulator.step_cpu();
+                        if self.breakpoint_hit(emulator.cpu.pc) {
+                            self.state = EmulatorState::Paused;
+                            return;
+                        }
                     }
                 } else {
                     emulator.run_until_vsync();
@@ -208,6 +256,10 @@ impl Debugger {
                     self.drain_events(emulator);
                     self.trace_step(emulator);
                     emulator.step_cpu();
+                    if self.breakpoint_hit(emulator.cpu.pc) {
+                        self.state = EmulatorState::Paused;
+                        return;
+                    }
                 }
                 self.state = EmulatorState::Paused;
             }
@@ -219,6 +271,10 @@ impl Debugger {
                     }
                     self.trace_step(emulator);
                     emulator.step_cpu();
+                    if self.breakpoint_hit(emulator.cpu.pc) {
+                        self.state = EmulatorState::Paused;
+                        return;
+                    }
                 }
                 self.state = EmulatorState::Paused;
             }

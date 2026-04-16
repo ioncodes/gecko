@@ -1,3 +1,4 @@
+pub mod breakpoints;
 pub mod callstack;
 pub mod controls;
 pub mod cpu;

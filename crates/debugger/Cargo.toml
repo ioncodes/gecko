@@ -20,6 +20,6 @@ pollster = "0.4.0"
 egui = "0.33.3"
 egui-wgpu = "0.33.3"
 egui-winit = { version = "0.33.3", features = ["wayland", "x11"] }
-egui-phosphor = "0.11.0"
+egui-phosphor = { version = "0.11.0", features = ["fill"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 clap = { version = "4.6.0", features = ["derive"] }

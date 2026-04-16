@@ -4,13 +4,22 @@ use gecko::mmio::Mmio;
 use image::symbols::SymbolTable;
 
 use super::token_color;
+use crate::Breakpoint;
 
-pub fn show_cpu(ctx: &Context, open: &mut bool, cpu: &Cpu, mmio: &Mmio, symbols: Option<&SymbolTable>) {
+pub fn show_cpu(
+    ctx: &Context,
+    open: &mut bool,
+    cpu: &Cpu,
+    mmio: &Mmio,
+    symbols: Option<&SymbolTable>,
+    breakpoints: &[Breakpoint],
+) {
     egui::Window::new("CPU").open(open).show(ctx, |ui| {
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.set_min_width(350.0);
                 ui.set_max_width(350.0);
+
                 Grid::new("special_regs").num_columns(5).striped(true).show(ui, |ui| {
                     ui.label("PC");
                     ui.monospace(format!("{:#010X}", cpu.pc));
@@ -102,15 +111,34 @@ pub fn show_cpu(ctx: &Context, open: &mut bool, cpu: &Cpu, mmio: &Mmio, symbols:
                                         .unwrap_or_else(|| format!(".word {:#010X}", raw));
 
                                     let is_pc = addr == pc;
+                                    let bp = breakpoints.iter().find(|b| b.addr == addr);
 
-                                    if is_pc {
-                                        ui.label(
-                                            RichText::new(egui_phosphor::regular::PLAY)
-                                                .color(Color32::from_rgb(120, 220, 120)),
-                                        );
-                                    } else {
-                                        ui.label("");
-                                    }
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 2.0;
+                                        if let Some(bp) = bp {
+                                            let color = if bp.enabled {
+                                                Color32::from_rgb(220, 80, 80)
+                                            } else {
+                                                Color32::from_rgb(100, 60, 60)
+                                            };
+                                            let font_id = egui::FontId::new(
+                                                ui.style().text_styles[&egui::TextStyle::Body].size,
+                                                egui::FontFamily::Name("phosphor-fill".into()),
+                                            );
+                                            ui.label(
+                                                RichText::new(egui_phosphor::fill::CIRCLE).color(color).font(font_id),
+                                            );
+                                        }
+                                        if is_pc {
+                                            ui.label(
+                                                RichText::new(egui_phosphor::regular::PLAY)
+                                                    .color(Color32::from_rgb(120, 220, 120)),
+                                            );
+                                        }
+                                        if bp.is_none() && !is_pc {
+                                            ui.label("");
+                                        }
+                                    });
 
                                     ui.monospace(format!("{:#010X}", addr));
 

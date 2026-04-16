@@ -556,7 +556,7 @@ fn main() {
     println!();
     println!("=====================================");
     println!("Total: {total_pass} passed / {total_fail} failed");
-    
+
     if !files_with_failures.is_empty() {
         println!("Files with failures: {}", files_with_failures.join(", "));
     }

@@ -14,9 +14,11 @@ pub struct DebugState {
     pub show_irqs: bool,
     pub show_controls: bool,
     pub show_callstack: bool,
+    pub show_breakpoints: bool,
     pub memory_base: u32,
     pub memory_addr_input: String,
     pub run_until_addr_input: String,
+    pub breakpoint_addr_input: String,
     pub dvd_cover_open: Option<bool>,
 }
 
@@ -36,9 +38,11 @@ impl Default for DebugState {
             show_exi: false,
             show_irqs: false,
             show_callstack: false,
+            show_breakpoints: false,
             memory_base: 0x8000_0000,
             memory_addr_input: "80000000".to_string(),
             run_until_addr_input: String::new(),
+            breakpoint_addr_input: String::new(),
             dvd_cover_open: None,
         }
     }
@@ -72,6 +76,7 @@ impl DebugState {
                     ui.checkbox(&mut self.show_dvd, "DVD");
                     ui.checkbox(&mut self.show_exi, "EXI");
                     ui.checkbox(&mut self.show_irqs, "IRQ");
+                    ui.checkbox(&mut self.show_breakpoints, "Breakpoints");
                 });
             });
 
@@ -82,6 +87,7 @@ impl DebugState {
                 &emulator.cpu,
                 &emulator.mmio,
                 self.symbols.as_ref(),
+                self.debugger.breakpoints(),
             );
         }
         if self.show_callstack {
@@ -139,6 +145,14 @@ impl DebugState {
         }
         if self.show_irqs {
             dbglib::windows::irq::show_irq(ctx, &mut self.show_irqs, &emulator.cpu, &emulator.pi);
+        }
+        if self.show_breakpoints {
+            dbglib::windows::breakpoints::show_breakpoints(
+                ctx,
+                &mut self.show_breakpoints,
+                &mut self.debugger,
+                &mut self.breakpoint_addr_input,
+            );
         }
     }
 }

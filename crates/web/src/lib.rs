@@ -200,6 +200,14 @@ impl State {
         {
             let mut fonts = egui::FontDefinitions::default();
             egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+            fonts.font_data.insert(
+                "phosphor-fill".into(),
+                egui_phosphor::Variant::Fill.font_data().into(),
+            );
+            fonts.families.insert(
+                egui::FontFamily::Name("phosphor-fill".into()),
+                vec!["phosphor-fill".into()],
+            );
             egui_ctx.set_fonts(fonts);
         }
         let egui_renderer = egui_wgpu::Renderer::new(&device, surface_format, egui_wgpu::RendererOptions::default());
