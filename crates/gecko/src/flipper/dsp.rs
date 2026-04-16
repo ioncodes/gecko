@@ -124,22 +124,6 @@ impl Dsp {
         self.csr = self.csr.with_ar_interrupt(true);
     }
 
-    pub fn process_audio_dma(&mut self, _mmio: &mut Mmio) {
-        if !self.audio_dma_control.play() {
-            return;
-        }
-
-        let addr = self.audio_dma_start_addr.raw();
-        let len = self.audio_dma_control.length() as u32 * 32;
-
-        tracing::debug!(addr = format!("{addr:08X}"), len, "Audio DMA");
-
-        // TODO: actually stream samples to audio output
-        self.audio_dma_control.set_length(0);
-        self.csr.set_dma_status(false);
-        self.csr.set_ai_interrupt(true);
-    }
-
     pub fn process_ucode_upload(&mut self, mmio: &mut Mmio) {
         const UCODE_ADDR: usize = 0x8100_0000;
         const UCODE_SIZE: usize = 1024;

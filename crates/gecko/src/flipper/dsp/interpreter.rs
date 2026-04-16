@@ -1219,11 +1219,7 @@ pub fn ext_ld<const OP: u32>(ctx: &mut GameCube, instr: GcDspExt) {
     ctx.dsp.registers.write::<true>(d_reg, value0);
 
     let r_reg = if r != 0 { reg::AX1H } else { reg::AX1L };
-    let value1 = if same_bank {
-        value0
-    } else {
-        dsp::read_dmem(ctx, ar_3)
-    };
+    let value1 = if same_bank { value0 } else { dsp::read_dmem(ctx, ar_3) };
     ctx.dsp.registers.write::<true>(r_reg, value1);
 
     // AR increments: "" = +1/+1, "N" = +ix[s]/+1, "M" = +1/+ix[3], "NM" = +ix[s]/+ix[3]
@@ -1261,11 +1257,7 @@ pub fn ext_ldax<const OP: u32>(ctx: &mut GameCube, instr: GcDspExt) {
     let ar_3 = ctx.dsp.registers.ar[3];
     let same_bank = (ar_s >> 10) == (ar_3 >> 10);
     let high = dsp::read_dmem(ctx, ar_s);
-    let low = if same_bank {
-        high
-    } else {
-        dsp::read_dmem(ctx, ar_3)
-    };
+    let low = if same_bank { high } else { dsp::read_dmem(ctx, ar_3) };
 
     ctx.dsp.registers.axh[r] = high;
     ctx.dsp.registers.ax[r] = low;

@@ -1,4 +1,4 @@
-use crate::flipper::dsp;
+use crate::flipper::{ai, dsp};
 use crate::gamecube::GameCube;
 use crate::mmio::traits::{MmioAccess, WriteMask};
 use chapa::BitEnum;
@@ -292,7 +292,7 @@ impl MmioAccess<GameCube> for AudioDmaControl {
 
     fn write(self, gc: &mut GameCube, _: WriteMask) {
         gc.dsp.audio_dma_control = self;
-        gc.dsp.process_audio_dma(&mut gc.mmio);
+        ai::start_audio_dma(gc);
         dsp::refresh_interrupts(gc);
     }
 }

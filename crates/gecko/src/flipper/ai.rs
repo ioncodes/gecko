@@ -1,6 +1,6 @@
 pub mod regs;
 
-use crate::gamecube::GameCube;
+use crate::{flipper::dsp, gamecube::GameCube};
 
 /// CPU cycles per AI sample at 32kHz: 486MHz / 32000 = 15187
 const CYCLES_PER_SAMPLE_32K: u64 = 15187;
@@ -56,6 +56,28 @@ crate::mmio_device_dispatch! {
         regs::AiInterruptTiming,
         regs::AiSampleCounter,
     ],
+}
+
+#[inline(always)]
+pub fn start_audio_dma(gc: &mut GameCube) {
+    if !gc.dsp.audio_dma_control.play() {
+        return;
+    }
+
+    let addr = gc.dsp.audio_dma_start_addr.raw();
+    let len = gc.dsp.audio_dma_control.length() as u32 * 32;
+
+    tracing::warn!(addr = format!("{addr:08X}"), len, "Audio DMA");
+
+    // TODO: actually stream samples to audio output.
+    const AUDIO_DMA_DELAY: u64 = 10_000;
+    gc.scheduler.schedule_in(AUDIO_DMA_DELAY, |gc| {
+        gc.dsp.audio_dma_control.set_length(0);
+        gc.dsp.csr.set_dma_status(false);
+        gc.dsp.csr.set_ai_interrupt(true);
+        // gc.dsp.audio_dma_control.set_play(false);
+        dsp::refresh_interrupts(gc);
+    });
 }
 
 #[inline(always)]
