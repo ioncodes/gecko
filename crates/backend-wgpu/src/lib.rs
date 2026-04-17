@@ -114,6 +114,12 @@ pub struct GxRenderer {
     pub(crate) efb_copy_pool: FxHashMap<(u32, u32), Vec<(wgpu::Texture, wgpu::TextureView)>>,
     // Blits a sub-rect of `efb_view` into an `Rgba8Unorm` target, reusing xfb_copy's shader and layout.
     pub(crate) efb_copy_pipeline: wgpu::RenderPipeline,
+    // Retired depth copy textures grouped by size, kept separate so the (w, h) key isn't shared with color.
+    pub(crate) efb_depth_pool: FxHashMap<(u32, u32), Vec<(wgpu::Texture, wgpu::TextureView)>>,
+    // Resolves a sub-rect of the 4x MSAA `efb_depth_view` into an R32Float target.
+    pub(crate) efb_depth_resolve_pipeline: wgpu::RenderPipeline,
+    pub(crate) efb_depth_resolve_bg_layout: wgpu::BindGroupLayout,
+    pub(crate) efb_depth_resolve_uniform_buffer: wgpu::Buffer,
     pub(crate) fallback_view: wgpu::TextureView,
     pub(crate) scratch_vertices: Vec<GpuVertex>,
     pub(crate) scratch_draws: Vec<(u32, u32)>,
@@ -178,6 +184,10 @@ impl GxRenderer {
         let xfb_copy_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("xfb_copy_shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/xfb_copy.wgsl").into()),
+        });
+        let efb_depth_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("efb_depth_shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/efb_depth.wgsl").into()),
         });
 
         // Bindings: 0=FrameUniforms, 1=DrawUniforms, 2-9=textures 0-7, 10-17=samplers 0-7
@@ -344,7 +354,7 @@ impl GxRenderer {
             sample_count: EFB_SAMPLE_COUNT,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Depth24Plus,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let efb_depth_view = efb_depth_texture.create_view(&Default::default());
@@ -490,6 +500,75 @@ impl GxRenderer {
             mapped_at_creation: false,
         });
 
+        let efb_depth_resolve_bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("efb_depth_resolve_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: true,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Depth,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let efb_depth_resolve_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("efb_depth_resolve_layout"),
+            bind_group_layouts: &[&efb_depth_resolve_bg_layout],
+            immediate_size: 0,
+        });
+        let efb_depth_resolve_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("efb_depth_resolve_pipeline"),
+            layout: Some(&efb_depth_resolve_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &efb_depth_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &efb_depth_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::R16Float,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::RED,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview_mask: None,
+            cache: None,
+        });
+        let efb_depth_resolve_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("efb_depth_resolve_uniforms"),
+            size: std::mem::size_of::<render::XfbCopyUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let efb_clear = clear::EfbClear::new(
             device,
             surface_format,
@@ -527,6 +606,10 @@ impl GxRenderer {
             efb_copy_cache: FxHashMap::default(),
             efb_copy_pool: FxHashMap::default(),
             efb_copy_pipeline,
+            efb_depth_pool: FxHashMap::default(),
+            efb_depth_resolve_pipeline,
+            efb_depth_resolve_bg_layout,
+            efb_depth_resolve_uniform_buffer,
             fallback_view,
             scratch_vertices: Vec::new(),
             scratch_draws: Vec::new(),

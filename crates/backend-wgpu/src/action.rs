@@ -116,11 +116,7 @@ impl GxRenderer {
                 // after a prior EFB copy. Return the stale GPU
                 // copy to its pool and let the RAM-decoded entry win.
                 if let Some((old_tex, old_view)) = self.efb_copy_cache.remove(&tid) {
-                    let old_size = old_tex.size();
-                    self.efb_copy_pool
-                        .entry((old_size.width, old_size.height))
-                        .or_default()
-                        .push((old_tex, old_view));
+                    self.return_to_pool(old_tex, old_view);
                 }
 
                 self.texture_cache.insert(*id, (tex, view));
@@ -300,8 +296,10 @@ impl GxRenderer {
                     *alpha_supported,
                 );
 
-                // Blit the resolved EFB region into a GPU texture keyed by `dest_addr`.
-                if !*depth_copy {
+                // Blit or resolve the EFB region into a GPU texture keyed by `dest_addr`.
+                if *depth_copy {
+                    self.cache_efb_copy_depth(device, queue, *dest_addr, *src_x, *src_y, *src_w, *src_h, *mipmap);
+                } else {
                     self.cache_efb_copy_color(device, queue, *dest_addr, *src_x, *src_y, *src_w, *src_h, *mipmap);
                 }
 

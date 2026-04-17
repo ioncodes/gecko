@@ -279,19 +279,11 @@ impl GxRenderer {
         let dst_w = (width / divisor).max(1);
         let dst_h = (height / divisor).max(1);
 
-        // Evict any prior cached copy at this address, returning the
-        // texture to the pool bucket for its own size so it can be
-        // reused by a future copy at the same dimensions.
+        // Send any prior cached entry back to the right pool so it can be reused.
         if let Some((old_tex, old_view)) = self.efb_copy_cache.remove(&dest_addr) {
-            let old_size = old_tex.size();
-            self.efb_copy_pool
-                .entry((old_size.width, old_size.height))
-                .or_default()
-                .push((old_tex, old_view));
+            self.return_to_pool(old_tex, old_view);
         }
-        // Drop bind groups that referenced `dest_addr`. They captured
-        // the old view and would still point at a pooled, stale texture
-        // on next use. This is the same invalidation `LoadTexture` does.
+        // Drop stale bind groups that captured the old view.
         self.bind_group_cache
             .retain(|key, _| !key.tex_keys.contains(&Some(dest_addr)));
 
@@ -373,6 +365,131 @@ impl GxRenderer {
                 multiview_mask: None,
             });
             rpass.set_pipeline(&self.efb_copy_pipeline);
+            rpass.set_bind_group(0, &bind_group, &[]);
+            rpass.draw(0..3, 0..1);
+        }
+        encoder.pop_debug_group();
+        queue.submit([encoder.finish()]);
+
+        self.efb_copy_cache.insert(dest_addr, (tex, view));
+    }
+
+    /// Sends an evicted efb_copy_cache entry back to the correct size-keyed pool based on its format.
+    pub(crate) fn return_to_pool(&mut self, tex: wgpu::Texture, view: wgpu::TextureView) {
+        let size = tex.size();
+        let key = (size.width, size.height);
+        match tex.format() {
+            wgpu::TextureFormat::R16Float => self.efb_depth_pool.entry(key).or_default().push((tex, view)),
+            _ => self.efb_copy_pool.entry(key).or_default().push((tex, view)),
+        }
+    }
+
+    /// Resolves the 4x MSAA `efb_depth_view` into a single-sample R32Float texture keyed by `dest_addr`.
+    pub(crate) fn cache_efb_copy_depth(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        dest_addr: Address,
+        src_x: u32,
+        src_y: u32,
+        src_w: u32,
+        src_h: u32,
+        half: bool,
+    ) {
+        let width = src_w.min(crate::EFB_WIDTH.saturating_sub(src_x));
+        let height = src_h.min(crate::EFB_HEIGHT.saturating_sub(src_y));
+        if width == 0 || height == 0 {
+            tracing::warn!(
+                src_x,
+                src_y,
+                src_w,
+                src_h,
+                "efb_depth_cache: zero-area region after clamping, skipping"
+            );
+            return;
+        }
+        let divisor = if half { 2 } else { 1 };
+        let dst_w = (width / divisor).max(1);
+        let dst_h = (height / divisor).max(1);
+
+        if let Some((old_tex, old_view)) = self.efb_copy_cache.remove(&dest_addr) {
+            self.return_to_pool(old_tex, old_view);
+        }
+        self.bind_group_cache
+            .retain(|key, _| !key.tex_keys.contains(&Some(dest_addr)));
+
+        let (tex, view) = self
+            .efb_depth_pool
+            .get_mut(&(dst_w, dst_h))
+            .and_then(Vec::pop)
+            .unwrap_or_else(|| {
+                let label = format!("efb_depth addr={dest_addr:#010x} size={dst_w}x{dst_h}");
+                let tex = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some(&label),
+                    size: wgpu::Extent3d {
+                        width: dst_w,
+                        height: dst_h,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::R16Float,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    view_formats: &[],
+                });
+                let view = tex.create_view(&Default::default());
+                (tex, view)
+            });
+
+        let uniforms = XfbCopyUniforms {
+            src_rect: [src_x as f32, src_y as f32, width as f32, height as f32],
+            dst_size: [dst_w as f32, dst_h as f32],
+            gamma: 1.0,
+            filter_mode: 0,
+        };
+        queue.write_buffer(&self.efb_depth_resolve_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("efb_depth_resolve_bg"),
+            layout: &self.efb_depth_resolve_bg_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.efb_depth_resolve_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.efb_depth_view),
+                },
+            ],
+        });
+
+        let group_label = format!(
+            "CopyEfbDepthToTexture addr={dest_addr:#010x} src=({src_x},{src_y} {width}x{height}) dst={dst_w}x{dst_h}"
+        );
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("efb_depth_resolve_encoder"),
+        });
+        encoder.push_debug_group(&group_label);
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("efb_depth_resolve"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+                multiview_mask: None,
+            });
+            rpass.set_pipeline(&self.efb_depth_resolve_pipeline);
             rpass.set_bind_group(0, &bind_group, &[]);
             rpass.draw(0..3, 0..1);
         }
