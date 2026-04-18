@@ -134,6 +134,10 @@ struct Args {
     #[arg(long)]
     ipl: Option<String>,
 
+    /// Patch the IPL to skip directly to disc boot
+    #[arg(long)]
+    skip_ipl: bool,
+
     /// Boot from ISO using HLE IPL (requires --iso)
     #[arg(long)]
     ipl_hle: bool,
@@ -186,7 +190,7 @@ fn main() {
         GameCube::with_ipl_hle(dvd)
     } else if let Some(ref ipl) = args.ipl {
         let ipl_data = std::fs::read(ipl).expect("failed to read IPL");
-        GameCube::with_ipl(&ipl_data)
+        GameCube::with_ipl(&ipl_data, args.skip_ipl)
     } else if let Some(ref path) = args.dol {
         let dol_data = std::fs::read(path).expect("failed to read DOL");
         let dol = Dol::parse(dol_data);

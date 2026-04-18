@@ -44,7 +44,7 @@ fn main() {
         GameCube::with_ipl_hle(dvd)
     } else if let Some(ref ipl) = args.ipl {
         let ipl_data = std::fs::read(ipl).expect("failed to read IPL");
-        let mut gc = GameCube::with_ipl(&ipl_data);
+        let mut gc = GameCube::with_ipl(&ipl_data, false);
         if let Some(ref iso_path) = args.iso {
             let iso_data = std::fs::read(iso_path).expect("failed to read ISO");
             let dvd = image::dvd::Dvd::parse(iso_data);

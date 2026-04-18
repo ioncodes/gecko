@@ -17,11 +17,10 @@ use crate::hooks::{HookFilters, HookFlags, HookState, Host};
 use crate::host::{EmptyRenderSink, RenderSink};
 #[cfg(feature = "idle-skip")]
 use crate::idle::{IDLE_LOOP_MAX_INSTRS, IdleCheck, IdleDetector};
+use crate::ipl::IPL_HLE;
 use crate::mmio::Mmio;
 use crate::scheduler::Scheduler;
 use image::Executable;
-
-pub static IPL_HLE: &[u8] = include_bytes!("../../../submodules/solstice/ipl/hle/ipl/gc_custom_ipl.bin");
 
 pub struct GameCube {
     pub vsync_pending: bool,
@@ -216,7 +215,7 @@ impl GameCube {
         emulator
     }
 
-    pub fn with_ipl(ipl: &[u8]) -> Self {
+    pub fn with_ipl(ipl: &[u8], skip: bool) -> Self {
         // Text Sections (1):
         // | idx | offset     | vaddr      | size       | end        |
         // |-----|------------|------------|------------|------------|
@@ -228,13 +227,18 @@ impl GameCube {
         // BSS: 0x00000000 - 0x00000000 (size: 0x00000000)
         // => BS2 DOL, does not apply to the actual IPL here!!
 
+        let mut ipl = ipl.to_vec();
+        if skip {
+            crate::ipl::apply_skip_patch(&mut ipl);
+        }
+
         let mut emulator = GameCube::new(IPL_RESET_VECTOR);
         emulator.cpu.msr.set_ip(true);
-        emulator.mmio.ipl = ipl.to_vec();
+        emulator.mmio.ipl = ipl.clone();
         emulator.exi.attach_device(
             ExiMacronix::CHANNEL,
             ExiMacronix::DEVICE,
-            Box::new(ExiMacronix::new(ipl.to_vec())),
+            Box::new(ExiMacronix::new(ipl)),
         );
         // TODO: this makes 0x8130107C (NTSC BS2) exit the DVD state machine
         // as it forces it to enter "state 19"

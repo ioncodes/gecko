@@ -934,6 +934,7 @@ dependencies = [
  "bytemuck",
  "chapa",
  "chipi-build",
+ "crc32fast",
  "glam",
  "image",
  "multiversion",

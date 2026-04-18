@@ -477,7 +477,7 @@ pub fn start_emulator(rom_data: &[u8], filename: String, dsp_irom: Option<Vec<u8
 
     let name = filename.to_lowercase();
     let mut emulator = if name.ends_with(".bin") || name.ends_with(".ipl") {
-        GameCube::with_ipl(rom_data)
+        GameCube::with_ipl(rom_data, false)
     } else {
         let dol = Dol::parse(rom_data.to_vec());
         GameCube::with_image(&dol)

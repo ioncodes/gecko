@@ -142,7 +142,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let ain_c = tev_alpha_in(a_c, tex_color, ras_color, regs, konst_color);
         let ain_d = tev_alpha_in(a_d, tex_color, ras_color, regs, konst_color);
 
-        let alpha_result = tev_combine_alpha(ain_a, ain_b, ain_c, ain_d, a_bias, a_sub, a_scale, a_clamp);
+        let alpha_result = tev_combine_alpha(ain_a, ain_b, ain_c, ain_d, in_a, in_b, a_bias, a_sub, a_scale, a_clamp);
 
         // Write alpha to dest, preserve RGB
         regs[a_dest] = vec4(regs[a_dest].rgb, alpha_result);

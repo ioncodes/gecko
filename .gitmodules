@@ -16,3 +16,6 @@
 [submodule "submodules/beanwii"]
 	path = submodules/beanwii
 	url = https://github.com/zaydlang/beanwii
+[submodule "submodules/lily-gamecube-roms"]
+	path = submodules/lily-gamecube-roms
+	url = https://github.com/xOx-Liy-Codez-XD-oXo/lily-gamecube-roms

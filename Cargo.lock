@@ -1276,6 +1276,7 @@ dependencies = [
  "bytemuck",
  "chapa",
  "chipi-build",
+ "crc32fast",
  "crossbeam-channel",
  "glam",
  "image 0.1.0",

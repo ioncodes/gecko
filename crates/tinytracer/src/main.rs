@@ -107,7 +107,7 @@ fn main() {
         gecko::gamecube::GameCube::with_image(&dol)
     } else if let Some(ipl_path) = &args.ipl {
         let ipl_data = std::fs::read(ipl_path).expect("failed to read IPL");
-        gecko::gamecube::GameCube::with_ipl(&ipl_data)
+        gecko::gamecube::GameCube::with_ipl(&ipl_data, false)
     } else {
         panic!("Either --dol, --ipl, or --ipl-hle must be provided");
     };
