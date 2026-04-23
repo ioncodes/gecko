@@ -79,7 +79,10 @@ impl TlutFormat {
             0 => Self::IA8,
             1 => Self::RGB565,
             2 => Self::RGB5A3,
-            _ => Self::IA8,
+            _ => {
+                tracing::error!(val, "invalid TLUT format");
+                Self::IA8
+            }
         }
     }
 }
