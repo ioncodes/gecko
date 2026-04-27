@@ -56,8 +56,6 @@ pub struct System<const SYSTEM: SystemId> {
 }
 
 impl<const SYSTEM: SystemId> System<SYSTEM> {
-    pub const SYSTEM: SystemId = SYSTEM;
-
     pub(crate) fn with_scheduler(entrypoint: u32, scheduler: Scheduler<SYSTEM>) -> Self {
         System {
             vsync_pending: false,
@@ -88,6 +86,113 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             #[cfg(feature = "hooks")]
             hook_filters: HookFilters::default(),
         }
+    }
+
+    #[inline(always)]
+    pub fn step_cpu(&mut self) {
+        if self.cpu.msr.external_interrupt_enable() {
+            // Deliver external interrupt when EE=1 and any enabled PI interrupt is pending
+            if self.pi.interrupt_pending() {
+                self.cause_external_interrupt();
+                self.scheduler.cycles += 2;
+                return;
+            }
+
+            if self.cpu.dec.interrupt_pending() {
+                self.cause_decrementer_interrupt();
+                self.scheduler.cycles += 2;
+                return;
+            }
+        }
+
+        // CPU pre-hook
+        #[cfg(feature = "hooks")]
+        if self.hook_flags.contains(HookFlags::CPU_PRE) {
+            let pc = self.cpu.pc;
+            if self.hook_filters.cpu_pre.matches(pc) {
+                if let Some(mut host) = self.hook_host.take() {
+                    host.on_cpu_pre(self);
+                    self.sync_pending_hook_state(host.as_mut());
+                    self.hook_host = Some(host);
+                }
+            }
+        }
+
+        // Fetch and execute next instruction
+        self.cpu.cia = self.cpu.pc;
+        self.cpu.nia = self.cpu.cia.wrapping_add(4);
+        let instr = crate::cpu::instruction::Instruction(self.mmio.fetch_instruction(self.cpu.cia));
+        crate::cpu::dispatch(self, instr);
+        self.scheduler.cycles += 2; // TODO: Track properly?
+
+        // CPU post-hook
+        #[cfg(feature = "hooks")]
+        if self.hook_flags.contains(HookFlags::CPU_POST) {
+            let pc = self.cpu.cia;
+            if self.hook_filters.cpu_post.matches(pc) {
+                if let Some(mut host) = self.hook_host.take() {
+                    host.on_cpu_post(self);
+                    self.sync_pending_hook_state(host.as_mut());
+                    self.hook_host = Some(host);
+                }
+            }
+        }
+
+        #[cfg(feature = "idle-skip")]
+        match self.idle.check(self.cpu.cia, self.cpu.nia) {
+            IdleCheck::Skip => {
+                self.scheduler.cycles = self.scheduler.next_deadline();
+            }
+            IdleCheck::Validate { start, end } => {
+                let safe = self.is_polling_loop(start, end);
+                self.idle.set_validated(safe);
+                if safe {
+                    self.scheduler.cycles = self.scheduler.next_deadline();
+                }
+            }
+            IdleCheck::Continue => {}
+        }
+
+        self.cpu.pc = self.cpu.nia;
+    }
+
+    /// Drain pending scheduler events, then execute one CPU instruction.
+    #[inline(always)]
+    pub fn step(&mut self) {
+        self.drain_events();
+        self.step_cpu();
+    }
+
+    #[inline(always)]
+    pub fn prepare_frame(&mut self) {
+        self.begin_frame();
+        crate::flipper::si::refresh_interrupts(self);
+    }
+
+    pub fn run_until_vsync(&mut self) {
+        self.prepare_frame();
+        while !self.vsync_pending {
+            self.scheduler.refresh_deadline();
+            // Execute a slice of CPU instructions until the next event deadline
+            while self.scheduler.cycles < self.scheduler.next_deadline() {
+                self.step_cpu();
+            }
+            // Drain all events that are now due
+            self.drain_events();
+        }
+    }
+
+    /// Read the instructions in `[start, end]` and check whether the loop is a
+    /// side effect free MMIO polling loop that can safely be skipped.
+    #[cfg(feature = "idle-skip")]
+    #[inline(always)]
+    fn is_polling_loop(&self, start: u32, end: u32) -> bool {
+        let count = ((end - start) / 4 + 1) as usize;
+        let mut buf = [0u32; IDLE_LOOP_MAX_INSTRS];
+        for i in 0..count.min(buf.len()) {
+            buf[i] = self.mmio.fetch_instruction(start + (i as u32) * 4);
+        }
+        crate::idle::validate_polling_loop(&buf[..count.min(buf.len())], &self.cpu.gprs)
     }
 
     pub fn frame_size(&self) -> (usize, usize) {
