@@ -1,6 +1,9 @@
 pub mod regs;
 
-use crate::{flipper::dsp, gamecube::GameCube};
+use crate::{
+    flipper::dsp,
+    system::{System, SystemId},
+};
 
 const CPU_CORE_CLOCK: u64 = 486_000_000;
 const AUDIO_DMA_BLOCK_BYTES: u32 = 32;
@@ -60,7 +63,7 @@ crate::mmio_device_dispatch! {
 }
 
 #[inline(always)]
-pub fn start_audio_dma(gc: &mut GameCube) {
+pub fn start_audio_dma<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     if !gc.dsp.audio_dma_control.play() {
         return;
     }
@@ -86,14 +89,14 @@ pub fn start_audio_dma(gc: &mut GameCube) {
 }
 
 #[inline(always)]
-pub fn stop_audio_dma(gc: &mut GameCube) {
+pub fn stop_audio_dma<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     gc.scheduler.cancel(self::audio_dma_block_handler);
     gc.ai.audio_dma_remaining_blocks = 0;
     gc.dsp.csr.set_dma_status(false);
 }
 
 #[inline(always)]
-pub fn audio_dma_block_handler(gc: &mut GameCube) {
+pub fn audio_dma_block_handler<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     if !gc.dsp.audio_dma_control.play() {
         stop_audio_dma(gc);
         return;
@@ -135,7 +138,7 @@ pub fn audio_dma_block_handler(gc: &mut GameCube) {
 }
 
 #[inline(always)]
-fn cycles_per_audio_dma_block(gc: &GameCube) -> u64 {
+fn cycles_per_audio_dma_block<const SYSTEM: SystemId>(gc: &System<SYSTEM>) -> u64 {
     let sample_rate = if gc.ai.control.dsp_sample_rate() {
         32_000
     } else {
@@ -146,7 +149,7 @@ fn cycles_per_audio_dma_block(gc: &GameCube) -> u64 {
 }
 
 #[inline(always)]
-pub fn refresh_interrupts(gc: &mut GameCube) {
+pub fn refresh_interrupts<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     use crate::flipper::pi::InterruptFlag;
 
     let threshold = gc.ai.interrupt_timing.sample_count();

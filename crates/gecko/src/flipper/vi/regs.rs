@@ -1,6 +1,6 @@
 use crate::flipper::vi;
-use crate::gamecube::GameCube;
 use crate::mmio::traits::{MmioAccess, WriteMask};
+use crate::system::{System, SystemId};
 use chapa::BitEnum;
 
 // 0xCC002000	2	R/W	VTR (Vertical Timing Register)
@@ -15,11 +15,11 @@ pub struct VerticalTiming {
 }
 crate::mmio_reg!(VerticalTiming: u16 @ 0xCC002000);
 
-impl MmioAccess<GameCube> for VerticalTiming {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for VerticalTiming {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.vi.vtr
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.vi.vtr = self;
         vi::ensure_half_line_scheduled(gc);
     }
@@ -97,12 +97,12 @@ impl DisplayConfiguration {
     }
 }
 
-impl MmioAccess<GameCube> for DisplayConfiguration {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DisplayConfiguration {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.vi.dcr
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         // TODO: Rising edge on RST clears the register. Just a test for now.
         if self.reset() && !gc.vi.dcr.reset() {
             gc.vi.dcr = DisplayConfiguration::from_raw(0);
@@ -128,11 +128,11 @@ pub struct HorizontalTiming0 {
 }
 crate::mmio_reg!(HorizontalTiming0: u32 @ 0xCC002004);
 
-impl MmioAccess<GameCube> for HorizontalTiming0 {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for HorizontalTiming0 {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.vi.htr0
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.vi.htr0 = self;
         vi::ensure_half_line_scheduled(gc);
     }
@@ -151,7 +151,7 @@ pub struct HorizontalTiming1 {
     pub horizontal_blank_start: u16,
 }
 crate::mmio_reg!(HorizontalTiming1: u32 @ 0xCC002008);
-crate::mmio_default_access!(HorizontalTiming1 => GameCube.vi.htr1);
+crate::mmio_default_access!(HorizontalTiming1 => System.vi.htr1);
 
 // 0xCC00200C	4	R/W	VTO (Odd Field Vertical Timing Register)
 
@@ -165,11 +165,11 @@ pub struct VerticalTimingOdd {
 }
 crate::mmio_reg!(VerticalTimingOdd: u32 @ 0xCC00200C);
 
-impl MmioAccess<GameCube> for VerticalTimingOdd {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for VerticalTimingOdd {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.vi.vto
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.vi.vto = self;
         vi::ensure_half_line_scheduled(gc);
     }
@@ -187,11 +187,11 @@ pub struct VerticalTimingEven {
 }
 crate::mmio_reg!(VerticalTimingEven: u32 @ 0xCC002010);
 
-impl MmioAccess<GameCube> for VerticalTimingEven {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for VerticalTimingEven {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.vi.vte
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.vi.vte = self;
         vi::ensure_half_line_scheduled(gc);
     }
@@ -212,7 +212,7 @@ pub struct BurstBlankingEvenInterval {
     pub burst_end_3: u16,
 }
 crate::mmio_reg!(BurstBlankingEvenInterval: u32 @ 0xCC002014);
-crate::mmio_default_access!(BurstBlankingEvenInterval => GameCube.vi.bbei);
+crate::mmio_default_access!(BurstBlankingEvenInterval => System.vi.bbei);
 
 // 0xCC002018	4	R/W	BBOI (Burst Blanking Odd Interval)
 
@@ -229,7 +229,7 @@ pub struct BurstBlankingOddInterval {
     pub burst_end_4: u16,
 }
 crate::mmio_reg!(BurstBlankingOddInterval: u32 @ 0xCC002018);
-crate::mmio_default_access!(BurstBlankingOddInterval => GameCube.vi.bboi);
+crate::mmio_default_access!(BurstBlankingOddInterval => System.vi.bboi);
 
 // 0xCC00201c	4	R/W	TFBL (Top Field Base Register L, External Framebuffer Half 1)
 
@@ -247,7 +247,7 @@ pub struct TopFieldBase {
     // TODO: 29..=31 y always zero (maybe some write only control register stuff, setting bit 31 clears bits 31..=28).
 }
 crate::mmio_reg!(TopFieldBase: u32 @ 0xCC00201C);
-crate::mmio_default_access!(TopFieldBase => GameCube.vi.tfbl);
+crate::mmio_default_access!(TopFieldBase => System.vi.tfbl);
 
 // 0xCC002020	4	R/W	TFBR (Top Field Base Register R)
 
@@ -258,7 +258,7 @@ pub struct TopFieldBaseRight {
     pub xfb_addr: u32,
 }
 crate::mmio_reg!(TopFieldBaseRight: u32 @ 0xCC002020);
-crate::mmio_default_access!(TopFieldBaseRight => GameCube.vi.tfbr);
+crate::mmio_default_access!(TopFieldBaseRight => System.vi.tfbr);
 
 // 0xCC002024	4	R/W	BFBL (Bottom Field Base Register L, External Framebuffer Half 2)
 
@@ -272,7 +272,7 @@ pub struct BottomFieldBase {
     pub page_offset: bool,
 }
 crate::mmio_reg!(BottomFieldBase: u32 @ 0xCC002024);
-crate::mmio_default_access!(BottomFieldBase => GameCube.vi.bfbl);
+crate::mmio_default_access!(BottomFieldBase => System.vi.bfbl);
 
 // 0xCC002028	4	R/W	BFBR (Bottom Field Base Register R)
 
@@ -283,7 +283,7 @@ pub struct BottomFieldBaseRight {
     pub xfb_addr: u32,
 }
 crate::mmio_reg!(BottomFieldBaseRight: u32 @ 0xCC002028);
-crate::mmio_default_access!(BottomFieldBaseRight => GameCube.vi.bfbr);
+crate::mmio_default_access!(BottomFieldBaseRight => System.vi.bfbr);
 
 // 0xCC00202C	2	R	DPV (Display Position Vertical)
 
@@ -294,7 +294,7 @@ pub struct DisplayPositionVertical {
     pub vertical_count: u16,
 }
 crate::mmio_reg!(DisplayPositionVertical: u16 @ 0xCC00202C);
-crate::mmio_default_access!(DisplayPositionVertical => GameCube.vi.dpv);
+crate::mmio_default_access!(DisplayPositionVertical => System.vi.dpv);
 
 // 0xCC00202E	2	R	DPH (Display Position Horizontal)
 //
@@ -309,13 +309,13 @@ pub struct DisplayPositionHorizontal {
 }
 crate::mmio_reg!(DisplayPositionHorizontal: u16 @ 0xCC00202E);
 
-impl MmioAccess<GameCube> for DisplayPositionHorizontal {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DisplayPositionHorizontal {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         let cycles = gc.scheduler.cycles;
         DisplayPositionHorizontal::from_raw(gc.vi.dph_value(cycles))
     }
 
-    fn write(self, _gc: &mut GameCube, _: WriteMask) {
+    fn write(self, _gc: &mut System<SYSTEM>, _: WriteMask) {
         // Read only.
     }
 }
@@ -331,14 +331,14 @@ impl MmioAccess<GameCube> for DisplayPositionHorizontal {
 pub struct DisplayPositionCombined {}
 crate::mmio_reg!(DisplayPositionCombined: u32 @ 0xCC00202C);
 
-impl MmioAccess<GameCube> for DisplayPositionCombined {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DisplayPositionCombined {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         let dpv = gc.vi.dpv.raw() as u32;
         let dph = gc.vi.dph_value(gc.scheduler.cycles) as u32;
         DisplayPositionCombined::from_raw((dpv << 16) | dph)
     }
 
-    fn write(self, _gc: &mut GameCube, _: WriteMask) {
+    fn write(self, _gc: &mut System<SYSTEM>, _: WriteMask) {
         // Read only.
     }
 }
@@ -363,11 +363,11 @@ pub struct DisplayInterrupt0 {
 }
 crate::mmio_reg!(DisplayInterrupt0: u32 @ 0xCC002030);
 
-impl MmioAccess<GameCube> for DisplayInterrupt0 {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DisplayInterrupt0 {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.vi.di0
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.vi.di0 = self;
         vi::refresh_interrupts(gc);
     }
@@ -389,11 +389,11 @@ pub struct DisplayInterrupt1 {
 }
 crate::mmio_reg!(DisplayInterrupt1: u32 @ 0xCC002034);
 
-impl MmioAccess<GameCube> for DisplayInterrupt1 {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DisplayInterrupt1 {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.vi.di1
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.vi.di1 = self;
         vi::refresh_interrupts(gc);
     }
@@ -415,11 +415,11 @@ pub struct DisplayInterrupt2 {
 }
 crate::mmio_reg!(DisplayInterrupt2: u32 @ 0xCC002038);
 
-impl MmioAccess<GameCube> for DisplayInterrupt2 {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DisplayInterrupt2 {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.vi.di2
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.vi.di2 = self;
         vi::refresh_interrupts(gc);
     }
@@ -441,11 +441,11 @@ pub struct DisplayInterrupt3 {
 }
 crate::mmio_reg!(DisplayInterrupt3: u32 @ 0xCC00203C);
 
-impl MmioAccess<GameCube> for DisplayInterrupt3 {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DisplayInterrupt3 {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.vi.di3
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.vi.di3 = self;
         vi::refresh_interrupts(gc);
     }
@@ -464,7 +464,7 @@ pub struct DisplayLatch0 {
     pub trigger: bool,
 }
 crate::mmio_reg!(DisplayLatch0: u32 @ 0xCC002040);
-crate::mmio_default_access!(DisplayLatch0 => GameCube.vi.dl0);
+crate::mmio_default_access!(DisplayLatch0 => System.vi.dl0);
 
 // 0xCC002044	4	R/W	DL1 (Display Latch 1)
 
@@ -479,7 +479,7 @@ pub struct DisplayLatch1 {
     pub trigger: bool,
 }
 crate::mmio_reg!(DisplayLatch1: u32 @ 0xCC002044);
-crate::mmio_default_access!(DisplayLatch1 => GameCube.vi.dl1);
+crate::mmio_default_access!(DisplayLatch1 => System.vi.dl1);
 
 // 0xCC002048	2	R/W	HSW (Horizontal Scaling Width)
 
@@ -490,7 +490,7 @@ pub struct HorizontalScalingWidth {
     pub source_width: u16,
 }
 crate::mmio_reg!(HorizontalScalingWidth: u16 @ 0xCC002048);
-crate::mmio_default_access!(HorizontalScalingWidth => GameCube.vi.hsw);
+crate::mmio_default_access!(HorizontalScalingWidth => System.vi.hsw);
 
 // 0xCC00204A	2	R/W	HSR (Horizontal Scaling Register)
 
@@ -503,7 +503,7 @@ pub struct HorizontalScalingRegister {
     pub horizontal_scaling_enable: bool,
 }
 crate::mmio_reg!(HorizontalScalingRegister: u16 @ 0xCC00204A);
-crate::mmio_default_access!(HorizontalScalingRegister => GameCube.vi.hsr);
+crate::mmio_default_access!(HorizontalScalingRegister => System.vi.hsr);
 
 // 0xCC00204C	4	R/W	FCT0 (Filter Coefficient Table 0)
 
@@ -518,7 +518,7 @@ pub struct FilterCoefficient0 {
     pub tap2: u16,
 }
 crate::mmio_reg!(FilterCoefficient0: u32 @ 0xCC00204C);
-crate::mmio_default_access!(FilterCoefficient0 => GameCube.vi.fct0);
+crate::mmio_default_access!(FilterCoefficient0 => System.vi.fct0);
 
 // 0xCC002050	4	R/W	FCT1 (Filter Coefficient Table 1)
 
@@ -533,7 +533,7 @@ pub struct FilterCoefficient1 {
     pub tap5: u16,
 }
 crate::mmio_reg!(FilterCoefficient1: u32 @ 0xCC002050);
-crate::mmio_default_access!(FilterCoefficient1 => GameCube.vi.fct1);
+crate::mmio_default_access!(FilterCoefficient1 => System.vi.fct1);
 
 // 0xCC002054	4	R/W	FCT2 (Filter Coefficient Table 2)
 
@@ -548,7 +548,7 @@ pub struct FilterCoefficient2 {
     pub tap8: u16,
 }
 crate::mmio_reg!(FilterCoefficient2: u32 @ 0xCC002054);
-crate::mmio_default_access!(FilterCoefficient2 => GameCube.vi.fct2);
+crate::mmio_default_access!(FilterCoefficient2 => System.vi.fct2);
 
 // 0xCC002058	4	R/W	FCT3 (Filter Coefficient Table 3)
 
@@ -565,7 +565,7 @@ pub struct FilterCoefficient3 {
     pub tap12: u8,
 }
 crate::mmio_reg!(FilterCoefficient3: u32 @ 0xCC002058);
-crate::mmio_default_access!(FilterCoefficient3 => GameCube.vi.fct3);
+crate::mmio_default_access!(FilterCoefficient3 => System.vi.fct3);
 
 // 0xCC00205C	4	R/W	FCT4 (Filter Coefficient Table 4)
 
@@ -582,7 +582,7 @@ pub struct FilterCoefficient4 {
     pub tap16: u8,
 }
 crate::mmio_reg!(FilterCoefficient4: u32 @ 0xCC00205C);
-crate::mmio_default_access!(FilterCoefficient4 => GameCube.vi.fct4);
+crate::mmio_default_access!(FilterCoefficient4 => System.vi.fct4);
 
 // 0xCC002060	4	R/W	FCT5 (Filter Coefficient Table 5)
 
@@ -599,7 +599,7 @@ pub struct FilterCoefficient5 {
     pub tap20: u8,
 }
 crate::mmio_reg!(FilterCoefficient5: u32 @ 0xCC002060);
-crate::mmio_default_access!(FilterCoefficient5 => GameCube.vi.fct5);
+crate::mmio_default_access!(FilterCoefficient5 => System.vi.fct5);
 
 // 0xCC002064	4	R/W	FCT6 (Filter Coefficient Table 6)
 
@@ -616,7 +616,7 @@ pub struct FilterCoefficient6 {
     pub tap24: u8,
 }
 crate::mmio_reg!(FilterCoefficient6: u32 @ 0xCC002064);
-crate::mmio_default_access!(FilterCoefficient6 => GameCube.vi.fct6);
+crate::mmio_default_access!(FilterCoefficient6 => System.vi.fct6);
 
 // 0xCC00206C	2	R/W	VICLK (VI Clock Select)
 
@@ -628,11 +628,11 @@ pub struct ViClockSelect {
 }
 crate::mmio_reg!(ViClockSelect: u16 @ 0xCC00206C);
 
-impl MmioAccess<GameCube> for ViClockSelect {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for ViClockSelect {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.vi.viclk
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.vi.viclk = self;
         vi::ensure_half_line_scheduled(gc);
     }
@@ -647,7 +647,7 @@ pub struct ViDtvStatus {
     pub dtv_status: bool,
 }
 crate::mmio_reg!(ViDtvStatus: u16 @ 0xCC00206E);
-crate::mmio_default_access!(ViDtvStatus => GameCube.vi.visel);
+crate::mmio_default_access!(ViDtvStatus => System.vi.visel);
 
 // 0xCC002070	2	R/W	Unknown. Log for now.
 
@@ -655,7 +655,7 @@ crate::mmio_default_access!(ViDtvStatus => GameCube.vi.visel);
 #[derive(Copy, Clone, Debug)]
 pub struct ViUnknown70 {}
 crate::mmio_reg!(ViUnknown70: u16 @ 0xCC002070);
-crate::mmio_default_access!(ViUnknown70 => GameCube.vi.unknown_70);
+crate::mmio_default_access!(ViUnknown70 => System.vi.unknown_70);
 
 // 0xCC002072	2	R/W	BorderHBE (Border HBE)
 
@@ -668,7 +668,7 @@ pub struct BorderHbe {
     pub border_enable: bool,
 }
 crate::mmio_reg!(BorderHbe: u16 @ 0xCC002072);
-crate::mmio_default_access!(BorderHbe => GameCube.vi.border_hbe);
+crate::mmio_default_access!(BorderHbe => System.vi.border_hbe);
 
 // 0xCC002074	2	R/W	BorderHBS (Border HBS)
 
@@ -679,4 +679,4 @@ pub struct BorderHbs {
     pub horizontal_blank_start_656: u16,
 }
 crate::mmio_reg!(BorderHbs: u16 @ 0xCC002074);
-crate::mmio_default_access!(BorderHbs => GameCube.vi.border_hbs);
+crate::mmio_default_access!(BorderHbs => System.vi.border_hbs);

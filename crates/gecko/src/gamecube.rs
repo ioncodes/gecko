@@ -7,7 +7,7 @@ use crate::hooks::HookFlags;
 use crate::idle::{IDLE_LOOP_MAX_INSTRS, IdleCheck};
 use crate::ipl::IPL_HLE;
 use crate::scheduler::Scheduler;
-use crate::system::{GC, System};
+use crate::system::{GC, System, SystemId};
 use image::Executable;
 
 pub type GameCube = System<{ GC }>;
@@ -131,7 +131,9 @@ impl GameCube {
         emulator.open_cover();
         emulator
     }
+}
 
+impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[inline(always)]
     pub fn step_cpu(&mut self) {
         if self.cpu.msr.external_interrupt_enable() {
@@ -166,7 +168,7 @@ impl GameCube {
         self.cpu.cia = self.cpu.pc;
         self.cpu.nia = self.cpu.cia.wrapping_add(4);
         let instr = Instruction(self.mmio.fetch_instruction(self.cpu.cia));
-        cpu::lut::dispatch(self, instr);
+        cpu::dispatch(self, instr);
         self.scheduler.cycles += 2; // TODO: Track properly?
 
         // CPU post-hook

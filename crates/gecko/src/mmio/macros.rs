@@ -6,16 +6,16 @@ macro_rules! mmio_device_dispatch {
         registers = [ $($reg:ty),* $(,)? ] $(,)?
     ) => {
         #[inline(always)]
-        pub fn $read_fn(
-            gc: &mut $crate::gamecube::GameCube,
+        pub fn $read_fn<const SYSTEM: $crate::system::SystemId>(
+            sys: &mut $crate::system::System<SYSTEM>,
             addr: u32,
             size: u32,
         ) -> Option<u32> {
             $(
                 if <$reg as $crate::mmio::traits::MmioRegister>::fits(addr, size) {
                     return Some(
-                        <$reg as $crate::mmio::traits::MmioAccess<$crate::gamecube::GameCube>>
-                            ::read_at(gc, addr, size),
+                        <$reg as $crate::mmio::traits::MmioAccess<$crate::system::System<SYSTEM>>>
+                            ::read_at(sys, addr, size),
                     );
                 }
             )*
@@ -23,8 +23,8 @@ macro_rules! mmio_device_dispatch {
         }
 
         #[inline(always)]
-        pub fn $write_fn(
-            gc: &mut $crate::gamecube::GameCube,
+        pub fn $write_fn<const SYSTEM: $crate::system::SystemId>(
+            sys: &mut $crate::system::System<SYSTEM>,
             addr: u32,
             size: u32,
             val: u32,
@@ -38,8 +38,8 @@ macro_rules! mmio_device_dispatch {
                         size,
                         "MMIO write"
                     );
-                    <$reg as $crate::mmio::traits::MmioAccess<$crate::gamecube::GameCube>>
-                        ::write_at(gc, addr, size, val);
+                    <$reg as $crate::mmio::traits::MmioAccess<$crate::system::System<SYSTEM>>>
+                        ::write_at(sys, addr, size, val);
                     return true;
                 }
             )*
@@ -68,19 +68,21 @@ macro_rules! mmio_reg {
 
 #[macro_export]
 macro_rules! mmio_default_access {
-    ($reg:ty => GameCube . $($field:ident).+) => {
-        impl $crate::mmio::traits::MmioAccess<$crate::gamecube::GameCube> for $reg {
+    ($reg:ty => System . $($field:ident).+) => {
+        impl<const SYSTEM: $crate::system::SystemId>
+            $crate::mmio::traits::MmioAccess<$crate::system::System<SYSTEM>> for $reg
+        {
             #[inline(always)]
-            fn read(gc: &mut $crate::gamecube::GameCube) -> Self {
-                gc . $($field).+
+            fn read(sys: &mut $crate::system::System<SYSTEM>) -> Self {
+                sys . $($field).+
             }
             #[inline(always)]
             fn write(
                 self,
-                gc: &mut $crate::gamecube::GameCube,
+                sys: &mut $crate::system::System<SYSTEM>,
                 _: $crate::mmio::traits::WriteMask,
             ) {
-                gc . $($field).+ = self;
+                sys . $($field).+ = self;
             }
         }
     };

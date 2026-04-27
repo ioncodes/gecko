@@ -98,30 +98,46 @@ impl<const SYSTEM: SystemId> Scheduler<SYSTEM> {
 
 impl Scheduler<{ GC }> {
     pub fn new_gamecube() -> Self {
+        Self::with_default_events()
+    }
+}
+
+impl Scheduler<{ crate::system::WII }> {
+    pub fn new_wii() -> Self {
+        Self::with_default_events()
+    }
+}
+
+impl<const SYSTEM: SystemId> Scheduler<SYSTEM> {
+    fn with_default_events() -> Self {
         let mut s = Self::empty();
         let initial_refresh_rate = RefreshRate::Hz60; // TODO: Detect IPL and schedule accordingly
-        s.schedule_at(initial_refresh_rate.cycles_per_frame(), self::vsync_handler);
-        s.schedule_at(CPU_CYCLES_PER_DSP_TICK * DSP_BATCH_SIZE, self::dsp_batch_handler);
+        s.schedule_at(initial_refresh_rate.cycles_per_frame(), self::vsync_handler::<SYSTEM>);
+        s.schedule_at(
+            CPU_CYCLES_PER_DSP_TICK * DSP_BATCH_SIZE,
+            self::dsp_batch_handler::<SYSTEM>,
+        );
         s.schedule_at(
             crate::cpu::dec::cycles_until_underflow(u32::MAX),
-            crate::cpu::dec::underflow_handler,
+            crate::cpu::dec::underflow_handler::<SYSTEM>,
         );
         s
     }
 }
 
 /// Reschedules itself every frame.
-pub fn vsync_handler(gc: &mut System<{ GC }>) {
+pub fn vsync_handler<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     gc.vsync_pending = true;
     let rate = gc.vi.dcr.video_format().refresh_rate();
-    gc.scheduler.schedule_in(rate.cycles_per_frame(), self::vsync_handler);
+    gc.scheduler
+        .schedule_in(rate.cycles_per_frame(), self::vsync_handler::<SYSTEM>);
 }
 
 /// Reschedules itself every DSP batch.
-pub fn dsp_batch_handler(gc: &mut System<{ GC }>) {
+pub fn dsp_batch_handler<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     gc.execute_dsp_batch();
     gc.scheduler.schedule_in(
         self::CPU_CYCLES_PER_DSP_TICK * self::DSP_BATCH_SIZE,
-        self::dsp_batch_handler,
+        self::dsp_batch_handler::<SYSTEM>,
     );
 }

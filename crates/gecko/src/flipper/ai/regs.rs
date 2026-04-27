@@ -1,6 +1,6 @@
 use crate::flipper::ai;
-use crate::gamecube::GameCube;
 use crate::mmio::traits::{MmioAccess, WriteMask};
+use crate::system::{System, SystemId};
 use chapa::BitEnum;
 
 // 0xCC006C00  4  R/W  AICR - Audio Interface Control Register
@@ -43,12 +43,12 @@ pub struct AiControl {
 }
 crate::mmio_reg!(AiControl: u32 @ 0xCC006C00);
 
-impl MmioAccess<GameCube> for AiControl {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AiControl {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.ai.control
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         let mut cr = gc.ai.control;
 
         // AIINT is w1c
@@ -86,7 +86,7 @@ pub struct AiVolume {
     pub right: u8,
 }
 crate::mmio_reg!(AiVolume: u32 @ 0xCC006C04);
-crate::mmio_default_access!(AiVolume => GameCube.ai.volume);
+crate::mmio_default_access!(AiVolume => System.ai.volume);
 
 // 0xCC006C08  4  R  AISCNT - Audio Interface Sample Counter
 
@@ -98,13 +98,13 @@ pub struct AiSampleCounter {
 }
 crate::mmio_reg!(AiSampleCounter: u32 @ 0xCC006C08);
 
-impl MmioAccess<GameCube> for AiSampleCounter {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AiSampleCounter {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         let count = gc.ai.sample_count(gc.scheduler.cycles);
         AiSampleCounter::from_raw(count)
     }
 
-    fn write(self, _gc: &mut GameCube, _: WriteMask) {
+    fn write(self, _gc: &mut System<SYSTEM>, _: WriteMask) {
         tracing::warn!("attempted to write to read-only AiSampleCounter");
     }
 }
@@ -118,12 +118,12 @@ pub struct AiInterruptTiming {
 }
 crate::mmio_reg!(AiInterruptTiming: u32 @ 0xCC006C0C);
 
-impl MmioAccess<GameCube> for AiInterruptTiming {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AiInterruptTiming {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.ai.interrupt_timing
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.ai.interrupt_timing = self;
         ai::refresh_interrupts(gc);
     }

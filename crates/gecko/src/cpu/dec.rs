@@ -1,5 +1,5 @@
-use crate::gamecube::GameCube;
 use crate::scheduler::TIMEBASE_DIVISOR;
+use crate::system::{System, SystemId};
 
 const DEC_INTERRUPT_BIT: u32 = 0x8000_0000;
 
@@ -54,7 +54,7 @@ pub fn cycles_until_underflow(value: u32) -> u64 {
     value as u64 * TIMEBASE_DIVISOR
 }
 
-pub fn underflow_handler(gc: &mut GameCube) {
+pub fn underflow_handler<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     gc.cpu.dec.underflow(gc.scheduler.cycles);
     gc.cpu.spr.dec = u32::MAX;
     gc.scheduler

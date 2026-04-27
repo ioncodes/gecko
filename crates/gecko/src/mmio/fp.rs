@@ -1,8 +1,8 @@
-use crate::gamecube::GameCube;
 use crate::mmio::Mmio;
 use crate::mmio::constants::RAM_END;
+use crate::system::{System, SystemId};
 
-impl GameCube {
+impl<const SYSTEM: SystemId> System<SYSTEM> {
     // Load a 64-bit double from memory
     #[inline]
     pub fn read_f64(&mut self, addr: u32) -> f64 {

@@ -162,3 +162,16 @@ impl Cpu {
         self.spr.xer = self.spr.xer.with_carry(ca);
     }
 }
+
+#[inline(always)]
+pub fn dispatch<const SYSTEM: crate::system::SystemId>(
+    ctx: &mut crate::system::System<SYSTEM>,
+    instr: instruction::Instruction,
+) {
+    if SYSTEM == crate::system::GC {
+        let ctx: &mut crate::system::System<{ crate::system::GC }> = unsafe { core::mem::transmute(ctx) };
+        self::lut::dispatch(ctx, instr);
+    } else {
+        todo!()
+    }
+}

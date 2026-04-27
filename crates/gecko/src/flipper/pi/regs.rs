@@ -1,5 +1,5 @@
-use crate::gamecube::GameCube;
 use crate::mmio::traits::{MmioAccess, WriteMask};
+use crate::system::{System, SystemId};
 
 // 0xCC003000  4  r    INTSR (Interrupt Cause)
 
@@ -60,12 +60,12 @@ impl Default for InterruptCause {
     }
 }
 
-impl MmioAccess<GameCube> for InterruptCause {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for InterruptCause {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.pi.intsr
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         // yagcd seems to be wrong, we should not clear everything on read,
         // but just do the usual w1c instead.
         const RSWST_MASK: u32 = 1 << 16;
@@ -122,7 +122,7 @@ pub struct InterruptMask {
     pub highspeed_port: bool,
 }
 crate::mmio_reg!(InterruptMask: u32 @ 0xCC003004);
-crate::mmio_default_access!(InterruptMask => GameCube.pi.intmr);
+crate::mmio_default_access!(InterruptMask => System.pi.intmr);
 
 // 0xCC00300C  4  r/w  PI_FIFO_BASE - CPU FIFO Base Address
 
@@ -134,11 +134,11 @@ pub struct FifoBase {
 }
 crate::mmio_reg!(FifoBase: u32 @ 0xCC00300C);
 
-impl MmioAccess<GameCube> for FifoBase {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for FifoBase {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         FifoBase::from_raw(gc.pi.fifo_base)
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.pi.fifo_base = self.raw();
     }
 }
@@ -153,11 +153,11 @@ pub struct FifoEnd {
 }
 crate::mmio_reg!(FifoEnd: u32 @ 0xCC003010);
 
-impl MmioAccess<GameCube> for FifoEnd {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for FifoEnd {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         FifoEnd::from_raw(gc.pi.fifo_end)
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.pi.fifo_end = self.raw();
     }
 }
@@ -172,11 +172,11 @@ pub struct FifoWritePtr {
 }
 crate::mmio_reg!(FifoWritePtr: u32 @ 0xCC003014);
 
-impl MmioAccess<GameCube> for FifoWritePtr {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for FifoWritePtr {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         FifoWritePtr::from_raw(gc.pi.fifo_wptr)
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.pi.fifo_wptr = self.raw() & 0x1FFF_FFE0;
     }
 }
@@ -188,11 +188,11 @@ impl MmioAccess<GameCube> for FifoWritePtr {
 pub struct ResetCode {}
 crate::mmio_reg!(ResetCode: u32 @ 0xCC003024);
 
-impl MmioAccess<GameCube> for ResetCode {
-    fn read(_gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for ResetCode {
+    fn read(_gc: &mut System<SYSTEM>) -> Self {
         Self::from_raw(0)
     }
-    fn write(self, _gc: &mut GameCube, _: WriteMask) {
+    fn write(self, _gc: &mut System<SYSTEM>, _: WriteMask) {
         tracing::warn!("TODO: reset DVD");
     }
 }
@@ -207,12 +207,12 @@ pub struct FlipperRev {
 }
 crate::mmio_reg!(FlipperRev: u32 @ 0xCC00302C);
 
-impl MmioAccess<GameCube> for FlipperRev {
-    fn read(_gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for FlipperRev {
+    fn read(_gc: &mut System<SYSTEM>) -> Self {
         // FLIPPER_REV_C from Dolphin.
         Self::from_raw(0x2465_00B1)
     }
-    fn write(self, _gc: &mut GameCube, _: WriteMask) {
+    fn write(self, _gc: &mut System<SYSTEM>, _: WriteMask) {
         tracing::warn!("writing to FlipperRev???");
     }
 }

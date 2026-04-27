@@ -48,7 +48,7 @@ pub struct System<const SYSTEM: SystemId> {
     pub(crate) idle: IdleDetector,
 
     #[cfg(feature = "hooks")]
-    pub hook_host: Option<Box<dyn Host + Send>>,
+    pub hook_host: Option<Box<dyn Host<SYSTEM> + Send>>,
     #[cfg(feature = "hooks")]
     pub hook_flags: HookFlags,
     #[cfg(feature = "hooks")]
@@ -154,7 +154,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
     #[cfg(feature = "hooks")]
     #[inline(always)]
-    pub fn sync_pending_hook_state(&mut self, host: &mut dyn Host) {
+    pub fn sync_pending_hook_state(&mut self, host: &mut dyn Host<SYSTEM>) {
         #[cfg(feature = "hooks-mut-traps")]
         match host.take_pending_hook_state() {
             Ok(Some(state)) => self.apply_hook_state(state),
@@ -167,7 +167,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     }
 
     #[cfg(feature = "hooks")]
-    pub fn set_hook_host(&mut self, host: Box<dyn Host + Send>) {
+    pub fn set_hook_host(&mut self, host: Box<dyn Host<SYSTEM> + Send>) {
         self.apply_hook_state(host.hook_state());
         self.hook_host = Some(host);
     }

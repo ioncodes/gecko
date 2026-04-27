@@ -19,4 +19,4 @@ pub struct MiInterruptMask {
     pub master_enable: bool,
 }
 crate::mmio_reg!(MiInterruptMask: u16 @ 0xCC00401C);
-crate::mmio_default_access!(MiInterruptMask => GameCube.mi.interrupt_mask);
+crate::mmio_default_access!(MiInterruptMask => System.mi.interrupt_mask);

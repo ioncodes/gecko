@@ -12,8 +12,8 @@ pub mod lut {
 }
 
 use crate::flipper::dsp::instruction::Instruction;
-use crate::gamecube::GameCube;
 use crate::mmio::Mmio;
+use crate::system::{GC, System, SystemId};
 
 pub struct Dsp {
     // Registers
@@ -174,7 +174,7 @@ impl Dsp {
     }
 }
 
-impl GameCube {
+impl<const SYSTEM: SystemId> System<SYSTEM> {
     /// Execute a single DSP instruction. Returns `false` if the DSP is halted or
     /// in reset (no instruction was executed).
     #[inline(always)]
@@ -206,10 +206,10 @@ impl GameCube {
             self.dsp.registers.cache_ext_ac();
         }
 
-        lut::dispatch(self, instr);
+        self::dispatch(self, instr);
 
         if let Some(ext) = ext_op {
-            lut::dispatch_gc_dsp_ext(self, instruction::GcDspExt(ext));
+            self::dispatch_gc_dsp_ext(self, instruction::GcDspExt(ext));
         }
 
         // Check if we've reached the end of a loop.
@@ -290,7 +290,7 @@ impl Dsp {
 }
 
 #[inline(always)]
-pub fn refresh_interrupts(gc: &mut GameCube) {
+pub fn refresh_interrupts<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     use crate::flipper::pi::InterruptFlag;
 
     if gc.dsp.interrupt_active() {
@@ -301,7 +301,7 @@ pub fn refresh_interrupts(gc: &mut GameCube) {
 }
 
 #[inline(always)]
-pub fn read_dmem(gc: &mut GameCube, addr: u16) -> u16 {
+pub fn read_dmem<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, addr: u16) -> u16 {
     match addr {
         0x0000..0x1000 => read_word(&*gc.dsp.dram, addr),
         0x1000..0x2000 => read_word(&*gc.dsp.coef, addr - 0x1000),
@@ -311,7 +311,7 @@ pub fn read_dmem(gc: &mut GameCube, addr: u16) -> u16 {
 }
 
 #[inline(always)]
-pub fn write_dmem(gc: &mut GameCube, addr: u16, value: u16) {
+pub fn write_dmem<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, addr: u16, value: u16) {
     match addr {
         0x0000..0x1000 => write_word(&mut *gc.dsp.dram, addr, value),
         0xFF00..=0xFFFF => write_ifx(gc, addr, value),
@@ -320,7 +320,7 @@ pub fn write_dmem(gc: &mut GameCube, addr: u16, value: u16) {
 }
 
 #[inline(always)]
-fn read_ifx(gc: &mut GameCube, addr: u16) -> u16 {
+fn read_ifx<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, addr: u16) -> u16 {
     match addr {
         // CMBH (CPU Mailbox High): reading returns data + M bit.
         // M is only cleared when CMBL is read.
@@ -348,7 +348,7 @@ fn read_ifx(gc: &mut GameCube, addr: u16) -> u16 {
 }
 
 #[inline(always)]
-fn write_ifx(gc: &mut GameCube, addr: u16, value: u16) {
+fn write_ifx<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, addr: u16, value: u16) {
     match addr {
         // DMBH (DSP Mailbox High): store data bits (14:0), busy is preserved
         addr::IFX_DMBH => {
@@ -401,4 +401,24 @@ fn read_word(mem: &[u8], word_addr: u16) -> u16 {
 fn write_word(mem: &mut [u8], word_addr: u16, value: u16) {
     let off = word_addr as usize * 2;
     mem[off..off + 2].copy_from_slice(&value.to_be_bytes());
+}
+
+#[inline(always)]
+pub fn dispatch<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
+    if SYSTEM == GC {
+        let ctx: &mut System<{ GC }> = unsafe { ::core::mem::transmute(ctx) };
+        self::lut::dispatch(ctx, instr);
+    } else {
+        todo!()
+    }
+}
+
+#[inline(always)]
+pub fn dispatch_gc_dsp_ext<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: instruction::GcDspExt) {
+    if SYSTEM == GC {
+        let ctx: &mut System<{ GC }> = unsafe { ::core::mem::transmute(ctx) };
+        self::lut::dispatch_gc_dsp_ext(ctx, instr);
+    } else {
+        todo!()
+    }
 }

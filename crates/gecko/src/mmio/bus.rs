@@ -1,4 +1,3 @@
-use crate::gamecube::GameCube;
 #[cfg(feature = "hooks")]
 use crate::hooks::HookFlags;
 use crate::mmio::constants::{
@@ -6,6 +5,7 @@ use crate::mmio::constants::{
     HW_REG_BASE, HW_REG_END, MI_BASE, MI_END, PE_BASE, PE_END, PI_BASE, PI_END, RAM_END, SI_BASE, SI_END, VI_BASE,
     VI_END,
 };
+use crate::system::{System, SystemId};
 
 macro_rules! bus_read_hooks {
     ($self:ident, $addr:ident, $phys:ident, $size:literal, $body:expr) => {{
@@ -77,7 +77,7 @@ macro_rules! bus_write_hooks {
     }};
 }
 
-impl GameCube {
+impl<const SYSTEM: SystemId> System<SYSTEM> {
     /// Translate a virtual address to physical using DBAT registers.
     /// Falls back to simple masking if no BAT matches.
     #[inline(always)]

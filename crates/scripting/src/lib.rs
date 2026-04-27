@@ -461,7 +461,7 @@ impl std::ops::DerefMut for GameCubeRef {
     }
 }
 
-impl Host for LuaHost {
+impl Host<{ gecko::system::GC }> for LuaHost {
     fn hook_state(&self) -> HookState {
         HookState {
             flags: self.flags,

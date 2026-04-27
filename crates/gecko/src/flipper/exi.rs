@@ -3,7 +3,7 @@ pub mod macronix;
 pub mod regs;
 
 use crate::flipper::exi::regs::TransferType;
-use crate::gamecube::GameCube;
+use crate::system::{System, SystemId};
 
 pub struct ExternalInterface {
     // Channel 0
@@ -197,7 +197,7 @@ crate::mmio_device_dispatch! {
 }
 
 #[inline(always)]
-pub fn refresh_interrupts(gc: &mut GameCube) {
+pub fn refresh_interrupts<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     use crate::flipper::pi::InterruptFlag;
 
     if gc.exi.interrupt_active() {
@@ -208,7 +208,7 @@ pub fn refresh_interrupts(gc: &mut GameCube) {
 }
 
 #[inline(always)]
-pub fn on_chip_select_written<const CHANNEL: usize>(gc: &mut GameCube, new_cs: u8) {
+pub fn on_chip_select_written<const CHANNEL: usize, const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, new_cs: u8) {
     let prev = gc.exi.prev_cs[CHANNEL];
     if new_cs != prev && new_cs != 0 {
         if let Some(slot) = ExternalInterface::cs_to_slot(new_cs)
@@ -221,7 +221,7 @@ pub fn on_chip_select_written<const CHANNEL: usize>(gc: &mut GameCube, new_cs: u
 }
 
 #[inline(always)]
-pub fn run_dma<const CHANNEL: usize>(gc: &mut GameCube) {
+pub fn run_dma<const CHANNEL: usize, const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     let (cs, transfer_type, address, length) = match CHANNEL {
         0 => (
             gc.exi.ch0_csr.chip_select(),

@@ -1,4 +1,4 @@
-use crate::gamecube::GameCube;
+use crate::system::{System, SystemId};
 
 #[derive(Clone, Copy, Default)]
 pub struct HookFlags(u16);
@@ -92,7 +92,7 @@ pub struct HookState {
     pub filters: HookFilters,
 }
 
-pub trait Host {
+pub trait Host<const SYSTEM: SystemId> {
     /// Current cached hook state for the host.
     fn hook_state(&self) -> HookState;
 
@@ -114,20 +114,34 @@ pub trait Host {
     }
 
     /// Called before each CPU instruction executes.
-    fn on_cpu_pre(&mut self, emu: &mut GameCube);
+    fn on_cpu_pre(&mut self, emu: &mut System<SYSTEM>);
 
     /// Called after each CPU instruction executes.
-    fn on_cpu_post(&mut self, emu: &mut GameCube);
+    fn on_cpu_post(&mut self, emu: &mut System<SYSTEM>);
 
     /// Called before a bus read. Return Some(val) to override the read value.
-    fn on_bus_read_pre(&mut self, emu: &mut GameCube, virt_addr: u32, phys_addr: u32, size: u8) -> Option<u32>;
+    fn on_bus_read_pre(&mut self, emu: &mut System<SYSTEM>, virt_addr: u32, phys_addr: u32, size: u8) -> Option<u32>;
 
     /// Called after a bus read completes. Returns the (possibly modified) value.
-    fn on_bus_read_post(&mut self, emu: &mut GameCube, virt_addr: u32, phys_addr: u32, size: u8, value: u32) -> u32;
+    fn on_bus_read_post(
+        &mut self,
+        emu: &mut System<SYSTEM>,
+        virt_addr: u32,
+        phys_addr: u32,
+        size: u8,
+        value: u32,
+    ) -> u32;
 
     /// Called before a bus write. Returns the (possibly modified) value to write.
-    fn on_bus_write_pre(&mut self, emu: &mut GameCube, virt_addr: u32, phys_addr: u32, size: u8, value: u32) -> u32;
+    fn on_bus_write_pre(
+        &mut self,
+        emu: &mut System<SYSTEM>,
+        virt_addr: u32,
+        phys_addr: u32,
+        size: u8,
+        value: u32,
+    ) -> u32;
 
     /// Called after a bus write completes.
-    fn on_bus_write_post(&mut self, emu: &mut GameCube, virt_addr: u32, phys_addr: u32, size: u8, value: u32);
+    fn on_bus_write_post(&mut self, emu: &mut System<SYSTEM>, virt_addr: u32, phys_addr: u32, size: u8, value: u32);
 }

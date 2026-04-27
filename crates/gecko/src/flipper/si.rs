@@ -1,8 +1,8 @@
 pub mod pad;
 pub mod regs;
 
-use crate::gamecube::GameCube;
 use crate::mmio::constants::SI_BASE;
+use crate::system::{System, SystemId};
 use pad::{GC_CONTROLLER_ID, PadStatus};
 
 const NUM_CHANNELS: usize = 4;
@@ -202,7 +202,7 @@ crate::mmio_device_dispatch! {
 }
 
 #[inline(always)]
-pub fn si_read(gc: &mut GameCube, phys: u32, size: u32) -> Option<u32> {
+pub fn si_read<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, phys: u32, size: u32) -> Option<u32> {
     let offset = phys - SI_BASE;
 
     if (0x80..=0xFF).contains(&offset) {
@@ -234,7 +234,7 @@ pub fn si_read(gc: &mut GameCube, phys: u32, size: u32) -> Option<u32> {
 }
 
 #[inline(always)]
-pub fn si_write(gc: &mut GameCube, phys: u32, size: u32, val: u32) -> bool {
+pub fn si_write<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, phys: u32, size: u32, val: u32) -> bool {
     let offset = phys - SI_BASE;
 
     if (0x80..=0xFF).contains(&offset) {
@@ -272,7 +272,7 @@ pub fn si_write(gc: &mut GameCube, phys: u32, size: u32, val: u32) -> bool {
 }
 
 #[inline(always)]
-pub fn refresh_interrupts(gc: &mut GameCube) {
+pub fn refresh_interrupts<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     use crate::flipper::pi::InterruptFlag;
 
     if gc.si.interrupt_active() {
