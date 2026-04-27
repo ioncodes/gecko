@@ -1,0 +1,10 @@
+include "../../submodules/chipi-spec/gamecube/gekko.chipi"
+
+target rust {
+    decoder Gekko {
+        output "$OUT_DIR/gekko.rs"
+
+        type gpr = crate::cpu::Gpr
+        type fpr = crate::cpu::Fpr
+    }
+}

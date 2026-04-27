@@ -1,6 +1,6 @@
 use crate::dvd;
-use crate::gamecube::GameCube;
 use crate::mmio::traits::{MmioAccess, WriteMask};
+use crate::system::{System, SystemId};
 use chapa::BitEnum;
 
 // 0xCC006000  4  R/W  DISR - DI Status Register
@@ -31,12 +31,12 @@ pub struct DiStatusRegister {
 }
 crate::mmio_reg!(DiStatusRegister: u32 @ 0xCC006000);
 
-impl MmioAccess<GameCube> for DiStatusRegister {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiStatusRegister {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.di.status
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         let mut sr = gc.di.status;
 
         if self.break_complete() {
@@ -80,12 +80,12 @@ pub struct DiCoverRegister {
 }
 crate::mmio_reg!(DiCoverRegister: u32 @ 0xCC006004);
 
-impl MmioAccess<GameCube> for DiCoverRegister {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiCoverRegister {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.di.cover
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         let mut cvr = gc.di.cover;
 
         if self.cover_interrupt() {
@@ -111,12 +111,12 @@ pub struct DiCommandBuf0 {
 }
 crate::mmio_reg!(DiCommandBuf0: u32 @ 0xCC006008);
 
-impl MmioAccess<GameCube> for DiCommandBuf0 {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiCommandBuf0 {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         DiCommandBuf0::from_raw(gc.di.cmdbuf0)
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.di.cmdbuf0 = self.raw();
         let val = self.raw();
         tracing::debug!(
@@ -136,12 +136,12 @@ pub struct DiCommandBuf1 {
 }
 crate::mmio_reg!(DiCommandBuf1: u32 @ 0xCC00600C);
 
-impl MmioAccess<GameCube> for DiCommandBuf1 {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiCommandBuf1 {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         DiCommandBuf1::from_raw(gc.di.cmdbuf1)
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.di.cmdbuf1 = self.raw();
         tracing::debug!(val = format!("{:08X}", self.raw()), "DICMDBUF1 write");
     }
@@ -155,12 +155,12 @@ pub struct DiCommandBuf2 {
 }
 crate::mmio_reg!(DiCommandBuf2: u32 @ 0xCC006010);
 
-impl MmioAccess<GameCube> for DiCommandBuf2 {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiCommandBuf2 {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         DiCommandBuf2::from_raw(gc.di.cmdbuf2)
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.di.cmdbuf2 = self.raw();
         tracing::debug!(val = format!("{:08X}", self.raw()), "DICMDBUF2 write");
     }
@@ -175,7 +175,7 @@ pub struct DiDmaAddressRegister {
     pub address: u32,
 }
 crate::mmio_reg!(DiDmaAddressRegister: u32 @ 0xCC006014);
-crate::mmio_default_access!(DiDmaAddressRegister => GameCube.di.dma_address);
+crate::mmio_default_access!(DiDmaAddressRegister => System.di.dma_address);
 
 // 0xCC006018  4  R/W  DILENGTH - DI DMA Transfer Length Register
 
@@ -186,7 +186,7 @@ pub struct DiDmaLengthRegister {
     pub length: u32,
 }
 crate::mmio_reg!(DiDmaLengthRegister: u32 @ 0xCC006018);
-crate::mmio_default_access!(DiDmaLengthRegister => GameCube.di.dma_length);
+crate::mmio_default_access!(DiDmaLengthRegister => System.di.dma_length);
 
 // 0xCC00601C  4  R/W  DICR - DI Control Register
 
@@ -216,12 +216,12 @@ pub struct DiControlRegister {
 }
 crate::mmio_reg!(DiControlRegister: u32 @ 0xCC00601C);
 
-impl MmioAccess<GameCube> for DiControlRegister {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiControlRegister {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.di.control
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.di.control = self;
 
         // tstart latches a transfer: resolve the command and run it now.
@@ -245,12 +245,12 @@ pub struct DiImmBuf {
 }
 crate::mmio_reg!(DiImmBuf: u32 @ 0xCC006020);
 
-impl MmioAccess<GameCube> for DiImmBuf {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiImmBuf {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         DiImmBuf::from_raw(gc.di.immbuf)
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.di.immbuf = self.raw();
     }
 }
@@ -271,12 +271,12 @@ impl Default for DiConfigurationRegister {
     }
 }
 
-impl MmioAccess<GameCube> for DiConfigurationRegister {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiConfigurationRegister {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.di.config
     }
 
-    fn write(self, _gc: &mut GameCube, _: WriteMask) {
+    fn write(self, _gc: &mut System<SYSTEM>, _: WriteMask) {
         // Read-only
     }
 }

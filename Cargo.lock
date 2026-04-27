@@ -457,22 +457,18 @@ dependencies = [
 
 [[package]]
 name = "chipi-build"
-version = "0.8.2"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2676885c88403477d9053fc020668dd50d352bd05c8ff4668a276f79655c3550"
+checksum = "bc93ee723a2e1024de5fdcb59d2dfac6e06edf9a9ad7a3941920d5d9296b8fdc"
 dependencies = [
  "chipi-core",
 ]
 
 [[package]]
 name = "chipi-core"
-version = "0.8.2"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c00155ee6a20d40473b212f6b33d20d14525b47df5f5628e609b05c78272833"
-dependencies = [
- "serde",
- "toml",
-]
+checksum = "7c334634fcf9d942efa6f676b81d3dbf14c0bcf94fede78738d02a09eb3cc30a"
 
 [[package]]
 name = "clap"
@@ -3099,15 +3095,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde_spanned"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "876ac351060d4f882bb1032b6369eb0aef79ad9df1ea8bc404874d8cc3d0cd98"
-dependencies = [
- "serde_core",
-]
-
-[[package]]
 name = "sha3"
 version = "0.10.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3502,21 +3489,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "toml"
-version = "1.1.0+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8195ca05e4eb728f4ba94f3e3291661320af739c4e43779cbdfae82ab239fcc"
-dependencies = [
- "indexmap",
- "serde_core",
- "serde_spanned",
- "toml_datetime",
- "toml_parser",
- "toml_writer",
- "winnow",
-]
-
-[[package]]
 name = "toml_datetime"
 version = "1.1.0+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3545,12 +3517,6 @@ checksum = "2334f11ee363607eb04df9b8fc8a13ca1715a72ba8662a26ac285c98aabb4011"
 dependencies = [
  "winnow",
 ]
-
-[[package]]
-name = "toml_writer"
-version = "1.1.0+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d282ade6016312faf3e41e57ebbba0c073e4056dab1232ab1cb624199648f8ed"
 
 [[package]]
 name = "tracing"

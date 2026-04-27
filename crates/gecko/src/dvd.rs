@@ -1,6 +1,6 @@
 pub mod regs;
 
-use crate::gamecube::GameCube;
+use crate::system::{System, SystemId};
 
 pub enum Command {
     DriveInfo,
@@ -93,7 +93,7 @@ crate::mmio_device_dispatch! {
 }
 
 #[inline(always)]
-pub fn refresh_interrupts(gc: &mut GameCube) {
+pub fn refresh_interrupts<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     use crate::flipper::pi::InterruptFlag;
 
     if gc.di.interrupt_active() {
@@ -103,7 +103,7 @@ pub fn refresh_interrupts(gc: &mut GameCube) {
     }
 }
 
-pub fn start_transfer(gc: &mut GameCube) {
+pub fn start_transfer<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     let Some(dvd) = gc.di.dvd.take() else {
         // TODO: Setting this causes unrecoverable error when there is no DVD
         //gc.di.status.set_device_error(true);
@@ -138,7 +138,7 @@ pub fn start_transfer(gc: &mut GameCube) {
 }
 
 #[inline(always)]
-fn process_dvd_command(gc: &mut GameCube, cmd: Command, dvd: &dyn image::Dvd) {
+fn process_dvd_command<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, cmd: Command, dvd: &dyn image::Dvd) {
     match cmd {
         Command::DriveInfo => {
             let dst = gc.di.dma_address.address();
@@ -183,7 +183,7 @@ fn process_dvd_command(gc: &mut GameCube, cmd: Command, dvd: &dyn image::Dvd) {
     }
 }
 
-impl GameCube {
+impl<const SYSTEM: SystemId> System<SYSTEM> {
     pub fn insert_dvd(&mut self, dvd: Box<dyn image::Dvd>) {
         let name = String::from_utf8_lossy(&dvd.header().game_name);
         let name = name.trim_end_matches('\0');

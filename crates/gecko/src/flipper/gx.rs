@@ -13,11 +13,11 @@ mod xf;
 use crate::flipper::gx::constants::{BP_REG_SIZE, CP_REG_SIZE, TLUT_MEM_ENTRIES, XF_MEM_SIZE};
 use crate::flipper::gx::draw::Matrix4;
 use crate::flipper::gx::regs::{AlphaCompare, BlendMode, TevAlphaEnv, TevColorEnv, TevRegisterH, TevRegisterL, ZMode};
-use crate::gamecube::GameCube;
 #[cfg(feature = "efb-writeback")]
 use crate::host::EfbWriteback;
 use crate::host::{GxAction, RenderSink, XfbPart};
 use crate::mmio::Mmio;
+use crate::system::{System, SystemId};
 use fifo::FifoCmd;
 use rustc_hash::FxHashMap;
 
@@ -182,7 +182,7 @@ impl GraphicsProcessor {
     }
 }
 
-pub fn present_xfb(gc: &mut GameCube) {
+pub fn present_xfb<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     if gc.gx.xfb_copies.is_empty() {
         return;
     }
@@ -253,7 +253,7 @@ pub fn present_xfb(gc: &mut GameCube) {
     gc.gx.xfb_copies.clear();
 }
 
-impl GameCube {
+impl<const SYSTEM: SystemId> System<SYSTEM> {
     /// Check if the GX stub detected a finish or token command and signal PE
     pub fn check_gx_pe_interrupts(&mut self) {
         if self.gx.raise_interrupt {

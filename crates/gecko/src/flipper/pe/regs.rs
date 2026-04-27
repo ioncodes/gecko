@@ -1,6 +1,6 @@
 use crate::flipper::pe;
-use crate::gamecube::GameCube;
 use crate::mmio::traits::{MmioAccess, WriteMask};
+use crate::system::{System, SystemId};
 
 // 0xCC001000	2	R/W	Z Configuration
 
@@ -8,7 +8,7 @@ use crate::mmio::traits::{MmioAccess, WriteMask};
 #[derive(Copy, Clone, Debug)]
 pub struct ZConfig {}
 crate::mmio_reg!(ZConfig: u16 @ 0xCC001000);
-crate::mmio_default_access!(ZConfig => GameCube.pe.zconf);
+crate::mmio_default_access!(ZConfig => System.pe.zconf);
 
 // 0xCC001002	2	R/W	Alpha Configuration
 
@@ -16,7 +16,7 @@ crate::mmio_default_access!(ZConfig => GameCube.pe.zconf);
 #[derive(Copy, Clone, Debug)]
 pub struct AlphaConfig {}
 crate::mmio_reg!(AlphaConfig: u16 @ 0xCC001002);
-crate::mmio_default_access!(AlphaConfig => GameCube.pe.alphaconf);
+crate::mmio_default_access!(AlphaConfig => System.pe.alphaconf);
 
 // 0xCC001004	2	R/W	Destination Alpha
 
@@ -24,7 +24,7 @@ crate::mmio_default_access!(AlphaConfig => GameCube.pe.alphaconf);
 #[derive(Copy, Clone, Debug)]
 pub struct DstAlphaConfig {}
 crate::mmio_reg!(DstAlphaConfig: u16 @ 0xCC001004);
-crate::mmio_default_access!(DstAlphaConfig => GameCube.pe.dst_alphaconf);
+crate::mmio_default_access!(DstAlphaConfig => System.pe.dst_alphaconf);
 
 // 0xCC001006	2	R/W	Alpha Compare Mode
 
@@ -32,7 +32,7 @@ crate::mmio_default_access!(DstAlphaConfig => GameCube.pe.dst_alphaconf);
 #[derive(Copy, Clone, Debug)]
 pub struct AlphaMode {}
 crate::mmio_reg!(AlphaMode: u16 @ 0xCC001006);
-crate::mmio_default_access!(AlphaMode => GameCube.pe.alphamode);
+crate::mmio_default_access!(AlphaMode => System.pe.alphamode);
 
 // 0xCC001008	2	R/W	Alpha Read Mode
 
@@ -40,7 +40,7 @@ crate::mmio_default_access!(AlphaMode => GameCube.pe.alphamode);
 #[derive(Copy, Clone, Debug)]
 pub struct AlphaRead {}
 crate::mmio_reg!(AlphaRead: u16 @ 0xCC001008);
-crate::mmio_default_access!(AlphaRead => GameCube.pe.alpharead);
+crate::mmio_default_access!(AlphaRead => System.pe.alpharead);
 
 // 0xCC00100A	2	R/W	Interrupt Status
 
@@ -61,13 +61,13 @@ pub struct InterruptStatus {
 }
 crate::mmio_reg!(InterruptStatus: u16 @ 0xCC00100A);
 
-impl MmioAccess<GameCube> for InterruptStatus {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for InterruptStatus {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         // Status bits (token/finish) always read back as zero.
         gc.pe.sr.with_pe_token(false).with_pe_finish(false)
     }
 
-    fn write(self, gc: &mut GameCube, mask: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, mask: WriteMask) {
         if !mask.byte(1) {
             return;
         }
@@ -93,4 +93,4 @@ impl MmioAccess<GameCube> for InterruptStatus {
 #[derive(Copy, Clone, Debug)]
 pub struct Token {}
 crate::mmio_reg!(Token: u16 @ 0xCC00100E);
-crate::mmio_default_access!(Token => GameCube.pe.token);
+crate::mmio_default_access!(Token => System.pe.token);

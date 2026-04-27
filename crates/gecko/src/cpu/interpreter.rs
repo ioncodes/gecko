@@ -19,3 +19,9 @@ pub use psq::store_load_psq;
 pub use rotate::rotate;
 pub use store_load::{eciwx, ecowx, lswi, lswx, lwarx, store_load, store_load_fp, stswi, stswx, stwcx_dot};
 pub use system::{mfsrin, mftb, msr, mtsrin, nop, sc, segment, spr, tw, twi};
+
+#[cold]
+#[inline(never)]
+pub fn invalid(_ctx: &mut crate::gamecube::GameCube, instr: crate::cpu::instruction::Instruction) {
+    panic!("unimplemented Gekko opcode {:#010x}", instr.0);
+}

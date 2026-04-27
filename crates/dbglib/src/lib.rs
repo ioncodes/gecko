@@ -6,11 +6,14 @@ use std::io::Write;
 
 use gecko::gamecube::GameCube;
 use gecko::scheduler::{CPU_CYCLES_PER_DSP_TICK, DSP_BATCH_SIZE, ScheduledFn, dsp_batch_handler};
+use gecko::system::GC;
+
+type GameCubeScheduledFn = ScheduledFn<{ GC }>;
 
 /// Identify the DSP batch handler so the debugger can intercept it for per-instruction tracing.
 #[inline(always)]
-fn is_dsp_batch(f: ScheduledFn) -> bool {
-    (f as usize) == (dsp_batch_handler as ScheduledFn as usize)
+fn is_dsp_batch(f: GameCubeScheduledFn) -> bool {
+    (f as usize) == (dsp_batch_handler as GameCubeScheduledFn as usize)
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

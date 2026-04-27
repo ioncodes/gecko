@@ -1,6 +1,6 @@
 use crate::cpu::spr::Srr0;
-use crate::gamecube::GameCube;
 use crate::mmio::Mmio;
+use crate::system::{System, SystemId};
 
 // Exception vectors
 #[rustfmt::skip] pub const IRQ_SYSTEM_RESET: u32         = Mmio::virt_to_phys(0x8000_0100);
@@ -18,7 +18,7 @@ use crate::mmio::Mmio;
 #[rustfmt::skip] pub const IRQ_IABR: u32                 = Mmio::virt_to_phys(0x8000_1300);
 #[rustfmt::skip] pub const IRQ_THERMAL: u32              = Mmio::virt_to_phys(0x8000_1400);
 
-impl GameCube {
+impl<const SYSTEM: SystemId> System<SYSTEM> {
     pub fn cause_external_interrupt(&mut self) {
         let base: u32 = if self.cpu.msr.exception_prefix() {
             0xFFF0_0000

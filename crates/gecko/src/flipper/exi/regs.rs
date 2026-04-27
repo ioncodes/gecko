@@ -1,8 +1,8 @@
 use chapa::BitEnum;
 
 use crate::flipper::exi;
-use crate::gamecube::GameCube;
 use crate::mmio::traits::{MmioAccess, MmioRegister, WriteMask};
+use crate::system::{System, SystemId};
 
 pub trait ChannelStatus {
     fn exi_interrupt(&self) -> bool;
@@ -90,13 +90,13 @@ pub struct Channel0Status {
 }
 crate::mmio_reg!(Channel0Status: u32 @ 0xCC006800);
 
-impl MmioAccess<GameCube> for Channel0Status {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel0Status {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.exi.ch0_csr
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         write_csr(&mut gc.exi.ch0_csr, self);
-        exi::on_chip_select_written::<0>(gc, self.chip_select());
+        exi::on_chip_select_written::<0, SYSTEM>(gc, self.chip_select());
         exi::refresh_interrupts(gc);
     }
 }
@@ -110,7 +110,7 @@ pub struct Channel0DmaAddress {
     pub address: u32,
 }
 crate::mmio_reg!(Channel0DmaAddress: u32 @ 0xCC006804);
-crate::mmio_default_access!(Channel0DmaAddress => GameCube.exi.ch0_mar);
+crate::mmio_default_access!(Channel0DmaAddress => System.exi.ch0_mar);
 
 // 0xCC006808	4	R/W	EXI0LENGTH - EXI Channel 0 DMA Transfer Length
 
@@ -121,7 +121,7 @@ pub struct Channel0DmaLength {
     pub length: u32,
 }
 crate::mmio_reg!(Channel0DmaLength: u32 @ 0xCC006808);
-crate::mmio_default_access!(Channel0DmaLength => GameCube.exi.ch0_length);
+crate::mmio_default_access!(Channel0DmaLength => System.exi.ch0_length);
 
 // 0xCC00680C	4	R/W	EXI0CR - EXI Channel 0 Control Register
 
@@ -139,16 +139,16 @@ pub struct Channel0Control {
 }
 crate::mmio_reg!(Channel0Control: u32 @ 0xCC00680C);
 
-impl MmioAccess<GameCube> for Channel0Control {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel0Control {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.exi.ch0_cr
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         let was_started = gc.exi.ch0_cr.transfer_start();
         gc.exi.ch0_cr = self;
         if self.transfer_start() && !was_started {
             if self.dma_mode() {
-                exi::run_dma::<0>(gc);
+                exi::run_dma::<0, SYSTEM>(gc);
             } else {
                 gc.exi.start_immediate_transfer::<0>();
             }
@@ -163,7 +163,7 @@ impl MmioAccess<GameCube> for Channel0Control {
 #[derive(Copy, Clone, Debug)]
 pub struct Channel0Data {}
 crate::mmio_reg!(Channel0Data: u32 @ 0xCC006810);
-crate::mmio_default_access!(Channel0Data => GameCube.exi.ch0_data);
+crate::mmio_default_access!(Channel0Data => System.exi.ch0_data);
 
 // --- Channel 1 ---
 
@@ -193,13 +193,13 @@ pub struct Channel1Status {
 }
 crate::mmio_reg!(Channel1Status: u32 @ 0xCC006814);
 
-impl MmioAccess<GameCube> for Channel1Status {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel1Status {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.exi.ch1_csr
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         write_csr(&mut gc.exi.ch1_csr, self);
-        exi::on_chip_select_written::<1>(gc, self.chip_select());
+        exi::on_chip_select_written::<1, SYSTEM>(gc, self.chip_select());
         exi::refresh_interrupts(gc);
     }
 }
@@ -213,7 +213,7 @@ pub struct Channel1DmaAddress {
     pub address: u32,
 }
 crate::mmio_reg!(Channel1DmaAddress: u32 @ 0xCC006818);
-crate::mmio_default_access!(Channel1DmaAddress => GameCube.exi.ch1_mar);
+crate::mmio_default_access!(Channel1DmaAddress => System.exi.ch1_mar);
 
 // 0xCC00681C	4	R/W	EXI1LENGTH - EXI Channel 1 DMA Transfer Length
 
@@ -224,7 +224,7 @@ pub struct Channel1DmaLength {
     pub length: u32,
 }
 crate::mmio_reg!(Channel1DmaLength: u32 @ 0xCC00681C);
-crate::mmio_default_access!(Channel1DmaLength => GameCube.exi.ch1_length);
+crate::mmio_default_access!(Channel1DmaLength => System.exi.ch1_length);
 
 // 0xCC006820	4	R/W	EXI1CR - EXI Channel 1 Control Register
 
@@ -242,16 +242,16 @@ pub struct Channel1Control {
 }
 crate::mmio_reg!(Channel1Control: u32 @ 0xCC006820);
 
-impl MmioAccess<GameCube> for Channel1Control {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel1Control {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.exi.ch1_cr
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         let was_started = gc.exi.ch1_cr.transfer_start();
         gc.exi.ch1_cr = self;
         if self.transfer_start() && !was_started {
             if self.dma_mode() {
-                exi::run_dma::<1>(gc);
+                exi::run_dma::<1, SYSTEM>(gc);
             } else {
                 gc.exi.start_immediate_transfer::<1>();
             }
@@ -266,7 +266,7 @@ impl MmioAccess<GameCube> for Channel1Control {
 #[derive(Copy, Clone, Debug)]
 pub struct Channel1Data {}
 crate::mmio_reg!(Channel1Data: u32 @ 0xCC006824);
-crate::mmio_default_access!(Channel1Data => GameCube.exi.ch1_data);
+crate::mmio_default_access!(Channel1Data => System.exi.ch1_data);
 
 // --- Channel 2 ---
 
@@ -296,13 +296,13 @@ pub struct Channel2Status {
 }
 crate::mmio_reg!(Channel2Status: u32 @ 0xCC006828);
 
-impl MmioAccess<GameCube> for Channel2Status {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel2Status {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.exi.ch2_csr
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         write_csr(&mut gc.exi.ch2_csr, self);
-        exi::on_chip_select_written::<2>(gc, self.chip_select());
+        exi::on_chip_select_written::<2, SYSTEM>(gc, self.chip_select());
         exi::refresh_interrupts(gc);
     }
 }
@@ -318,7 +318,7 @@ pub struct Channel2DmaAddress {
     pub address: u32,
 }
 crate::mmio_reg!(Channel2DmaAddress: u32 @ 0xCC00682C);
-crate::mmio_default_access!(Channel2DmaAddress => GameCube.exi.ch2_mar);
+crate::mmio_default_access!(Channel2DmaAddress => System.exi.ch2_mar);
 
 // 0xCC006830	4	R/W	EXI2LENGTH - EXI Channel 2 DMA Transfer Length
 
@@ -329,7 +329,7 @@ pub struct Channel2DmaLength {
     pub length: u32,
 }
 crate::mmio_reg!(Channel2DmaLength: u32 @ 0xCC006830);
-crate::mmio_default_access!(Channel2DmaLength => GameCube.exi.ch2_length);
+crate::mmio_default_access!(Channel2DmaLength => System.exi.ch2_length);
 
 // 0xCC006834	4	R/W	EXI2CR - EXI Channel 2 Control Register
 
@@ -347,16 +347,16 @@ pub struct Channel2Control {
 }
 crate::mmio_reg!(Channel2Control: u32 @ 0xCC006834);
 
-impl MmioAccess<GameCube> for Channel2Control {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel2Control {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.exi.ch2_cr
     }
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         let was_started = gc.exi.ch2_cr.transfer_start();
         gc.exi.ch2_cr = self;
         if self.transfer_start() && !was_started {
             if self.dma_mode() {
-                exi::run_dma::<2>(gc);
+                exi::run_dma::<2, SYSTEM>(gc);
             } else {
                 gc.exi.start_immediate_transfer::<2>();
             }
@@ -371,4 +371,4 @@ impl MmioAccess<GameCube> for Channel2Control {
 #[derive(Copy, Clone, Debug)]
 pub struct Channel2Data {}
 crate::mmio_reg!(Channel2Data: u32 @ 0xCC006838);
-crate::mmio_default_access!(Channel2Data => GameCube.exi.ch2_data);
+crate::mmio_default_access!(Channel2Data => System.exi.ch2_data);

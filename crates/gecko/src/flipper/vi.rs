@@ -1,6 +1,6 @@
 pub mod regs;
 
-use crate::gamecube::GameCube;
+use crate::system::{System, SystemId};
 
 const CPU_CORE_CLOCK: u64 = 486_000_000;
 const CLOCK_FREQUENCIES: [u64; 2] = [27_000_000, 54_000_000];
@@ -265,7 +265,7 @@ crate::mmio_device_dispatch! {
 }
 
 #[inline(always)]
-pub fn ensure_half_line_scheduled(gc: &mut GameCube) {
+pub fn ensure_half_line_scheduled<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     if !gc.vi.half_line_scheduled {
         let ticks_per_hl = gc.vi.ticks_per_half_line();
         if ticks_per_hl > 0 {
@@ -291,7 +291,7 @@ pub fn ensure_half_line_scheduled(gc: &mut GameCube) {
 }
 
 #[inline(always)]
-pub fn refresh_interrupts(gc: &mut GameCube) {
+pub fn refresh_interrupts<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     use crate::flipper::pi::InterruptFlag;
 
     if gc.vi.vi_interrupt_active() {
@@ -301,7 +301,7 @@ pub fn refresh_interrupts(gc: &mut GameCube) {
     }
 }
 
-impl GameCube {
+impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[rustfmt::skip]
     pub fn render_xfb(&self) -> Vec<u32> {
         let video_format = self.vi.dcr.video_format();

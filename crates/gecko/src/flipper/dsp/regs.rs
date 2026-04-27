@@ -1,6 +1,6 @@
 use crate::flipper::{ai, dsp};
-use crate::gamecube::GameCube;
 use crate::mmio::traits::{MmioAccess, WriteMask};
+use crate::system::{System, SystemId};
 use chapa::BitEnum;
 
 // 0xCC00500A 2 [R/W] CSR - DSP Control/Status Register
@@ -64,12 +64,12 @@ impl Default for ControlStatus {
     }
 }
 
-impl MmioAccess<GameCube> for ControlStatus {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for ControlStatus {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.dsp.csr
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         tracing::trace!("CSR write: {:016b} (prev: {:016b})", self.raw(), gc.dsp.csr.raw());
 
         let mut csr = gc.dsp.csr;
@@ -133,12 +133,12 @@ pub struct MailboxToDspHi {
 }
 crate::mmio_reg!(MailboxToDspHi: u16 @ 0xCC005000);
 
-impl MmioAccess<GameCube> for MailboxToDspHi {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for MailboxToDspHi {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.dsp.mailbox_to_dsp_hi
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         // CPU writing CMBH sets data bits (14:0), busy is preserved
         gc.dsp.mailbox_to_dsp_hi = self.with_busy(gc.dsp.mailbox_to_dsp_hi.busy());
     }
@@ -152,12 +152,12 @@ impl MmioAccess<GameCube> for MailboxToDspHi {
 pub struct MailboxToDspLo {}
 crate::mmio_reg!(MailboxToDspLo: u16 @ 0xCC005002);
 
-impl MmioAccess<GameCube> for MailboxToDspLo {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for MailboxToDspLo {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.dsp.mailbox_to_dsp_lo
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.dsp.mailbox_to_dsp_lo = self;
         gc.dsp.mailbox_to_dsp_hi = gc.dsp.mailbox_to_dsp_hi.with_busy(true);
         tracing::debug!(
@@ -181,12 +181,12 @@ pub struct MailboxToCpuHi {
 }
 crate::mmio_reg!(MailboxToCpuHi: u16 @ 0xCC005004);
 
-impl MmioAccess<GameCube> for MailboxToCpuHi {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for MailboxToCpuHi {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.dsp.mailbox_to_cpu_hi
     }
 
-    fn write(self, _gc: &mut GameCube, _: WriteMask) {
+    fn write(self, _gc: &mut System<SYSTEM>, _: WriteMask) {
         // Read-only from CPU side
     }
 }
@@ -199,15 +199,15 @@ impl MmioAccess<GameCube> for MailboxToCpuHi {
 pub struct MailboxToCpuLo {}
 crate::mmio_reg!(MailboxToCpuLo: u16 @ 0xCC005006);
 
-impl MmioAccess<GameCube> for MailboxToCpuLo {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for MailboxToCpuLo {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         let val = gc.dsp.mailbox_to_cpu_lo;
         // Reading DMBL clears DMBH.M (bit 15), signaling the CPU has consumed the mail
         gc.dsp.mailbox_to_cpu_hi.set_busy(false);
         val
     }
 
-    fn write(self, _gc: &mut GameCube, _: WriteMask) {
+    fn write(self, _gc: &mut System<SYSTEM>, _: WriteMask) {
         // Read-only from CPU side
     }
 }
@@ -218,7 +218,7 @@ impl MmioAccess<GameCube> for MailboxToCpuLo {
 #[derive(Copy, Clone, Debug)]
 pub struct AramInfo {}
 crate::mmio_reg!(AramInfo: u16 @ 0xCC005012);
-crate::mmio_default_access!(AramInfo => GameCube.dsp.aram_info);
+crate::mmio_default_access!(AramInfo => System.dsp.aram_info);
 
 // 0xCC005016 2 [R/W] AR_MODE - ARAM Mode
 
@@ -230,12 +230,12 @@ pub struct AramMode {
 }
 crate::mmio_reg!(AramMode: u16 @ 0xCC005016);
 
-impl MmioAccess<GameCube> for AramMode {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AramMode {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.dsp.aram_mode.with_status(true)
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.dsp.aram_mode = self;
     }
 }
@@ -246,7 +246,7 @@ impl MmioAccess<GameCube> for AramMode {
 #[derive(Copy, Clone, Debug)]
 pub struct AramRefresh {}
 crate::mmio_reg!(AramRefresh: u16 @ 0xCC00501A);
-crate::mmio_default_access!(AramRefresh => GameCube.dsp.aram_refresh);
+crate::mmio_default_access!(AramRefresh => System.dsp.aram_refresh);
 
 // 0xCC005020 4 [R/W] ARAM DMA MMIO Address
 
@@ -254,7 +254,7 @@ crate::mmio_default_access!(AramRefresh => GameCube.dsp.aram_refresh);
 #[derive(Copy, Clone, Debug)]
 pub struct AramDmaMmioAddr {}
 crate::mmio_reg!(AramDmaMmioAddr: u32 @ 0xCC005020);
-crate::mmio_default_access!(AramDmaMmioAddr => GameCube.dsp.aram_dma_mmio_addr);
+crate::mmio_default_access!(AramDmaMmioAddr => System.dsp.aram_dma_mmio_addr);
 
 // 0xCC005024 4 [R/W] ARAM DMA ARAM Address
 
@@ -262,7 +262,7 @@ crate::mmio_default_access!(AramDmaMmioAddr => GameCube.dsp.aram_dma_mmio_addr);
 #[derive(Copy, Clone, Debug)]
 pub struct AramDmaAramAddr {}
 crate::mmio_reg!(AramDmaAramAddr: u32 @ 0xCC005024);
-crate::mmio_default_access!(AramDmaAramAddr => GameCube.dsp.aram_dma_aram_addr);
+crate::mmio_default_access!(AramDmaAramAddr => System.dsp.aram_dma_aram_addr);
 
 // 0xCC005030 4 [W] Audio DMA Start Address (High + Low)
 
@@ -270,7 +270,7 @@ crate::mmio_default_access!(AramDmaAramAddr => GameCube.dsp.aram_dma_aram_addr);
 #[derive(Copy, Clone, Debug)]
 pub struct AudioDmaStartAddr {}
 crate::mmio_reg!(AudioDmaStartAddr: u32 @ 0xCC005030);
-crate::mmio_default_access!(AudioDmaStartAddr => GameCube.dsp.audio_dma_start_addr);
+crate::mmio_default_access!(AudioDmaStartAddr => System.dsp.audio_dma_start_addr);
 
 // 0xCC005036 2 [W] Audio DMA Control/Length
 
@@ -285,12 +285,12 @@ pub struct AudioDmaControl {
 }
 crate::mmio_reg!(AudioDmaControl: u16 @ 0xCC005036);
 
-impl MmioAccess<GameCube> for AudioDmaControl {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AudioDmaControl {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.dsp.audio_dma_control
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         let was_playing = gc.dsp.audio_dma_control.play();
         gc.dsp.audio_dma_control = self;
         match (was_playing, self.play()) {
@@ -321,12 +321,12 @@ pub struct AramDmaControl {
 }
 crate::mmio_reg!(AramDmaControl: u32 @ 0xCC005028);
 
-impl MmioAccess<GameCube> for AramDmaControl {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AramDmaControl {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.dsp.aram_dma_control
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         gc.dsp.aram_dma_control = self;
 
         const ARAM_DMA_DELAY: u64 = 10_000;

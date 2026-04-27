@@ -52,7 +52,7 @@ impl DspTestHarness {
 }
 
 #[rustfmt::skip]
-impl Host for DspTestHarness {
+impl Host<{ gecko::system::GC }> for DspTestHarness {
     fn hook_state(&self) -> HookState { self.hook_state.clone() }
 
     fn on_cpu_pre(&mut self, _emu: &mut GameCube) {}

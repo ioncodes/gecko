@@ -1,7 +1,7 @@
 pub mod regs;
 
 use crate::flipper::pi::InterruptFlag;
-use crate::gamecube::GameCube;
+use crate::system::{System, SystemId};
 
 pub struct PixelEngine {
     pub zconf: regs::ZConfig,
@@ -65,7 +65,7 @@ crate::mmio_device_dispatch! {
 }
 
 #[inline(always)]
-pub fn refresh_interrupts(gc: &mut GameCube) {
+pub fn refresh_interrupts<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     if gc.pe.token_interrupt_active() {
         gc.pi.assert_interrupt(InterruptFlag::PeToken);
     } else {

@@ -1,6 +1,6 @@
 pub mod regs;
 
-use crate::gamecube::GameCube;
+use crate::system::{System, SystemId};
 
 pub struct CommandProcessor {
     pub status: regs::CpStatus,
@@ -76,7 +76,7 @@ crate::mmio_device_dispatch! {
 }
 
 #[inline(always)]
-pub fn refresh_interrupts(gc: &mut GameCube) {
+pub fn refresh_interrupts<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     use crate::flipper::pi::InterruptFlag;
 
     if gc.cp.interrupt_active() {

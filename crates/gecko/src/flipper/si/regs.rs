@@ -1,6 +1,6 @@
 use crate::flipper::si;
-use crate::gamecube::GameCube;
 use crate::mmio::traits::{MmioAccess, WriteMask};
+use crate::system::{System, SystemId};
 use chapa::BitEnum;
 
 // 0xCC006430  4  R/W  SIPOLL (SI Poll Register)
@@ -21,7 +21,7 @@ pub struct SiPoll {
     pub x_lines: u16,
 }
 crate::mmio_reg!(SiPoll: u32 @ 0xCC006430);
-crate::mmio_default_access!(SiPoll => GameCube.si.poll);
+crate::mmio_default_access!(SiPoll => System.si.poll);
 
 // 0xCC006434  4  R/W  SICOMCSR (SI Communication Control Status Register)
 
@@ -77,12 +77,12 @@ pub struct SiComcsr {
 }
 crate::mmio_reg!(SiComcsr: u32 @ 0xCC006434);
 
-impl MmioAccess<GameCube> for SiComcsr {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for SiComcsr {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.si.comcsr
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         let mut csr = gc.si.comcsr;
 
         if self.tc_interrupt() {
@@ -180,12 +180,12 @@ pub struct SiStatusRegister {
 }
 crate::mmio_reg!(SiStatusRegister: u32 @ 0xCC006438);
 
-impl MmioAccess<GameCube> for SiStatusRegister {
-    fn read(gc: &mut GameCube) -> Self {
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for SiStatusRegister {
+    fn read(gc: &mut System<SYSTEM>) -> Self {
         gc.si.status
     }
 
-    fn write(self, gc: &mut GameCube, _: WriteMask) {
+    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
         let mut status = gc.si.status;
 
         if self.norep0() {
