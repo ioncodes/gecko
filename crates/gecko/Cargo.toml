@@ -14,7 +14,7 @@ hooks-mut-traps = ["hooks"]
 efb-writeback = ["dep:crossbeam-channel"]
 
 [build-dependencies]
-chipi-build = "0.8.2"
+chipi-build = "0.9.0"
 
 [dependencies]
 chapa = "0.1.2"

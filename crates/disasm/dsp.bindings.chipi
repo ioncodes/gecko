@@ -1,0 +1,7 @@
+include "../../submodules/chipi-spec/gamecube/dsp.chipi"
+
+target rust {
+    decoder GcDsp {
+        output "$OUT_DIR/dsp.rs"
+    }
+}

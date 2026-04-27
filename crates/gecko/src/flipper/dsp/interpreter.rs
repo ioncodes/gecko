@@ -2,8 +2,20 @@ use crate::flipper::dsp;
 use crate::flipper::dsp::condition::BranchControl;
 use crate::flipper::dsp::core::regs::{SignExtensionMode, StatusRegister};
 use crate::flipper::dsp::core::{Registers, reg};
-use crate::flipper::dsp::instruction::Instruction;
+use crate::flipper::dsp::instruction::{GcDspExt, Instruction};
 use crate::flipper::dsp::lut::*;
+
+#[cold]
+#[inline(never)]
+pub fn invalid(_ctx: &mut crate::gamecube::GameCube, instr: Instruction) {
+    panic!("unimplemented DSP opcode {:#06x}", instr.0);
+}
+
+#[cold]
+#[inline(never)]
+pub fn invalid_ext(_ctx: &mut crate::gamecube::GameCube, instr: GcDspExt) {
+    panic!("unimplemented DSP ext opcode {:#04x}", instr.0);
+}
 
 #[inline(always)]
 fn multiply(regs: &mut Registers, a: i16, b: i16) {
@@ -1084,8 +1096,6 @@ pub fn status<const OP: u32>(ctx: &mut crate::gamecube::GameCube, instr: Instruc
 }
 
 // Extension opcode handlers
-use dsp::instruction::GcDspExt;
-
 #[inline(always)]
 pub fn ext_nop(_ctx: &mut crate::gamecube::GameCube, _instr: GcDspExt) {}
 
