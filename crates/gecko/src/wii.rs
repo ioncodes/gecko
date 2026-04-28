@@ -19,6 +19,16 @@ const OSREPORT_STUB: u32 = 0x8130_0000;
 /// PPC `blr` instruction.
 const PPC_BLR: u32 = 0x4E80_0020;
 
+/// PPC `rfi` instruction. Installed at the syscall exception vector so the
+/// apploader's `sc` instructions return to caller without trapping.
+/// TODO: We have to fix this eventually.
+const PPC_RFI: u32 = 0x4C00_0064;
+
+/// Sentinel address loaded into LR before each apploader function call.
+/// `run_until` stops as soon as PC reaches this address (set by the function's
+/// final `blr`); nothing is ever fetched from here.
+const APPLOADER_RETURN_TRAP: u32 = 0x6900_0000;
+
 impl Wii {
     pub fn new(entrypoint: u32) -> Self {
         Self::with_scheduler(entrypoint, Scheduler::new_wii())
@@ -56,6 +66,11 @@ impl Wii {
         }
 
         emu.mmio.virt_write_u32(OSREPORT_STUB, PPC_BLR);
+
+        // Catch exceptions and return to caller.
+        emu.mmio.virt_write_u32(0x8000_0300, PPC_RFI);
+        emu.mmio.virt_write_u32(0x8000_0800, PPC_RFI);
+        emu.mmio.virt_write_u32(0x8000_0C00, PPC_RFI);
 
         emu.gekko.gprs[1] = APPLOADER_STACK;
 
@@ -181,18 +196,9 @@ impl Wii {
     }
 
     fn run_apploader(emu: &mut Wii, dvd: &dyn image::Dvd, apploader_entry: u32) {
-        let blr_predicate = |sys: &Wii| {
-            use disasm::gekko::GekkoInstruction;
-            let buffer = sys.mmio.virt_slice(sys.gekko.pc, 4);
-            let (instr, _) = GekkoInstruction::decode(buffer).unwrap();
-            matches!(
-                instr,
-                GekkoInstruction::Bclrx {
-                    bo: 20,
-                    bi: 0,
-                    lk: false
-                }
-            )
+        let call_function = |emu: &mut Wii, entry: u32| {
+            emu.gekko.spr.lr = APPLOADER_RETURN_TRAP;
+            emu.run_until(entry, |sys| sys.gekko.pc == APPLOADER_RETURN_TRAP);
         };
 
         // void __fastcall Apploader_Entry(void **init_func, void **main_func, void **final_func)
@@ -207,7 +213,7 @@ impl Wii {
         emu.gekko.gprs[3] = APPLOADER_ARG_BASE;
         emu.gekko.gprs[4] = APPLOADER_ARG_BASE + 4;
         emu.gekko.gprs[5] = APPLOADER_ARG_BASE + 8;
-        emu.run_until(apploader_entry, blr_predicate);
+        call_function(emu, apploader_entry);
 
         let init_ptr = emu.read_u32(APPLOADER_ARG_BASE);
         let main_ptr = emu.read_u32(APPLOADER_ARG_BASE + 4);
@@ -245,7 +251,7 @@ impl Wii {
         //   return result;
         // }
         emu.gekko.gprs[3] = OSREPORT_STUB;
-        emu.run_until(init_ptr, blr_predicate);
+        call_function(emu, init_ptr);
         tracing::info!("Apploader_Init() returned");
 
         // Apploader_Main() loads text, data, set up OS globals, etc.
@@ -254,7 +260,7 @@ impl Wii {
             emu.gekko.gprs[3] = APPLOADER_ARG_BASE;
             emu.gekko.gprs[4] = APPLOADER_ARG_BASE + 4;
             emu.gekko.gprs[5] = APPLOADER_ARG_BASE + 8;
-            emu.run_until(main_ptr, blr_predicate);
+            call_function(emu, main_ptr);
 
             if emu.gekko.gprs[3] == 0 {
                 break;
@@ -263,7 +269,7 @@ impl Wii {
             let addr = emu.read_u32(APPLOADER_ARG_BASE);
             let length = emu.read_u32(APPLOADER_ARG_BASE + 4) as usize;
             let offset = (emu.read_u32(APPLOADER_ARG_BASE + 8) as u64) << 2;
-            tracing::debug!(
+            tracing::info!(
                 dst = format!("{addr:08X}"),
                 len = length,
                 offset = format!("{offset:X}"),
@@ -278,7 +284,7 @@ impl Wii {
         // {
         //   return g_apploader_dol.entry_point;
         // }
-        emu.run_until(close_ptr, blr_predicate);
+        call_function(emu, close_ptr);
         let entrypoint = emu.gekko.gprs[3];
         assert!(entrypoint != 0, "Apploader_ReturnEpilogue() returned null entrypoint");
         emu.gekko.pc = entrypoint;
