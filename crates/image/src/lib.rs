@@ -45,14 +45,15 @@ pub fn load_dvd(data: Vec<u8>) -> Box<dyn Dvd> {
     };
 
     if data.starts_with(b"RVZ\x01") {
-        Box::new(rvz::Rvz::parse(data))
+        Box::new(Rvz::parse(data))
     } else {
-        Box::new(iso::Iso::parse(data))
+        Box::new(Iso::parse(data))
     }
 }
 
 fn extract_from_zip(data: Vec<u8>) -> Vec<u8> {
     use std::io::Read;
+
     let cursor = std::io::Cursor::new(data);
     let mut archive = zip::ZipArchive::new(cursor).expect("failed to open ZIP archive");
     let index = (0..archive.len())
@@ -62,6 +63,7 @@ fn extract_from_zip(data: Vec<u8>) -> Vec<u8> {
         })
         .expect("no disc image found in ZIP");
     let mut entry = archive.by_index(index).unwrap();
+    
     let mut buf = Vec::with_capacity(entry.size() as usize);
     entry.read_to_end(&mut buf).expect("failed to read ZIP entry");
     buf

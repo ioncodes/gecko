@@ -48,18 +48,18 @@ pub enum Command {
         /// Output file path (defaults to <name>.encoded.bin or <name>.decoded.bin)
         output: Option<String>,
     },
-    /// Dump ISO file information
-    Iso {
-        /// Input ISO file
+    /// Dump GameCube/Wii disc image (ISO or RVZ) information
+    Dvd {
+        /// Input disc image (auto-detected: ISO, RVZ, or ZIP-wrapped)
         file: String,
-        /// Extract files from the ISO to an "output" directory
+        /// Extract files from the disc image to an "output" directory
         #[arg(long)]
         extract: bool,
     },
 }
 
 #[derive(Parser)]
-#[command(about = "GameCube multi-tool", long_about = None)]
+#[command(about = "GameCube/Wii multi-tool", long_about = None)]
 pub struct Args {
     #[command(subcommand)]
     pub command: Command,

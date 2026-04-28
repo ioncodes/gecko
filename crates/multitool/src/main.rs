@@ -1,8 +1,8 @@
 mod cli;
 mod disassembly;
 mod dol;
+mod dvd;
 mod ipl;
-mod iso;
 
 use crate::cli::{Args, Command, DisasmArch};
 use crate::disassembly::{disassemble_dsp, disassemble_ppc};
@@ -45,11 +45,11 @@ fn main() {
         Command::Ipl { action, file, output } => {
             ipl::process(file, output.as_deref(), *action);
         }
-        Command::Iso { file, extract } => {
+        Command::Dvd { file, extract } => {
             if *extract {
-                iso::extract(read_file_or_exit(file));
+                dvd::extract(read_file_or_exit(file));
             } else {
-                iso::info(read_file_or_exit(file));
+                dvd::info(read_file_or_exit(file));
             }
         }
     }

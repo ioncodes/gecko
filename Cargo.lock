@@ -1255,18 +1255,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gctool"
-version = "0.1.0"
-dependencies = [
- "clap",
- "comfy-table",
- "disasm",
- "image 0.1.0",
- "owo-colors",
- "termtree",
-]
-
-[[package]]
 name = "gecko"
 version = "0.1.0"
 dependencies = [
@@ -2072,6 +2060,18 @@ checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
 dependencies = [
  "num-traits",
  "pxfm",
+]
+
+[[package]]
+name = "multitool"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "comfy-table",
+ "disasm",
+ "image 0.1.0",
+ "owo-colors",
+ "termtree",
 ]
 
 [[package]]
