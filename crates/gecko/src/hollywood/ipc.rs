@@ -15,27 +15,22 @@ pub struct DeviceContext<'a> {
 
 pub trait IosDevice: Send {
     fn open(&mut self, _ctx: &mut DeviceContext<'_>, _mode: u32) -> i32 {
-        tracing::warn!("IOS_Open: unimplemented");
         0
     }
 
     fn close(&mut self, _ctx: &mut DeviceContext<'_>) -> i32 {
-        tracing::warn!("IOS_Close: unimplemented");
         0
     }
 
     fn read(&mut self, _ctx: &mut DeviceContext<'_>, _buf: u32, _len: u32) -> i32 {
-        tracing::warn!("IOS_Read: unimplemented");
         IPC_EINVAL
     }
 
     fn write(&mut self, _ctx: &mut DeviceContext<'_>, _buf: u32, _len: u32) -> i32 {
-        tracing::warn!("IOS_Write: unimplemented");
         IPC_EINVAL
     }
 
     fn seek(&mut self, _ctx: &mut DeviceContext<'_>, _where_: i32, _whence: i32) -> i32 {
-        tracing::warn!("IOS_Seek: unimplemented");
         0
     }
 
