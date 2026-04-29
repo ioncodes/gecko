@@ -1,18 +1,39 @@
-use crate::system::{System, SystemId};
+use crate::hollywood::regs::{ArmCtrl, ArmMsg, PpcCtrl, PpcMsg};
 
-#[inline(always)]
-pub fn ipc_read<const SYSTEM: SystemId>(_sys: &mut System<SYSTEM>, addr: u32, size: u32) -> Option<u32> {
-    tracing::error!("unhandled IPC read at {:#010X} (size {})", addr, size);
-    Some(0)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum IpcState {
+    Idle,
+    Processing,
+    Done,
 }
 
-#[inline(always)]
-pub fn ipc_write<const SYSTEM: SystemId>(_sys: &mut System<SYSTEM>, addr: u32, size: u32, val: u32) -> bool {
-    tracing::error!(
-        "unhandled IPC write at {:#010X} (size {}, value {:#010X})",
-        addr,
-        size,
-        val
-    );
-    true
+pub struct Ipc {
+    pub ppcmsg: PpcMsg,
+    pub ppcctrl: PpcCtrl,
+    pub armmsg: ArmMsg,
+    pub armctrl: ArmCtrl,
+    pub state: IpcState,
+}
+
+impl Ipc {
+    pub fn new() -> Self {
+        Ipc {
+            ppcmsg: PpcMsg::from_raw(0),
+            ppcctrl: PpcCtrl::from_raw(0),
+            armmsg: ArmMsg::from_raw(0),
+            armctrl: ArmCtrl::from_raw(0),
+            state: IpcState::Idle,
+        }
+    }
+}
+
+crate::mmio_device_dispatch! {
+    read = ipc_read,
+    write = ipc_write,
+    registers = [
+        crate::hollywood::regs::PpcMsg,
+        crate::hollywood::regs::PpcCtrl,
+        crate::hollywood::regs::ArmMsg,
+        crate::hollywood::regs::ArmCtrl,
+    ],
 }

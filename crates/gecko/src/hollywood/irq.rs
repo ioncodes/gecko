@@ -1,11 +1,44 @@
+use crate::hollywood::regs::{Cause, Mask};
 use crate::system::{System, SystemId};
 
-#[inline(always)]
-pub fn irq_read<const SYSTEM: SystemId>(_sys: &mut System<SYSTEM>, _addr: u32, _size: u32) -> Option<u32> {
-    Some(0)
+pub struct Irq {
+    pub cause: Cause,
+    pub mask: Mask,
+}
+
+impl Irq {
+    pub fn new() -> Self {
+        Irq {
+            cause: Cause::from_raw(0),
+            mask: Mask::from_raw(0),
+        }
+    }
 }
 
 #[inline(always)]
-pub fn irq_write<const SYSTEM: SystemId>(_sys: &mut System<SYSTEM>, _addr: u32, _size: u32, _val: u32) -> bool {
-    true
+pub fn route_to_pi<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    let firing = (sys.hollywood.irq.cause.raw() & sys.hollywood.irq.mask.raw()) != 0;
+    if firing {
+        sys.pi.assert_interrupt(crate::flipper::pi::InterruptFlag::Hsp);
+    } else {
+        sys.pi.clear_interrupt(crate::flipper::pi::InterruptFlag::Hsp);
+    }
+}
+
+#[inline(always)]
+pub fn assert_ipc<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    sys.hollywood.irq.cause = sys.hollywood.irq.cause.with_ipc(true);
+    super::irq::route_to_pi(sys);
+}
+
+#[inline(always)]
+pub fn ack_ipc<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    sys.hollywood.irq.cause = sys.hollywood.irq.cause.with_ipc(false);
+    super::irq::route_to_pi(sys);
+}
+
+crate::mmio_device_dispatch! {
+    read = irq_read,
+    write = irq_write,
+    registers = [Cause, Mask],
 }

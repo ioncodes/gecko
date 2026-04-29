@@ -10,6 +10,7 @@ use crate::flipper::pi::ProcessorInterface;
 use crate::flipper::si::{SerialInterface, pad};
 use crate::flipper::vi::VideoInterface;
 use crate::gekko::Gekko;
+use crate::hollywood::Hollywood;
 #[cfg(feature = "hooks")]
 use crate::hooks::{HookFilters, HookFlags, HookState, Host};
 use crate::host::{EmptyRenderSink, RenderSink};
@@ -17,6 +18,7 @@ use crate::host::{EmptyRenderSink, RenderSink};
 use crate::idle::{IDLE_LOOP_MAX_INSTRS, IdleCheck, IdleDetector};
 use crate::mmio::Mmio;
 use crate::scheduler::Scheduler;
+use crate::starlet::Starlet;
 use image::Executable;
 
 pub type SystemId = u8;
@@ -40,6 +42,10 @@ pub struct System<const SYSTEM: SystemId> {
     pub si: SerialInterface,
     pub ai: AudioInterface,
     pub mi: MemoryInterface,
+
+    // Wii stuff.
+    pub starlet: Starlet,
+    pub hollywood: Hollywood,
 
     /// GX dispatches actions here.
     pub render_sink: Box<dyn RenderSink>,
@@ -73,6 +79,9 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             si: SerialInterface::new(),
             ai: AudioInterface::new(),
             mi: MemoryInterface::new(),
+
+            starlet: Starlet::new(),
+            hollywood: Hollywood::new(),
 
             render_sink: Box::new(EmptyRenderSink),
 

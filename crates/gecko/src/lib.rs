@@ -9,6 +9,7 @@ pub mod idle;
 pub mod ipl;
 pub mod mmio;
 pub mod scheduler;
+pub mod starlet;
 pub mod system;
 pub mod wii;
 
