@@ -66,7 +66,8 @@ impl System<{ crate::WII }> {
         self.starlet.register("/dev/stm/immediate", Box::new(stm::Immediate));
         self.starlet.register("/dev/stm/eventhook", Box::new(stm::EventHook));
         self.starlet.register("/dev/fs", Box::new(ipc::fs::FileSystem));
-        self.starlet.register("/dev/di", Box::new(ipc::di::DiskInterface));
+        self.starlet
+            .register("/dev/di", Box::new(ipc::di::DiskInterface::new()));
     }
 
     pub fn create_device_context(&mut self) -> (&mut Starlet, DeviceContext<'_>) {
@@ -75,6 +76,7 @@ impl System<{ crate::WII }> {
             DeviceContext {
                 mmio: &mut self.mmio,
                 scheduler: &mut self.scheduler,
+                di: &mut self.di,
             },
         )
     }
@@ -117,14 +119,16 @@ fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: 
             let path_ptr = ctx.mmio.phys_read_u32(cmd_paddr + 0x0C);
             let mode = ctx.mmio.phys_read_u32(cmd_paddr + 0x10);
             let path = self::read_c_string(&mut ctx, path_ptr);
-            tracing::info!(%path, mode, "IOS_Open");
 
             let Some(dev) = starlet.device_for_path(&path) else {
                 tracing::error!(%path, "IOS_Open: no device registered");
                 return IPC_ENOENT;
             };
             let rc = dev.open(&mut ctx, mode);
-            if rc >= 0 { starlet.allocate_fd(&path) } else { rc }
+            let fd = if rc >= 0 { starlet.allocate_fd(&path) } else { rc };
+            tracing::info!(%path, mode, fd, "IOS_Open");
+
+            fd
         }
         IOS_CLOSE => {
             tracing::info!(fd, "IOS_Close");
@@ -139,62 +143,62 @@ fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: 
             dev.close(&mut ctx)
         }
         IOS_READ => {
-            let buf = ctx.mmio.phys_read_u32(cmd_paddr + 0x0C);
-            let len = ctx.mmio.phys_read_u32(cmd_paddr + 0x10);
+            let out_ptr = ctx.mmio.phys_read_u32(cmd_paddr + 0x0C);
+            let out_len = ctx.mmio.phys_read_u32(cmd_paddr + 0x10);
 
-            tracing::info!(fd, buf = format!("{buf:#010X}"), len, "IOS_Read");
+            tracing::info!(fd, out_ptr = format!("{out_ptr:#010X}"), out_len, "IOS_Read");
 
             match starlet.device_for_fd(fd) {
-                Some(dev) => dev.read(&mut ctx, buf, len),
+                Some(dev) => dev.read(&mut ctx, out_ptr, out_len),
                 None => IPC_EINVAL,
             }
         }
         IOS_WRITE => {
-            let buf = ctx.mmio.phys_read_u32(cmd_paddr + 0x0C);
-            let len = ctx.mmio.phys_read_u32(cmd_paddr + 0x10);
+            let in_ptr = ctx.mmio.phys_read_u32(cmd_paddr + 0x0C);
+            let in_len = ctx.mmio.phys_read_u32(cmd_paddr + 0x10);
 
-            tracing::info!(fd, buf = format!("{buf:#010X}"), len, "IOS_Write");
+            tracing::info!(fd, in_ptr = format!("{in_ptr:#010X}"), in_len, "IOS_Write");
 
             match starlet.device_for_fd(fd) {
-                Some(dev) => dev.write(&mut ctx, buf, len),
+                Some(dev) => dev.write(&mut ctx, in_ptr, in_len),
                 None => IPC_EINVAL,
             }
         }
         IOS_SEEK => {
-            let where_ = ctx.mmio.phys_read_u32(cmd_paddr + 0x0C) as i32;
+            let offset = ctx.mmio.phys_read_u32(cmd_paddr + 0x0C) as i32;
             let whence = ctx.mmio.phys_read_u32(cmd_paddr + 0x10) as i32;
 
-            tracing::info!(fd, where_, whence, "IOS_Seek");
+            tracing::info!(fd, offset, whence, "IOS_Seek");
 
             match starlet.device_for_fd(fd) {
-                Some(dev) => dev.seek(&mut ctx, where_, whence),
+                Some(dev) => dev.seek(&mut ctx, offset, whence),
                 None => IPC_EINVAL,
             }
         }
         IOS_IOCTL => {
             let ioctl_cmd = ctx.mmio.phys_read_u32(cmd_paddr + 0x0C);
-            let in_buf = ctx.mmio.phys_read_u32(cmd_paddr + 0x10);
+            let in_ptr = ctx.mmio.phys_read_u32(cmd_paddr + 0x10);
             let in_len = ctx.mmio.phys_read_u32(cmd_paddr + 0x14);
-            let out_buf = ctx.mmio.phys_read_u32(cmd_paddr + 0x18);
+            let out_ptr = ctx.mmio.phys_read_u32(cmd_paddr + 0x18);
             let out_len = ctx.mmio.phys_read_u32(cmd_paddr + 0x1C);
 
-            tracing::info!(fd, ioctl_cmd, "IOS_Ioctl");
+            tracing::info!(fd, ioctl_cmd = format!("{ioctl_cmd:#010X}"), "IOS_Ioctl");
 
             match starlet.device_for_fd(fd) {
-                Some(dev) => dev.ioctl(&mut ctx, ioctl_cmd, in_buf, in_len, out_buf, out_len),
+                Some(dev) => dev.ioctl(&mut ctx, ioctl_cmd, in_ptr, in_len, out_ptr, out_len),
                 None => IPC_EINVAL,
             }
         }
         IOS_IOCTLV => {
             let ioctl_cmd = ctx.mmio.phys_read_u32(cmd_paddr + 0x0C);
-            let argcin = ctx.mmio.phys_read_u32(cmd_paddr + 0x10);
-            let argcio = ctx.mmio.phys_read_u32(cmd_paddr + 0x14);
-            let vec = ctx.mmio.phys_read_u32(cmd_paddr + 0x18);
+            let in_count = ctx.mmio.phys_read_u32(cmd_paddr + 0x10);
+            let io_count = ctx.mmio.phys_read_u32(cmd_paddr + 0x14);
+            let vec_ptr = ctx.mmio.phys_read_u32(cmd_paddr + 0x18);
 
-            tracing::info!(fd, ioctl_cmd, "IOS_Ioctlv");
+            tracing::info!(fd, ioctl_cmd = format!("{ioctl_cmd:#010X}"), "IOS_Ioctlv");
 
             match starlet.device_for_fd(fd) {
-                Some(dev) => dev.ioctlv(&mut ctx, ioctl_cmd, argcin, argcio, vec),
+                Some(dev) => dev.ioctlv(&mut ctx, ioctl_cmd, in_count, io_count, vec_ptr),
                 None => IPC_EINVAL,
             }
         }

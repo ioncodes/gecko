@@ -2,6 +2,7 @@ pub mod di;
 pub mod fs;
 pub mod stm;
 
+use crate::dvd::DvdInterface;
 use crate::hollywood::regs::{ArmCtrl, ArmMsg, PpcCtrl, PpcMsg};
 use crate::mmio::Mmio;
 use crate::scheduler::Scheduler;
@@ -13,6 +14,7 @@ pub const IPC_ENOENT: i32 = -6;
 pub struct DeviceContext<'a> {
     pub mmio: &'a mut Mmio<{ WII }>,
     pub scheduler: &'a mut Scheduler<{ WII }>,
+    pub di: &'a mut DvdInterface,
 }
 
 pub trait IosDevice: Send {
@@ -24,47 +26,47 @@ pub trait IosDevice: Send {
         0
     }
 
-    fn read(&mut self, _ctx: &mut DeviceContext<'_>, buf: u32, len: u32) -> i32 {
-        tracing::warn!(buf = format!("{buf:#010X}"), len, "IOS_Read: unimplemented");
+    fn read(&mut self, _ctx: &mut DeviceContext<'_>, out_ptr: u32, out_len: u32) -> i32 {
+        tracing::warn!(out_ptr = format!("{out_ptr:#010X}"), out_len, "IOS_Read: unimplemented");
         IPC_EINVAL
     }
 
-    fn write(&mut self, _ctx: &mut DeviceContext<'_>, buf: u32, len: u32) -> i32 {
-        tracing::warn!(buf = format!("{buf:#010X}"), len, "IOS_Write: unimplemented");
+    fn write(&mut self, _ctx: &mut DeviceContext<'_>, in_ptr: u32, in_len: u32) -> i32 {
+        tracing::warn!(in_ptr = format!("{in_ptr:#010X}"), in_len, "IOS_Write: unimplemented");
         IPC_EINVAL
     }
 
-    fn seek(&mut self, _ctx: &mut DeviceContext<'_>, where_: i32, whence: i32) -> i32 {
-        tracing::warn!(where_ = where_, whence = whence, "IOS_Seek: unimplemented");
+    fn seek(&mut self, _ctx: &mut DeviceContext<'_>, offset: i32, whence: i32) -> i32 {
+        tracing::warn!(offset, whence, "IOS_Seek: unimplemented");
         0
     }
 
     fn ioctl(
         &mut self,
-        _ctx: &mut DeviceContext<'_>,
+        ctx: &mut DeviceContext<'_>,
         cmd: u32,
-        in_buf: u32,
+        in_ptr: u32,
         in_len: u32,
-        out_buf: u32,
+        out_ptr: u32,
         out_len: u32,
     ) -> i32 {
         tracing::warn!(
             cmd = format!("{cmd:#010X}"),
-            in_buf = format!("{in_buf:#010X}"),
-            in_len = in_len,
-            out_buf = format!("{out_buf:#010X}"),
-            out_len = out_len,
+            in_buf = format!("{:02X?}", ctx.mmio.phys_slice(in_ptr, in_len as usize)),
+            in_len,
+            out_buf = format!("{:02X?}", ctx.mmio.phys_slice(out_ptr, out_len as usize)),
+            out_len,
             "IOS_Ioctl: unimplemented"
         );
         IPC_EINVAL
     }
 
-    fn ioctlv(&mut self, _ctx: &mut DeviceContext<'_>, cmd: u32, argcin: u32, argcio: u32, vec: u32) -> i32 {
+    fn ioctlv(&mut self, _ctx: &mut DeviceContext<'_>, cmd: u32, in_count: u32, io_count: u32, vec_ptr: u32) -> i32 {
         tracing::warn!(
             cmd = format!("{cmd:#010X}"),
-            argcin = argcin,
-            argcio = argcio,
-            vec = format!("{vec:#010X}"),
+            in_count,
+            io_count,
+            vec_ptr = format!("{vec_ptr:#010X}"),
             "IOS_Ioctlv: unimplemented"
         );
         IPC_EINVAL

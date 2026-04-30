@@ -28,3 +28,4 @@ crossbeam-channel = { version = "0.5.15", optional = true }
 multiversion = "0.8.0"
 rustc-hash = "2.1.2"
 crc32fast = "1.5.0"
+zerocopy = { version = "0.8.48", features = ["derive"] }

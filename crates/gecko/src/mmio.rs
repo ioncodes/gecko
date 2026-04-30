@@ -177,6 +177,19 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
         &mut slice[offset..offset + len]
     }
 
+    /// Copy `size_of::<T>()` bytes starting at `addr` into a fresh `T`. The
+    /// caller is responsible for declaring `T` with `#[repr(C)]` and using
+    /// big-endian wrappers (e.g. `zerocopy::byteorder::big_endian::U32`) for
+    /// any multibyte integer fields, since PPC memory is big-endian.
+    #[inline(always)]
+    pub fn phys_read_struct<T>(&self, addr: u32) -> T
+    where
+        T: zerocopy::FromBytes + zerocopy::KnownLayout + zerocopy::Immutable,
+    {
+        let bytes = self.phys_slice(addr, core::mem::size_of::<T>());
+        T::read_from_bytes(bytes).expect("phys_read_struct: layout error")
+    }
+
     /// Return a slice of virtual memory starting at `addr` with length `len`
     /// This is just a thin wrapper around `phys_slice` that applies virtual-to-physical translation
     #[inline(always)]

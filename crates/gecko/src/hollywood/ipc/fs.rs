@@ -1,4 +1,4 @@
-use crate::hollywood::ipc::{DeviceContext, IosDevice};
+use crate::hollywood::ipc::IosDevice;
 
 pub struct FileSystem;
 
