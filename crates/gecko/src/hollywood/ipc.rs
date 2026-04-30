@@ -1,3 +1,5 @@
+pub mod di;
+pub mod fs;
 pub mod stm;
 
 use crate::hollywood::regs::{ArmCtrl, ArmMsg, PpcCtrl, PpcMsg};
@@ -22,31 +24,49 @@ pub trait IosDevice: Send {
         0
     }
 
-    fn read(&mut self, _ctx: &mut DeviceContext<'_>, _buf: u32, _len: u32) -> i32 {
+    fn read(&mut self, _ctx: &mut DeviceContext<'_>, buf: u32, len: u32) -> i32 {
+        tracing::warn!(buf = format!("{buf:#010X}"), len, "IOS_Read: unimplemented");
         IPC_EINVAL
     }
 
-    fn write(&mut self, _ctx: &mut DeviceContext<'_>, _buf: u32, _len: u32) -> i32 {
+    fn write(&mut self, _ctx: &mut DeviceContext<'_>, buf: u32, len: u32) -> i32 {
+        tracing::warn!(buf = format!("{buf:#010X}"), len, "IOS_Write: unimplemented");
         IPC_EINVAL
     }
 
-    fn seek(&mut self, _ctx: &mut DeviceContext<'_>, _where_: i32, _whence: i32) -> i32 {
+    fn seek(&mut self, _ctx: &mut DeviceContext<'_>, where_: i32, whence: i32) -> i32 {
+        tracing::warn!(where_ = where_, whence = whence, "IOS_Seek: unimplemented");
         0
     }
 
     fn ioctl(
         &mut self,
         _ctx: &mut DeviceContext<'_>,
-        _cmd: u32,
-        _in_buf: u32,
-        _in_len: u32,
-        _out_buf: u32,
-        _out_len: u32,
+        cmd: u32,
+        in_buf: u32,
+        in_len: u32,
+        out_buf: u32,
+        out_len: u32,
     ) -> i32 {
+        tracing::warn!(
+            cmd = format!("{cmd:#010X}"),
+            in_buf = format!("{in_buf:#010X}"),
+            in_len = in_len,
+            out_buf = format!("{out_buf:#010X}"),
+            out_len = out_len,
+            "IOS_Ioctl: unimplemented"
+        );
         IPC_EINVAL
     }
 
-    fn ioctlv(&mut self, _ctx: &mut DeviceContext<'_>, _cmd: u32, _argcin: u32, _argcio: u32, _vec: u32) -> i32 {
+    fn ioctlv(&mut self, _ctx: &mut DeviceContext<'_>, cmd: u32, argcin: u32, argcio: u32, vec: u32) -> i32 {
+        tracing::warn!(
+            cmd = format!("{cmd:#010X}"),
+            argcin = argcin,
+            argcio = argcio,
+            vec = format!("{vec:#010X}"),
+            "IOS_Ioctlv: unimplemented"
+        );
         IPC_EINVAL
     }
 }

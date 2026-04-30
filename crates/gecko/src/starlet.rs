@@ -61,10 +61,12 @@ impl Starlet {
 
 impl System<{ crate::WII }> {
     pub fn initialize_starlet_devices(&mut self) {
-        use crate::hollywood::ipc::stm;
+        use crate::hollywood::ipc::{self, stm};
 
         self.starlet.register("/dev/stm/immediate", Box::new(stm::Immediate));
         self.starlet.register("/dev/stm/eventhook", Box::new(stm::EventHook));
+        self.starlet.register("/dev/fs", Box::new(ipc::fs::FileSystem));
+        self.starlet.register("/dev/di", Box::new(ipc::di::DiskInterface));
     }
 
     pub fn create_device_context(&mut self) -> (&mut Starlet, DeviceContext<'_>) {
