@@ -74,3 +74,15 @@ pub const HOLLYWOOD_IRQ_END: u32 = 0x0D00_003F;
 // [Wii] PPC-side mirror of the Hollywood GPIO controller (8 x 32-bit regs)
 pub const HOLLYWOOD_GPIO_PPC_BASE: u32 = 0x0D80_00C0;
 pub const HOLLYWOOD_GPIO_PPC_END: u32 = 0x0D80_00DF;
+
+// [Wii] ARM-side full Hollywood GPIO controller (8 x 32-bit regs)
+pub const HOLLYWOOD_GPIO_ARM_BASE: u32 = 0x0D00_00C0;
+pub const HOLLYWOOD_GPIO_ARM_END: u32 = 0x0D00_00DF;
+
+// [Wii] HW_COMPAT
+pub const HOLLYWOOD_COMPAT_BASE: u32 = 0x0D80_0180;
+pub const HOLLYWOOD_COMPAT_END: u32 = 0x0D80_0183;
+
+// [Wii] Audio PLL config block ?
+pub const HOLLYWOOD_PLL_AI_BASE: u32 = 0x0D80_01CC;
+pub const HOLLYWOOD_PLL_AI_END: u32 = 0x0D80_01D3;

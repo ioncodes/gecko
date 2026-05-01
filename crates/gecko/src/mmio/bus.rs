@@ -2,9 +2,10 @@
 use crate::hooks::HookFlags;
 use crate::mmio::constants::{
     AI_BASE, AI_END, CP_BASE, CP_END, DI_BASE, DI_END, DSP_BASE, DSP_END, EXI_BASE, EXI_END, GX_FIFO_BASE, GX_FIFO_END,
-    HOLLYWOOD_GPIO_PPC_BASE, HOLLYWOOD_GPIO_PPC_END, HOLLYWOOD_IRQ_BASE, HOLLYWOOD_IRQ_END, HW_HOLLYWOOD_BASE,
-    HW_HOLLYWOOD_END, HW_REG_BASE, HW_REG_END, IPC_BASE, IPC_END, MI_BASE, MI_END, PE_BASE, PE_END, PI_BASE, PI_END,
-    RAM_END, SI_BASE, SI_END, VI_BASE, VI_END,
+    HOLLYWOOD_COMPAT_BASE, HOLLYWOOD_COMPAT_END, HOLLYWOOD_GPIO_ARM_BASE, HOLLYWOOD_GPIO_ARM_END,
+    HOLLYWOOD_GPIO_PPC_BASE, HOLLYWOOD_GPIO_PPC_END, HOLLYWOOD_IRQ_BASE, HOLLYWOOD_IRQ_END, HOLLYWOOD_PLL_AI_BASE,
+    HOLLYWOOD_PLL_AI_END, HW_HOLLYWOOD_BASE, HW_HOLLYWOOD_END, HW_REG_BASE, HW_REG_END, IPC_BASE, IPC_END, MI_BASE,
+    MI_END, PE_BASE, PE_END, PI_BASE, PI_END, RAM_END, SI_BASE, SI_END, VI_BASE, VI_END,
 };
 use crate::system::{System, SystemId, WII};
 
@@ -335,6 +336,14 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             HOLLYWOOD_GPIO_PPC_BASE..=HOLLYWOOD_GPIO_PPC_END if SYSTEM == WII => {
                 crate::hollywood::gpio::gpio_read(self, phys, 1).unwrap_or(0) as u8
             }
+            HOLLYWOOD_GPIO_ARM_BASE..=HOLLYWOOD_GPIO_ARM_END if SYSTEM == WII => {
+                crate::hollywood::gpio::gpio_read(self, phys, 1).unwrap_or(0) as u8
+            }
+            HOLLYWOOD_COMPAT_BASE..=HOLLYWOOD_COMPAT_END | HOLLYWOOD_PLL_AI_BASE..=HOLLYWOOD_PLL_AI_END
+                if SYSTEM == WII =>
+            {
+                crate::hollywood::compat::compat_read(self, phys, 1).unwrap_or(0) as u8
+            }
             HW_HOLLYWOOD_BASE..=HW_HOLLYWOOD_END if SYSTEM == WII => {
                 tracing::warn!(
                     device = "HOLLYWOOD",
@@ -473,6 +482,14 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             HOLLYWOOD_GPIO_PPC_BASE..=HOLLYWOOD_GPIO_PPC_END if SYSTEM == WII => {
                 crate::hollywood::gpio::gpio_read(self, phys, 2).unwrap_or(0) as u16
             }
+            HOLLYWOOD_GPIO_ARM_BASE..=HOLLYWOOD_GPIO_ARM_END if SYSTEM == WII => {
+                crate::hollywood::gpio::gpio_read(self, phys, 2).unwrap_or(0) as u16
+            }
+            HOLLYWOOD_COMPAT_BASE..=HOLLYWOOD_COMPAT_END | HOLLYWOOD_PLL_AI_BASE..=HOLLYWOOD_PLL_AI_END
+                if SYSTEM == WII =>
+            {
+                crate::hollywood::compat::compat_read(self, phys, 2).unwrap_or(0) as u16
+            }
             HW_HOLLYWOOD_BASE..=HW_HOLLYWOOD_END if SYSTEM == WII => {
                 tracing::warn!(
                     device = "HOLLYWOOD",
@@ -610,6 +627,14 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             }
             HOLLYWOOD_GPIO_PPC_BASE..=HOLLYWOOD_GPIO_PPC_END if SYSTEM == WII => {
                 crate::hollywood::gpio::gpio_read(self, phys, 4).unwrap_or(0)
+            }
+            HOLLYWOOD_GPIO_ARM_BASE..=HOLLYWOOD_GPIO_ARM_END if SYSTEM == WII => {
+                crate::hollywood::gpio::gpio_read(self, phys, 4).unwrap_or(0)
+            }
+            HOLLYWOOD_COMPAT_BASE..=HOLLYWOOD_COMPAT_END | HOLLYWOOD_PLL_AI_BASE..=HOLLYWOOD_PLL_AI_END
+                if SYSTEM == WII =>
+            {
+                crate::hollywood::compat::compat_read(self, phys, 4).unwrap_or(0)
             }
             HW_HOLLYWOOD_BASE..=HW_HOLLYWOOD_END if SYSTEM == WII => {
                 tracing::warn!(
@@ -771,6 +796,14 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             }
             HOLLYWOOD_GPIO_PPC_BASE..=HOLLYWOOD_GPIO_PPC_END if SYSTEM == WII => {
                 crate::hollywood::gpio::gpio_write(self, phys, 1, raw);
+            }
+            HOLLYWOOD_GPIO_ARM_BASE..=HOLLYWOOD_GPIO_ARM_END if SYSTEM == WII => {
+                crate::hollywood::gpio::gpio_write(self, phys, 1, raw);
+            }
+            HOLLYWOOD_COMPAT_BASE..=HOLLYWOOD_COMPAT_END | HOLLYWOOD_PLL_AI_BASE..=HOLLYWOOD_PLL_AI_END
+                if SYSTEM == WII =>
+            {
+                crate::hollywood::compat::compat_write(self, phys, 1, raw);
             }
             HW_HOLLYWOOD_BASE..=HW_HOLLYWOOD_END if SYSTEM == WII => {
                 tracing::warn!(
@@ -940,6 +973,14 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             HOLLYWOOD_GPIO_PPC_BASE..=HOLLYWOOD_GPIO_PPC_END if SYSTEM == WII => {
                 crate::hollywood::gpio::gpio_write(self, phys, 2, raw);
             }
+            HOLLYWOOD_GPIO_ARM_BASE..=HOLLYWOOD_GPIO_ARM_END if SYSTEM == WII => {
+                crate::hollywood::gpio::gpio_write(self, phys, 2, raw);
+            }
+            HOLLYWOOD_COMPAT_BASE..=HOLLYWOOD_COMPAT_END | HOLLYWOOD_PLL_AI_BASE..=HOLLYWOOD_PLL_AI_END
+                if SYSTEM == WII =>
+            {
+                crate::hollywood::compat::compat_write(self, phys, 2, raw);
+            }
             HW_HOLLYWOOD_BASE..=HW_HOLLYWOOD_END if SYSTEM == WII => {
                 tracing::warn!(
                     device = "HOLLYWOOD",
@@ -1106,6 +1147,14 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             }
             HOLLYWOOD_GPIO_PPC_BASE..=HOLLYWOOD_GPIO_PPC_END if SYSTEM == WII => {
                 crate::hollywood::gpio::gpio_write(self, phys, 4, val);
+            }
+            HOLLYWOOD_GPIO_ARM_BASE..=HOLLYWOOD_GPIO_ARM_END if SYSTEM == WII => {
+                crate::hollywood::gpio::gpio_write(self, phys, 4, val);
+            }
+            HOLLYWOOD_COMPAT_BASE..=HOLLYWOOD_COMPAT_END | HOLLYWOOD_PLL_AI_BASE..=HOLLYWOOD_PLL_AI_END
+                if SYSTEM == WII =>
+            {
+                crate::hollywood::compat::compat_write(self, phys, 4, val);
             }
             HW_HOLLYWOOD_BASE..=HW_HOLLYWOOD_END if SYSTEM == WII => {
                 tracing::warn!(
