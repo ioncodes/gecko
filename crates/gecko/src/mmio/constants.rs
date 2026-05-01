@@ -70,3 +70,7 @@ pub const IPC_END: u32 = 0x0D00_000F;
 // [Wii] Hollywood interrupt controller
 pub const HOLLYWOOD_IRQ_BASE: u32 = 0x0D00_0030;
 pub const HOLLYWOOD_IRQ_END: u32 = 0x0D00_003F;
+
+// [Wii] PPC-side mirror of the Hollywood GPIO controller (8 x 32-bit regs)
+pub const HOLLYWOOD_GPIO_PPC_BASE: u32 = 0x0D80_00C0;
+pub const HOLLYWOOD_GPIO_PPC_END: u32 = 0x0D80_00DF;

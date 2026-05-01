@@ -154,3 +154,101 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Mask {
         crate::hollywood::irq::route_to_pi(sys);
     }
 }
+
+// 0x0D80_00C0 HW_GPIOB_OUT
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Copy, Clone, Debug)]
+pub struct GpioBOut {
+    #[bits(0..=31)]
+    pub value: u32,
+}
+crate::mmio_reg!(GpioBOut: u32 @ 0x0D80_00C0);
+crate::mmio_default_access!(GpioBOut => System.hollywood.gpio.out);
+
+// 0x0D80_00C4 HW_GPIOB_DIR
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Copy, Clone, Debug)]
+pub struct GpioBDir {
+    #[bits(0..=31)]
+    pub value: u32,
+}
+crate::mmio_reg!(GpioBDir: u32 @ 0x0D80_00C4);
+crate::mmio_default_access!(GpioBDir => System.hollywood.gpio.dir);
+
+// 0x0D80_00C8 HW_GPIOB_IN
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Copy, Clone, Debug)]
+pub struct GpioBIn {
+    #[bits(0..=31)]
+    pub value: u32,
+}
+crate::mmio_reg!(GpioBIn: u32 @ 0x0D80_00C8);
+
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for GpioBIn {
+    #[inline(always)]
+    fn read(_sys: &mut System<SYSTEM>) -> Self {
+        Self::from_raw(0)
+    }
+
+    #[inline(always)]
+    fn write(self, _sys: &mut System<SYSTEM>, _: WriteMask) {}
+}
+
+// 0x0D80_00CC HW_GPIOB_INTLVL
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Copy, Clone, Debug)]
+pub struct GpioBIntLvl {
+    #[bits(0..=31)]
+    pub value: u32,
+}
+crate::mmio_reg!(GpioBIntLvl: u32 @ 0x0D80_00CC);
+crate::mmio_default_access!(GpioBIntLvl => System.hollywood.gpio.intlvl);
+
+// 0x0D80_00D0 HW_GPIOB_INTFLAG
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Copy, Clone, Debug)]
+pub struct GpioBIntFlag {
+    #[bits(0..=31)]
+    pub value: u32,
+}
+crate::mmio_reg!(GpioBIntFlag: u32 @ 0x0D80_00D0);
+
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for GpioBIntFlag {
+    #[inline(always)]
+    fn read(_sys: &mut System<SYSTEM>) -> Self {
+        Self::from_raw(0)
+    }
+
+    #[inline(always)]
+    fn write(self, _sys: &mut System<SYSTEM>, _: WriteMask) {}
+}
+
+// 0x0D80_00D4 HW_GPIOB_INTMASK
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Copy, Clone, Debug)]
+pub struct GpioBIntMask {
+    #[bits(0..=31)]
+    pub value: u32,
+}
+crate::mmio_reg!(GpioBIntMask: u32 @ 0x0D80_00D4);
+crate::mmio_default_access!(GpioBIntMask => System.hollywood.gpio.intmask);
+
+// 0x0D80_00D8 HW_GPIOB_STRAPS
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Copy, Clone, Debug)]
+pub struct GpioBStraps {
+    #[bits(0..=31)]
+    pub value: u32,
+}
+crate::mmio_reg!(GpioBStraps: u32 @ 0x0D80_00D8);
+crate::mmio_default_access!(GpioBStraps => System.hollywood.gpio.straps);
+
+// 0x0D80_00DC HW_GPIOB_OWNER
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Copy, Clone, Debug)]
+pub struct GpioBOwner {
+    #[bits(0..=31)]
+    pub value: u32,
+}
+crate::mmio_reg!(GpioBOwner: u32 @ 0x0D80_00DC);
+crate::mmio_default_access!(GpioBOwner => System.hollywood.gpio.owner);
