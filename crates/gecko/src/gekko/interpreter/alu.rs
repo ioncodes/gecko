@@ -3,14 +3,31 @@ use crate::gekko::lut::*;
 use crate::system::{System, SystemId};
 
 #[inline(always)]
+fn set_overflow<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, overflow: bool) {
+    ctx.gekko.spr.xer = ctx
+        .gekko
+        .spr
+        .xer
+        .with_overflow(overflow)
+        .with_summary_overflow(ctx.gekko.spr.xer.summary_overflow() || overflow);
+}
+
+#[inline(always)]
+fn add_overflow(a: u32, b: u32, result: u32) -> bool {
+    (((a ^ result) & (b ^ result)) >> 31) != 0
+}
+
+#[inline(always)]
 pub fn alu<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
     match OP {
         OP_ADDX => {
-            let res = ctx
-                .gekko
-                .read_gpr(instr.ra())
-                .wrapping_add(ctx.gekko.read_gpr(instr.rb()));
+            let a = ctx.gekko.read_gpr(instr.ra());
+            let b = ctx.gekko.read_gpr(instr.rb());
+            let res = a.wrapping_add(b);
             ctx.gekko.write_gpr(instr.rd(), res);
+            if instr.oe() {
+                set_overflow(ctx, add_overflow(a, b, res));
+            }
             if instr.rc() {
                 ctx.gekko.update_cr0(res);
             }
@@ -51,18 +68,24 @@ pub fn alu<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
             ctx.gekko.update_cr0(val);
         }
         OP_SUBFX => {
-            let res = ctx
-                .gekko
-                .read_gpr(instr.rb())
-                .wrapping_sub(ctx.gekko.read_gpr(instr.ra()));
+            let a = !ctx.gekko.read_gpr(instr.ra());
+            let b = ctx.gekko.read_gpr(instr.rb());
+            let res = a.wrapping_add(b).wrapping_add(1);
             ctx.gekko.write_gpr(instr.rd(), res);
+            if instr.oe() {
+                set_overflow(ctx, add_overflow(a, b, res));
+            }
             if instr.rc() {
                 ctx.gekko.update_cr0(res);
             }
         }
         OP_NEGX => {
-            let res = (!ctx.gekko.read_gpr(instr.ra())).wrapping_add(1);
+            let a = ctx.gekko.read_gpr(instr.ra());
+            let res = (!a).wrapping_add(1);
             ctx.gekko.write_gpr(instr.rd(), res);
+            if instr.oe() {
+                set_overflow(ctx, a == 0x8000_0000);
+            }
             if instr.rc() {
                 ctx.gekko.update_cr0(res);
             }
@@ -73,6 +96,9 @@ pub fn alu<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
             let (res, carry) = ra.overflowing_add(rb);
             ctx.gekko.write_gpr(instr.rd(), res);
             ctx.gekko.spr.xer = ctx.gekko.spr.xer.with_carry(carry);
+            if instr.oe() {
+                set_overflow(ctx, add_overflow(ra, rb, res));
+            }
             if instr.rc() {
                 ctx.gekko.update_cr0(res);
             }
@@ -83,6 +109,9 @@ pub fn alu<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
             let res = rb.wrapping_sub(ra);
             ctx.gekko.spr.xer = ctx.gekko.spr.xer.with_carry(rb >= ra);
             ctx.gekko.write_gpr(instr.rd(), res);
+            if instr.oe() {
+                set_overflow(ctx, add_overflow(!ra, rb, res));
+            }
             if instr.rc() {
                 ctx.gekko.update_cr0(res);
             }
@@ -95,6 +124,9 @@ pub fn alu<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
             let (res, c2) = t1.overflowing_add(ca);
             ctx.gekko.write_gpr(instr.rd(), res);
             ctx.gekko.spr.xer = ctx.gekko.spr.xer.with_carry(c1 || c2);
+            if instr.oe() {
+                set_overflow(ctx, add_overflow(ra, rb, res));
+            }
             if instr.rc() {
                 ctx.gekko.update_cr0(res);
             }
@@ -107,6 +139,9 @@ pub fn alu<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
             let (res, c2) = t1.overflowing_add(ca);
             ctx.gekko.write_gpr(instr.rd(), res);
             ctx.gekko.spr.xer = ctx.gekko.spr.xer.with_carry(c1 || c2);
+            if instr.oe() {
+                set_overflow(ctx, add_overflow(!ra, rb, res));
+            }
             if instr.rc() {
                 ctx.gekko.update_cr0(res);
             }
@@ -117,6 +152,9 @@ pub fn alu<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
             let (res, carry) = ra.overflowing_add(ca);
             ctx.gekko.write_gpr(instr.rd(), res);
             ctx.gekko.spr.xer = ctx.gekko.spr.xer.with_carry(carry);
+            if instr.oe() {
+                set_overflow(ctx, add_overflow(ra, 0, res));
+            }
             if instr.rc() {
                 ctx.gekko.update_cr0(res);
             }
@@ -127,6 +165,9 @@ pub fn alu<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
             let (res, carry) = (!ra).overflowing_add(ca);
             ctx.gekko.write_gpr(instr.rd(), res);
             ctx.gekko.spr.xer = ctx.gekko.spr.xer.with_carry(carry);
+            if instr.oe() {
+                set_overflow(ctx, add_overflow(!ra, 0, res));
+            }
             if instr.rc() {
                 ctx.gekko.update_cr0(res);
             }
@@ -138,6 +179,9 @@ pub fn alu<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
             let (res, c2) = t1.overflowing_add(0xFFFF_FFFF);
             ctx.gekko.write_gpr(instr.rd(), res);
             ctx.gekko.spr.xer = ctx.gekko.spr.xer.with_carry(c1 || c2);
+            if instr.oe() {
+                set_overflow(ctx, add_overflow(ra, 0xFFFF_FFFF, res));
+            }
             if instr.rc() {
                 ctx.gekko.update_cr0(res);
             }
@@ -149,14 +193,21 @@ pub fn alu<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
             let (res, c2) = t1.overflowing_add(0xFFFF_FFFF);
             ctx.gekko.write_gpr(instr.rd(), res);
             ctx.gekko.spr.xer = ctx.gekko.spr.xer.with_carry(c1 || c2);
+            if instr.oe() {
+                set_overflow(ctx, add_overflow(!ra, 0xFFFF_FFFF, res));
+            }
             if instr.rc() {
                 ctx.gekko.update_cr0(res);
             }
         }
         OP_MULLWX => {
-            let res = (ctx.gekko.read_gpr(instr.ra()) as i32 as i64)
-                .wrapping_mul(ctx.gekko.read_gpr(instr.rb()) as i32 as i64) as u32;
+            let full = (ctx.gekko.read_gpr(instr.ra()) as i32 as i64)
+                .wrapping_mul(ctx.gekko.read_gpr(instr.rb()) as i32 as i64);
+            let res = full as u32;
             ctx.gekko.write_gpr(instr.rd(), res);
+            if instr.oe() {
+                set_overflow(ctx, full < i32::MIN as i64 || full > i32::MAX as i64);
+            }
             if instr.rc() {
                 ctx.gekko.update_cr0(res);
             }
@@ -166,6 +217,9 @@ pub fn alu<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
             let rb = ctx.gekko.read_gpr(instr.rb());
             let res = if rb == 0 { 0 } else { ra / rb };
             ctx.gekko.write_gpr(instr.rd(), res);
+            if instr.oe() {
+                set_overflow(ctx, rb == 0);
+            }
             if instr.rc() {
                 ctx.gekko.update_cr0(res);
             }
@@ -174,11 +228,14 @@ pub fn alu<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
             let ra = ctx.gekko.read_gpr(instr.ra()) as i32;
             let rb = ctx.gekko.read_gpr(instr.rb()) as i32;
             let res = if rb == 0 || (ra == i32::MIN && rb == -1) {
-                0u32
+                if ra < 0 { u32::MAX } else { 0 }
             } else {
                 (ra / rb) as u32
             };
             ctx.gekko.write_gpr(instr.rd(), res);
+            if instr.oe() {
+                set_overflow(ctx, rb == 0 || (ra == i32::MIN && rb == -1));
+            }
             if instr.rc() {
                 ctx.gekko.update_cr0(res);
             }

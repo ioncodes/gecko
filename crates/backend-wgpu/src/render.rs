@@ -1,4 +1,4 @@
-use crate::{FrameUniforms, GpuVertex, GxRenderer, align_up};
+use crate::{FrameUniforms, GpuVertex, GxRenderer, align_up, ram_addr_of};
 use encase::ShaderType as _;
 use gecko::common::Address;
 #[cfg(feature = "efb-writeback")]
@@ -282,9 +282,8 @@ impl GxRenderer {
         if let Some((old_tex, old_view)) = self.efb_copy_cache.remove(&dest_addr) {
             self.return_to_pool(old_tex, old_view);
         }
-        // Drop stale bind groups that captured the old view.
         self.bind_group_cache
-            .retain(|key, _| !key.tex_keys.contains(&Some(dest_addr)));
+            .retain(|key, _| !key.tex_keys.iter().any(|k| k.map(ram_addr_of) == Some(dest_addr)));
 
         let (tex, view) = self
             .efb_copy_pool
@@ -415,7 +414,7 @@ impl GxRenderer {
             self.return_to_pool(old_tex, old_view);
         }
         self.bind_group_cache
-            .retain(|key, _| !key.tex_keys.contains(&Some(dest_addr)));
+            .retain(|key, _| !key.tex_keys.iter().any(|k| k.map(ram_addr_of) == Some(dest_addr)));
 
         let (tex, view) = self
             .efb_depth_pool

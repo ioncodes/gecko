@@ -42,9 +42,16 @@ pub(crate) fn align_up(value: u64, alignment: u64) -> u64 {
 
 type SamplerKey = (WrapMode, WrapMode, MagFilter, MinFilter);
 
+pub(crate) type TextureKey = u64;
+
+#[inline(always)]
+pub(crate) fn ram_addr_of(key: TextureKey) -> Address {
+    key as Address
+}
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct BindGroupCacheKey {
-    tex_keys: [Option<Address>; 8],
+    tex_keys: [Option<TextureKey>; 8],
     sampler_keys: [Option<SamplerKey>; 8],
 }
 
@@ -55,6 +62,7 @@ pub(crate) struct FrameUniforms {
     tev_color_env: [glam::UVec4; 4],
     tev_alpha_env: [glam::UVec4; 4],
     tev_orders: [glam::UVec4; 4],
+    tev_ksel: [glam::UVec4; 4],
     num_tev_stages: u32,
     alpha_ref0: f32,
     alpha_ref1: f32,
@@ -121,7 +129,7 @@ pub struct GxRenderer {
     pub(crate) efb_depth_view: wgpu::TextureView,
     pub(crate) efb_needs_clear: bool,
     pub(crate) sampler_cache: FxHashMap<(WrapMode, WrapMode, MagFilter, MinFilter), wgpu::Sampler>,
-    pub(crate) texture_cache: FxHashMap<Address, (TextureFormat, wgpu::Texture, wgpu::TextureView)>,
+    pub(crate) texture_cache: FxHashMap<TextureKey, (TextureFormat, wgpu::Texture, wgpu::TextureView)>,
     // GPU textures holding EFB copy results, checked before `texture_cache` on every texture bind.
     pub(crate) efb_copy_cache: FxHashMap<Address, (wgpu::Texture, wgpu::TextureView)>,
     // Retired EFB-copy textures grouped by size, popped by the next copy to skip reallocating.
@@ -156,7 +164,7 @@ pub struct GxRenderer {
     pub(crate) current_blend_mode: BlendMode,
     pub(crate) current_alpha_compare: AlphaCompare,
     pub(crate) current_cull_mode: CullMode,
-    pub(crate) current_texture_ids: [Option<Address>; 8],
+    pub(crate) current_texture_ids: [Option<TextureKey>; 8],
     pub(crate) current_sampler_keys: [Option<SamplerKey>; 8],
     // XFB output texture: composited from per-copy snapshots by PresentXfb.
     pub xfb_texture: wgpu::Texture,

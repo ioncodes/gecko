@@ -5,7 +5,7 @@ use crate::system::{System, SystemId};
 
 #[inline(always)]
 pub fn compare<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
-    let field = match OP {
+    let mut field = match OP {
         OP_CMP => ConditionRegister::field_from_ord(
             (ctx.gekko.read_gpr(instr.ra()) as i32).cmp(&(ctx.gekko.read_gpr(instr.rb()) as i32)),
         ),
@@ -17,5 +17,6 @@ pub fn compare<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, 
         _ => todo!("Compare instruction with OP = {OP:#x}"),
     };
 
+    field = field.with_so(ctx.gekko.spr.xer.summary_overflow());
     ctx.gekko.cr.set_field(instr.crfd(), field);
 }

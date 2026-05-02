@@ -7,6 +7,7 @@ struct FrameUniforms {
     tev_color_env: array<vec4<u32>, 4>,
     tev_alpha_env: array<vec4<u32>, 4>,
     tev_orders: array<vec4<u32>, 4>,
+    tev_ksel: array<vec4<u32>, 4>,
     num_tev_stages: u32,
     alpha_ref0: f32,
     alpha_ref1: f32,

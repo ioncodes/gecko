@@ -1,7 +1,9 @@
 use super::constants::*;
 use super::regs::*;
 use crate::flipper::gx::GraphicsProcessor;
-use std::io::{Cursor, Read};
+use crate::host::RenderSink;
+use crate::mmio::Mmio;
+use crate::system::SystemId;
 
 impl GraphicsProcessor {
     pub fn push_u8(&mut self, val: u8) {
@@ -16,88 +18,65 @@ impl GraphicsProcessor {
         self.fifo.extend_from_slice(&val.to_be_bytes());
     }
 
-    /// Drain complete commands from the FIFO, returning each as a `FifoCmd`.
-    pub fn drain(&mut self) -> Vec<FifoCmd> {
-        let mut cmds = Vec::new();
-        let mut cur = Cursor::new(&self.fifo);
-
+    /// Streaming GP FIFO command processor: parses and dispatches each
+    /// command inline so state writes (CP/XF/BP) take effect before the
+    /// next command's parse decisions read them.
+    ///
+    /// Partial commands are left in `self.fifo` for the next push to
+    /// complete: when a command's payload isn't fully present, we `break`
+    /// without advancing `pos`, then drain only the consumed prefix below.
+    pub fn drain_fifo<const SYSTEM: SystemId>(&mut self, mmio: &mut Mmio<SYSTEM>, renderer: &mut dyn RenderSink) {
+        let mut pos = 0usize;
         loop {
-            let pos = cur.position() as usize;
             let remaining = self.fifo.len() - pos;
             if remaining == 0 {
                 break;
             }
-
-            let mut cmd_buf = [0u8; 1];
-            cur.read_exact(&mut cmd_buf).unwrap();
-            let cmd = cmd_buf[0];
+            let cmd = self.fifo[pos];
 
             match cmd {
                 NOP_CMD | INV_VTX_CACHE_CMD => {
-                    // NOP / vertex cache invalidate, skip
-                }
-                CALL_DL_CMD => {
-                    // 4-byte physical address + 4-byte size = 8 bytes payload
-                    if remaining < 9 {
-                        cur.set_position(pos as u64);
-                        break;
-                    }
-                    let mut addr_buf = [0u8; 4];
-                    let mut size_buf = [0u8; 4];
-                    cur.read_exact(&mut addr_buf).unwrap();
-                    cur.read_exact(&mut size_buf).unwrap();
-                    let phys_addr = u32::from_be_bytes(addr_buf);
-                    let nbytes = u32::from_be_bytes(size_buf);
-                    cmds.push(FifoCmd::CallDisplayList { phys_addr, nbytes });
+                    pos += 1;
                 }
                 CP_CMD => {
-                    // 1 addr + 4 data = 5 bytes
                     if remaining < 6 {
-                        cur.set_position(pos as u64);
                         break;
                     }
                     let mut data = [0u8; 5];
-                    cur.read_exact(&mut data).unwrap();
-                    cmds.push(FifoCmd::Cp(data));
+                    data.copy_from_slice(&self.fifo[pos + 1..pos + 6]);
+                    pos += 6;
+                    self.load_cp(&data);
                 }
                 XF_CMD => {
-                    // 2 length + 2 addr = 4 byte header
                     if remaining < 5 {
-                        cur.set_position(pos as u64);
                         break;
                     }
-                    let mut header = [0u8; 4];
-                    cur.read_exact(&mut header).unwrap();
-                    let length = u16::from_be_bytes([header[0], header[1]]) as usize;
+                    let length = u16::from_be_bytes([self.fifo[pos + 1], self.fifo[pos + 2]]) as usize;
                     let n = length + 1;
                     let total = 5 + n * 4;
                     if remaining < total {
-                        cur.set_position(pos as u64);
                         break;
                     }
-                    let mut rest = vec![0u8; n * 4];
-                    cur.read_exact(&mut rest).unwrap();
-                    let data = [header.as_slice(), rest.as_slice()].concat();
-                    cmds.push(FifoCmd::Xf(data));
+                    let data = self.fifo[pos + 1..pos + total].to_vec();
+                    pos += total;
+                    self.load_xf(renderer, &data);
                 }
                 BP_CMD => {
-                    // 4 data bytes
                     if remaining < 5 {
-                        cur.set_position(pos as u64);
                         break;
                     }
                     let mut data = [0u8; 4];
-                    cur.read_exact(&mut data).unwrap();
-                    cmds.push(FifoCmd::Bp(data));
+                    data.copy_from_slice(&self.fifo[pos + 1..pos + 5]);
+                    pos += 5;
+                    let mut view = mmio.ram_view_mut();
+                    self.load_bp(renderer, &mut view, &data);
                 }
                 LOAD_INDX_A_CMD | LOAD_INDX_B_CMD | LOAD_INDX_C_CMD | LOAD_INDX_D_CMD => {
-                    // 4 bytes payload: 2-byte index + 2-byte descriptor
                     if remaining < 5 {
-                        cur.set_position(pos as u64);
                         break;
                     }
-                    let mut payload = [0u8; 4];
-                    cur.read_exact(&mut payload).unwrap();
+                    let payload: [u8; 4] = self.fifo[pos + 1..pos + 5].try_into().unwrap();
+                    pos += 5;
 
                     let index = u16::from_be_bytes([payload[0], payload[1]]);
                     let descriptor = u16::from_be_bytes([payload[2], payload[3]]);
@@ -112,45 +91,57 @@ impl GraphicsProcessor {
                         _ => unreachable!(),
                     } as u8;
 
-                    cmds.push(FifoCmd::LoadIndexedXf {
-                        cp_array_index,
-                        index,
-                        xf_addr,
-                        xf_count,
-                    });
+                    let view = mmio.ram_view();
+                    self.load_indexed_xf(renderer, &view, cp_array_index, index, xf_addr, xf_count);
                 }
-                DRAW_COMMANDS_START..=DRAW_COMMANDS_END => {
-                    // [count_hi] [count_lo] [vertex_0_data...] ...
-                    if remaining < 3 {
-                        cur.set_position(pos as u64);
+                CALL_DL_CMD => {
+                    if remaining < 9 {
                         break;
                     }
-                    let mut count_buf = [0u8; 2];
-                    cur.read_exact(&mut count_buf).unwrap();
-                    let count = u16::from_be_bytes(count_buf) as usize;
+                    let phys_addr = u32::from_be_bytes(self.fifo[pos + 1..pos + 5].try_into().unwrap());
+                    let nbytes = u32::from_be_bytes(self.fifo[pos + 5..pos + 9].try_into().unwrap());
+                    pos += 9;
+
+                    let addr = (phys_addr & 0x3FFFFFFF) as usize;
+                    let len = nbytes as usize;
+                    let dl = match mmio.ram_view().slice(addr, len) {
+                        Some(slice) => slice.to_vec(),
+                        None => {
+                            tracing::warn!(
+                                addr = format!("{addr:#010X}"),
+                                len,
+                                "CallDisplayList: source not mapped to MEM1/MEM2, skipping"
+                            );
+                            continue;
+                        }
+                    };
+                    self.execute_display_list(mmio, renderer, &dl);
+                }
+                DRAW_COMMANDS_START..=DRAW_COMMANDS_END => {
+                    if remaining < 3 {
+                        break;
+                    }
+                    let count = u16::from_be_bytes([self.fifo[pos + 1], self.fifo[pos + 2]]) as usize;
                     let vertex_format_index = (cmd & 0b111) as usize;
                     let vertex_data_len = count * self.vertex_stride(vertex_format_index);
                     let total = 3 + vertex_data_len;
                     if remaining < total {
-                        cur.set_position(pos as u64);
                         break;
                     }
-                    let mut vertex_data = vec![0u8; vertex_data_len];
-                    cur.read_exact(&mut vertex_data).unwrap();
-                    cmds.push(FifoCmd::DrawCall(cmd, vertex_data));
+                    let vertex_data = self.fifo[pos + 3..pos + total].to_vec();
+                    pos += total;
+                    self.create_draw_call(mmio, renderer, cmd, vertex_data);
                 }
                 _ => {
                     tracing::error!(cmd = format!("{cmd:02X}"), "unknown FIFO command");
+                    pos += 1;
                 }
             }
         }
 
-        let consumed = cur.position() as usize;
-        if consumed > 0 {
-            self.fifo.drain(..consumed);
+        if pos > 0 {
+            self.fifo.drain(..pos);
         }
-
-        cmds
     }
 
     fn vertex_stride(&self, vertex_format_index: usize) -> usize {
@@ -184,22 +175,4 @@ impl GraphicsProcessor {
             + attr_size(vcd_hi.tex6(), vat_c.tex6_data_size())
             + attr_size(vcd_hi.tex7(), vat_c.tex7_data_size())
     }
-}
-
-#[derive(Debug)]
-pub enum FifoCmd {
-    Cp([u8; 5]),
-    Xf(Vec<u8>),
-    Bp([u8; 4]),
-    LoadIndexedXf {
-        cp_array_index: u8,
-        index: u16,
-        xf_addr: u16,
-        xf_count: u8,
-    },
-    CallDisplayList {
-        phys_addr: u32,
-        nbytes: u32,
-    },
-    DrawCall(u8, Vec<u8>),
 }

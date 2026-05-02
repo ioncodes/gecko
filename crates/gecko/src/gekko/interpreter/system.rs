@@ -13,10 +13,9 @@ pub fn msr<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
             ctx.gekko.write_gpr(instr.rd(), ctx.gekko.msr.raw());
         }
         OP_RFI => {
-            const RFI_MSR_MASK: u32 = 0x0000_FF73;
-            ctx.gekko.msr = crate::gekko::msr::Msr::from(
-                (ctx.gekko.msr.raw() & !RFI_MSR_MASK) | (ctx.gekko.spr.srr1 & RFI_MSR_MASK),
-            );
+            const RFI_MSR_MASK: u32 = 0x87C0_FFFF;
+            let msr = (ctx.gekko.msr.raw() & !RFI_MSR_MASK) | (ctx.gekko.spr.srr1 & RFI_MSR_MASK);
+            ctx.gekko.msr = crate::gekko::msr::Msr::from(msr & !0x0004_0000);
             ctx.gekko.nia = ctx.gekko.spr.srr0.value() << 2;
         }
         _ => todo!("MSR instruction with OP = {OP:#x}"),

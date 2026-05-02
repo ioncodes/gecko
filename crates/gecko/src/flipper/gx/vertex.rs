@@ -167,6 +167,7 @@ impl GraphicsProcessor {
             tev_color_env: self.cur_tev_color_env.iter().map(|e| e.raw()).collect(),
             tev_alpha_env: self.cur_tev_alpha_env.iter().map(|e| e.raw()).collect(),
             tev_orders: tev_orders.iter().map(|o| o.raw()).collect(),
+            tev_ksel: (0..8).map(|i| self.bp_regs[BP_TEV_KSEL_0 + i]).collect(),
             tev_color_regs,
             tev_konst_colors: self.cur_tev_konst_colors,
             num_tev_stages: self.cur_num_tev_stages,

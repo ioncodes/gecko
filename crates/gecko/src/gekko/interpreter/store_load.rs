@@ -201,10 +201,10 @@ pub fn stwcx_dot<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instru
         .read_gpr_or_zero(instr.ra())
         .wrapping_add(ctx.gekko.read_gpr(instr.rb()));
     let so = ctx.gekko.spr.xer.summary_overflow();
-    let store_performed = ctx.gekko.reserve_addr.is_some();
-    ctx.gekko.reserve_addr = None;
+    let store_performed = ctx.gekko.reserve_addr == Some(addr);
     if store_performed {
         ctx.write_u32(addr, ctx.gekko.read_gpr(instr.rs()));
+        ctx.gekko.reserve_addr = None;
         ctx.gekko.cr.set_cr0(ConditionField::new().with_eq(true).with_so(so));
     } else {
         ctx.gekko.cr.set_cr0(ConditionField::new().with_so(so));

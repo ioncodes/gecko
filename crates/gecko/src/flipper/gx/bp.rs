@@ -1,7 +1,6 @@
 use super::constants::*;
 use super::regs::*;
 use super::{GraphicsProcessor, draw, texture};
-use crate::common::Address;
 use crate::host::{GxAction, RenderSink};
 use crate::mmio::{RamView, RamViewMut};
 #[cfg(feature = "efb-writeback")]
@@ -238,6 +237,13 @@ impl GraphicsProcessor {
         let tlut = self.cur_tluts[slot];
         let palette = slot_palette(&self.palette_mem, tlut.tmem_offset);
 
+        // Cache id mixes the bound TLUT identity into the high 32 bits so
+        // the same CI* texture bound with two different palettes (FFCC
+        // title logo binds the same RAM bytes via slot 0 RGB5A3@512 and
+        // slot 1 IA8@528 every frame) doesn't clobber a single GPU side
+        // entry on each rebind.
+        let cache_id = self::texture_cache_id(ram_addr, format, tlut);
+
         // Resolve the texture's raw bytes once, against MEM1 or MEM2. If the
         // address doesn't fall in either bank, leave the slot's last binding
         // alone but skip the decode (the renderer will keep its previous
@@ -246,9 +252,7 @@ impl GraphicsProcessor {
         let tex_slice = ram.slice(ram_addr, raw_size);
 
         let changed = match tex_slice {
-            Some(tex) => {
-                self::texture_data_changed(&mut self.texture_hashes, tex, ram_addr as u32, palette, tlut, format)
-            }
+            Some(tex) => self::texture_data_changed(&mut self.texture_hashes, tex, cache_id, palette, tlut, format),
             None => {
                 tracing::warn!(
                     addr = format!("{ram_addr:#010X}"),
@@ -271,7 +275,7 @@ impl GraphicsProcessor {
                 min_filter: mode0.min_filter(),
             };
             renderer.exec(GxAction::LoadTexture {
-                id: ram_addr as Address,
+                id: cache_id,
                 width,
                 height,
                 fmt: format,
@@ -292,7 +296,7 @@ impl GraphicsProcessor {
 
         renderer.exec(GxAction::SetTexture {
             slot,
-            id: ram_addr as Address,
+            id: cache_id,
             wrap_s: mode0.wrap_s(),
             wrap_t: mode0.wrap_t(),
             mag_filter: mode0.mag_filter(),
@@ -493,9 +497,13 @@ impl GraphicsProcessor {
                 depth_copy: self.cur_pe_control.pixel_format().is_depth_only(),
             });
 
-            // Writeback overwrites RAM, so drop the hash to force a re-decode. The default path keeps it GPU-side.
+            // Writeback overwrites RAM, so drop every cached hash that
+            // points at this ram_addr (any TLUT variant) to force a redecode.
             #[cfg(feature = "efb-writeback")]
-            self.texture_hashes.remove(&dest_addr);
+            {
+                let dest_addr_lo = dest_addr as u64;
+                self.texture_hashes.retain(|k, _| (*k & 0xFFFFFFFF) != dest_addr_lo);
+            }
             let _ = ram;
 
             // With `efb-writeback`: block until the renderer finishes the
@@ -566,13 +574,30 @@ fn slot_palette(palette_mem: &[u16], tmem_offset: u16) -> &[u16] {
     palette_mem.get(base..).unwrap_or(&[])
 }
 
+/// Mint the `(ram_addr, tlut_variant)` cache key sent to the renderer.
+/// Low 32 bits = ram_addr, high 32 bits = TLUT identity (0 for non-paletted).
+/// Variant fits in 12 bits (10 for tmem_offset, 2 for format) but we leave
+/// room for future expansion.
+#[inline(always)]
+fn texture_cache_id(ram_addr: usize, format: draw::TextureFormat, tlut: draw::TlutRef) -> u64 {
+    let lo = (ram_addr as u32) as u64;
+    let hi = if format.is_paletted() {
+        ((tlut.format as u32) << 16 | (tlut.tmem_offset as u32 & 0x3FF)) as u64
+    } else {
+        0
+    };
+    (hi << 32) | lo
+}
+
 /// Returns `true` when the raw texture data in `tex` differs from the last
-/// hash recorded for the given address. `tex` is the already resolved slice
-/// for the texture (caller has already mapped MEM1/MEM2).
+/// hash recorded for this cache id. `tex` is the already resolved slice for
+/// the texture (caller has already mapped MEM1/MEM2). The hash is keyed by
+/// cache_id so paletted textures bound with multiple TLUTs are tracked
+/// independently.
 fn texture_data_changed(
-    hashes: &mut rustc_hash::FxHashMap<u32, u64>,
+    hashes: &mut rustc_hash::FxHashMap<u64, u64>,
     tex: &[u8],
-    addr: u32,
+    cache_id: u64,
     palette: &[u16],
     tlut: draw::TlutRef,
     format: draw::TextureFormat,
@@ -592,7 +617,7 @@ fn texture_data_changed(
         // into the hash or a format switch alone wouldn't force a redecode.
         hash ^= tlut.format as u64;
     }
-    let prev = hashes.insert(addr, hash);
+    let prev = hashes.insert(cache_id, hash);
     prev != Some(hash)
 }
 

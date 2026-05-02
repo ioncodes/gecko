@@ -4,6 +4,34 @@ use crate::gekko::instruction::Instruction;
 use crate::gekko::lut::*;
 use crate::system::{System, SystemId};
 
+const FPSCR_FX: u32 = 1 << (31 - 0);
+const FPSCR_OX: u32 = 1 << (31 - 3);
+const FPSCR_UX: u32 = 1 << (31 - 4);
+const FPSCR_ZX: u32 = 1 << (31 - 5);
+const FPSCR_XX: u32 = 1 << (31 - 6);
+const FPSCR_VXSNAN: u32 = 1 << (31 - 7);
+const FPSCR_VXISI: u32 = 1 << (31 - 8);
+const FPSCR_VXIDI: u32 = 1 << (31 - 9);
+const FPSCR_VXZDZ: u32 = 1 << (31 - 10);
+const FPSCR_VXIMZ: u32 = 1 << (31 - 11);
+const FPSCR_VXVC: u32 = 1 << (31 - 12);
+const FPSCR_VXSOFT: u32 = 1 << (31 - 21);
+const FPSCR_VXSQRT: u32 = 1 << (31 - 22);
+const FPSCR_VXCVI: u32 = 1 << (31 - 23);
+const FPSCR_ANY_X: u32 = FPSCR_OX
+    | FPSCR_UX
+    | FPSCR_ZX
+    | FPSCR_XX
+    | FPSCR_VXSNAN
+    | FPSCR_VXISI
+    | FPSCR_VXIDI
+    | FPSCR_VXZDZ
+    | FPSCR_VXIMZ
+    | FPSCR_VXVC
+    | FPSCR_VXSOFT
+    | FPSCR_VXSQRT
+    | FPSCR_VXCVI;
+
 #[inline(always)]
 pub fn fp_ops<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
     if !ctx.check_fp_available() {
@@ -22,10 +50,15 @@ pub fn fp_ops<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, i
             }
             ctx.gekko.fpscr = Fpscr::from((ctx.gekko.fpscr.raw() & !mask) | (fb & mask));
             ctx.gekko.recompute_fpscr_summary();
+            if instr.rc() {
+                ctx.gekko.update_cr1();
+            }
         }
         OP_MFFSX => {
-            ctx.gekko
-                .write_fpr(instr.rd(), f64::from_bits(ctx.gekko.fpscr.raw() as u64));
+            ctx.gekko.write_fpr(
+                instr.rd(),
+                f64::from_bits(0xFFF8_0000_0000_0000 | ctx.gekko.fpscr.raw() as u64),
+            );
             if instr.rc() {
                 ctx.gekko.update_cr1();
             }
@@ -33,10 +66,21 @@ pub fn fp_ops<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, i
         OP_MTFSB0X => {
             ctx.gekko.fpscr = Fpscr::from(ctx.gekko.fpscr.raw() & !(1 << (31 - instr.crbd())));
             ctx.gekko.recompute_fpscr_summary();
+            if instr.rc() {
+                ctx.gekko.update_cr1();
+            }
         }
         OP_MTFSB1X => {
-            ctx.gekko.fpscr = Fpscr::from(ctx.gekko.fpscr.raw() | (1 << (31 - instr.crbd())));
+            let bit = 1 << (31 - instr.crbd());
+            let mut fpscr = ctx.gekko.fpscr.raw();
+            if bit & FPSCR_ANY_X != 0 && fpscr & bit == 0 {
+                fpscr |= FPSCR_FX;
+            }
+            ctx.gekko.fpscr = Fpscr::from(fpscr | bit);
             ctx.gekko.recompute_fpscr_summary();
+            if instr.rc() {
+                ctx.gekko.update_cr1();
+            }
         }
         OP_MTFSFIX => {
             let crfd = instr.crfd();
@@ -45,6 +89,9 @@ pub fn fp_ops<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, i
             let mask = 0xFu32 << shift;
             ctx.gekko.fpscr = Fpscr::from((ctx.gekko.fpscr.raw() & !mask) | (imm << shift));
             ctx.gekko.recompute_fpscr_summary();
+            if instr.rc() {
+                ctx.gekko.update_cr1();
+            }
         }
         OP_MCRFS => {
             let src_field = instr.crfs();
@@ -53,10 +100,9 @@ pub fn fp_ops<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, i
             ctx.gekko
                 .cr
                 .set_field(instr.crfd(), ConditionField::from(fpscr_nibble as u8));
-            if src_field != 0 && src_field != 1 {
-                ctx.gekko.fpscr = Fpscr::from(ctx.gekko.fpscr.raw() & !(0xF << shift));
-                ctx.gekko.recompute_fpscr_summary();
-            }
+            let clear_mask = (0xF << shift) & (FPSCR_FX | FPSCR_ANY_X);
+            ctx.gekko.fpscr = Fpscr::from(ctx.gekko.fpscr.raw() & !clear_mask);
+            ctx.gekko.recompute_fpscr_summary();
         }
         OP_FMRX => {
             ctx.gekko.write_fpr(instr.rd(), ctx.gekko.read_fpr(instr.rb()));

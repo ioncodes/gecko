@@ -1,5 +1,5 @@
 use crate::pipeline::PipelineKey;
-use crate::{BindGroupCacheKey, DrawUniforms, FrameUniforms, GpuVertex, GxRenderer, SamplerKey, helpers};
+use crate::{BindGroupCacheKey, DrawUniforms, FrameUniforms, GpuVertex, GxRenderer, SamplerKey, helpers, ram_addr_of};
 use encase::{ShaderType as _, UniformBuffer};
 use gecko::flipper::gx::regs::{MagFilter, MinFilter, WrapMode};
 use gecko::host::{DrawData, GxAction};
@@ -76,7 +76,7 @@ impl GxRenderer {
                 fmt,
                 rgba,
             } => {
-                let texture_label = format!("gx_tex addr={:#010x} fmt={:?} size={}x{}", *id, *fmt, *width, *height);
+                let texture_label = format!("gx_tex id={:#018x} fmt={:?} size={}x{}", *id, *fmt, *width, *height);
                 let tex = device.create_texture(&wgpu::TextureDescriptor {
                     label: Some(&texture_label),
                     size: wgpu::Extent3d {
@@ -109,15 +109,19 @@ impl GxRenderer {
                 );
                 let view = tex.create_view(&Default::default());
 
-                // Invalidate bind groups that referenced the old texture.
+                // Invalidate bind groups that referenced the old entry for
+                // this exact cache id (variant-specific).
                 let tid = *id;
                 self.bind_group_cache
                     .retain(|key, _| !key.tex_keys.iter().any(|k| *k == Some(tid)));
 
                 // A fresh RAM upload means the game wrote this address
-                // after a prior EFB copy. Return the stale GPU
-                // copy to its pool and let the RAM-decoded entry win.
-                if let Some((old_tex, old_view)) = self.efb_copy_cache.remove(&tid) {
+                // after a prior EFB copy. Return the stale GPU copy to
+                // its pool and let the RAM-decoded entry win. EFB copies
+                // are keyed by the bare ram_addr, so strip the TLUT
+                // variant bits before looking up.
+                let ram_addr = ram_addr_of(tid);
+                if let Some((old_tex, old_view)) = self.efb_copy_cache.remove(&ram_addr) {
                     self.return_to_pool(old_tex, old_view);
                 }
 
@@ -190,6 +194,7 @@ impl GxRenderer {
                     tev_color_env: pack_u32_slice_to_uvec4x4(&draw.tev_color_env),
                     tev_alpha_env: pack_u32_slice_to_uvec4x4(&draw.tev_alpha_env),
                     tev_orders: pack_u32_slice_to_uvec4x4(&draw.tev_orders),
+                    tev_ksel: pack_u32_slice_to_uvec4x4(&draw.tev_ksel),
                     num_tev_stages: draw.num_tev_stages as u32,
                     alpha_ref0: alpha_cmp.ref0() as f32 / 255.0,
                     alpha_ref1: alpha_cmp.ref1() as f32 / 255.0,
@@ -385,11 +390,10 @@ impl GxRenderer {
 
                 for slot in 0..8 {
                     if let Some(tid) = &bg_key.tex_keys[slot] {
-                        // The EFB-copy cache wins over the RAM-decoded
-                        // `texture_cache`.
+                        let ram_addr = ram_addr_of(*tid);
                         let view = self
                             .efb_copy_cache
-                            .get(tid)
+                            .get(&ram_addr)
                             .map(|(_, v)| v)
                             .or_else(|| self.texture_cache.get(tid).map(|(_, _, v)| v));
                         if let Some(view) = view {

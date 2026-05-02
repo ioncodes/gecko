@@ -437,8 +437,7 @@ fn decode_cmpr(tex: &[u8], rgba: &mut [u8], w: usize, h: usize) {
 fn tlut_entry_to_rgba(packed: u16, format: TlutFormat) -> [u8; 4] {
     match format {
         TlutFormat::IA8 => {
-            // Palette IA8 is stored big-endian in TMEM; after our from_be_bytes
-            // load, high byte = alpha, low byte = intensity.
+            // Palette IA8 is stored in raw TMEM order as alpha then intensity.
             let a = (packed >> 8) as u8;
             let i = (packed & 0xFF) as u8;
             [i, i, i, a]

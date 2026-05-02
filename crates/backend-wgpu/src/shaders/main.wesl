@@ -1,5 +1,5 @@
 import super::common::{FrameUniforms, DrawUniforms, VsIn, VsOut, frame, draw, tex0, tex1, tex2, tex3, tex4, tex5, tex6, tex7, samp0, samp1, samp2, samp3, samp4, samp5, samp6, samp7};
-import super::tev_helpers::{read_packed, extract_bits, select_texcoord, stq_to_uv, sample_texmap, tev_color_in, tev_alpha_in};
+import super::tev_helpers::{read_packed, extract_bits, select_texcoord, stq_to_uv, sample_texmap, swizzle_tev_color, tev_color_in, tev_alpha_in};
 import super::tev_indirect::{IndirectSamples, IndirectResult, sample_indirect_textures, apply_indirect, texmap_size};
 import super::tev_combiners::{tev_combine_color, tev_combine_alpha};
 import super::alpha_test::{alpha_compare, alpha_combine};
@@ -62,6 +62,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let texcoord_idx = (order >> 3u) & 7u;
         let tex_enabled = ((order >> 6u) & 1u) != 0u;
         let ras_channel = (order >> 7u) & 7u;
+        let aenv = read_packed(frame.tev_alpha_env, stage);
 
         // Run the stage's indirect pipeline first. It yields the final
         // direct-texmap UV, the fixpoint chaining value, and any bump
@@ -94,6 +95,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             tex_color = vec4<f32>(1.0, 1.0, 1.0, 1.0);
         }
 
+        ras_color = swizzle_tev_color(extract_bits(aenv, 0u, 2u), ras_color);
+        tex_color = swizzle_tev_color(extract_bits(aenv, 2u, 2u), tex_color);
+
         // Combine colors
         let cenv = read_packed(frame.tev_color_env, stage);
 
@@ -120,9 +124,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let color_result = tev_combine_color(in_a, in_b, in_c, in_d, c_bias, c_sub, c_scale, c_clamp);
         // Write RGB to dest, preserve alpha
         regs[c_dest] = vec4(color_result, regs[c_dest].a);
-
-        // Combine alpha
-        let aenv = read_packed(frame.tev_alpha_env, stage);
 
         // TevAlphaEnv bit layout (LSB0):
         //   [6:4]=d  [9:7]=c  [12:10]=b  [15:13]=a

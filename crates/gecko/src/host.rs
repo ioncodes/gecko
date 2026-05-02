@@ -22,8 +22,14 @@ pub enum GxAction {
 
     /// Upload pre-decoded texture data. Emitted when texture content at a
     /// given address changes (detected by hash).
+    ///
+    /// `id` is the renderer side cache key. The low 32 bits are the source
+    /// `ram_addr`; for paletted (CI*) textures the high 32 bits encode the
+    /// bound TLUT (format + tmem_offset), so the same RAM-resident index
+    /// stream bound with two different palettes occupies two distinct cache
+    /// entries instead of clobbering each other.
     LoadTexture {
-        id: Address,
+        id: u64,
         width: u32,
         height: u32,
         fmt: TextureFormat,
@@ -41,10 +47,11 @@ pub enum GxAction {
         dir: PathBuf,
     },
 
-    /// Bind a previously loaded texture to a TEV texture slot.
+    /// Bind a previously loaded texture to a TEV texture slot. `id` matches
+    /// the cache key used in [`Self::LoadTexture`].
     SetTexture {
         slot: usize,
-        id: Address,
+        id: u64,
         wrap_s: WrapMode,
         wrap_t: WrapMode,
         mag_filter: MagFilter,
@@ -154,6 +161,7 @@ pub struct DrawData {
     pub tev_color_env: Vec<u32>,
     pub tev_alpha_env: Vec<u32>,
     pub tev_orders: Vec<u32>,
+    pub tev_ksel: Vec<u32>,
     pub tev_color_regs: [[f32; 4]; 4],
     pub tev_konst_colors: [[f32; 4]; 16],
     pub num_tev_stages: u8,

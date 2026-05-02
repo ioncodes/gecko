@@ -18,7 +18,6 @@ use crate::host::EfbWriteback;
 use crate::host::{GxAction, RenderSink, XfbPart};
 use crate::mmio::Mmio;
 use crate::system::{System, SystemId};
-use fifo::FifoCmd;
 use rustc_hash::FxHashMap;
 
 pub struct GraphicsProcessor {
@@ -71,9 +70,11 @@ pub struct GraphicsProcessor {
     // XFB copies accumulated since the last vblank. `present_xfb()` drains
     // this at each field boundary to emit a PresentXfb action.
     pub xfb_copies: Vec<XfbCopy>,
-    // Hash of the raw texture data at each RAM address; used to detect when
-    // texture content changes and avoid redundant decodes + LoadTexture sends.
-    pub texture_hashes: FxHashMap<u32, u64>,
+    // Hash of the raw texture data at each (ram_addr, tlut_variant) cache id;
+    // used to detect when texture content changes and avoid redundant
+    // decodes + LoadTexture sends. Keyed by the same u64 cache id sent to
+    // the renderer in [`GxAction::LoadTexture`].
+    pub texture_hashes: FxHashMap<u64, u64>,
     // Receiver for encoded EFB-to-texture bytes coming back from the
     // renderer worker. `efb_copy` drains this synchronously right after
     // emitting the copy action, so the next FIFO command in the same burst
@@ -163,44 +164,6 @@ impl GraphicsProcessor {
     ) {
         self.push_u32(val);
         self.drain_fifo(mmio, renderer);
-    }
-
-    fn drain_fifo<const SYSTEM: SystemId>(&mut self, mmio: &mut Mmio<SYSTEM>, renderer: &mut dyn RenderSink) {
-        for cmd in self.drain() {
-            match cmd {
-                FifoCmd::Cp(data) => self.load_cp(&data),
-                FifoCmd::Xf(data) => self.load_xf(renderer, &data),
-                FifoCmd::Bp(data) => {
-                    let mut view = mmio.ram_view_mut();
-                    self.load_bp(renderer, &mut view, &data);
-                }
-                FifoCmd::LoadIndexedXf {
-                    cp_array_index,
-                    index,
-                    xf_addr,
-                    xf_count,
-                } => {
-                    let view = mmio.ram_view();
-                    self.load_indexed_xf(renderer, &view, cp_array_index, index, xf_addr, xf_count);
-                }
-                FifoCmd::CallDisplayList { phys_addr, nbytes } => {
-                    let addr = (phys_addr & 0x3FFFFFFF) as usize;
-                    let len = nbytes as usize;
-                    let view = mmio.ram_view();
-                    let Some(slice) = view.slice(addr, len) else {
-                        tracing::warn!(
-                            addr = format!("{addr:#010X}"),
-                            len,
-                            "CallDisplayList: source not mapped to MEM1/MEM2, skipping"
-                        );
-                        continue;
-                    };
-                    let dl = slice.to_vec();
-                    self.execute_display_list(mmio, renderer, &dl);
-                }
-                FifoCmd::DrawCall(cmd, data) => self.create_draw_call(mmio, renderer, cmd, data),
-            }
-        }
     }
 
     fn execute_display_list<const SYSTEM: SystemId>(

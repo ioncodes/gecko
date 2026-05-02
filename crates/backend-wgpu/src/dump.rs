@@ -17,7 +17,7 @@ impl GxRenderer {
         }
 
         let mut saved = 0usize;
-        for (addr, (fmt, tex, _)) in self.texture_cache.iter() {
+        for (cache_id, (fmt, tex, _)) in self.texture_cache.iter() {
             let size = tex.size();
             let width = size.width;
             let height = size.height;
@@ -27,7 +27,7 @@ impl GxRenderer {
 
             if tex.format() != wgpu::TextureFormat::Rgba8Unorm {
                 tracing::warn!(
-                    addr = *addr,
+                    cache_id = *cache_id,
                     wgpu_fmt = ?tex.format(),
                     "dump_textures: skipping non-Rgba8Unorm texture"
                 );
@@ -75,7 +75,7 @@ impl GxRenderer {
                 submission_index: None,
                 timeout: Some(Duration::from_secs(5)),
             }) {
-                tracing::warn!(addr = *addr, ?err, "dump_textures: device poll failed");
+                tracing::warn!(cache_id = *cache_id, ?err, "dump_textures: device poll failed");
                 continue;
             }
 
@@ -92,7 +92,9 @@ impl GxRenderer {
             }
             staging.unmap();
 
-            let filename = format!("{millis}_{:08X}_{:?}_{}x{}.png", *addr, *fmt, width, height);
+            let ram_addr = (*cache_id) as u32;
+            let variant = (*cache_id >> 32) as u32;
+            let filename = format!("{millis}_{ram_addr:08X}_{variant:08X}_{fmt:?}_{width}x{height}.png");
             let path: PathBuf = dir.join(filename);
             capture::save_png_async(path, CapturedFrame { width, height, rgba }, false);
             saved += 1;
