@@ -16,12 +16,12 @@ pub struct VerticalTiming {
 crate::mmio_reg!(VerticalTiming: u16 @ 0xCC002000);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for VerticalTiming {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.vi.vtr
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.vi.vtr
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.vi.vtr = self;
-        vi::ensure_half_line_scheduled(gc);
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.vi.vtr = self;
+        vi::ensure_half_line_scheduled(sys);
     }
 }
 
@@ -98,19 +98,19 @@ impl DisplayConfiguration {
 }
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DisplayConfiguration {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.vi.dcr
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.vi.dcr
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
         // TODO: Rising edge on RST clears the register. Just a test for now.
-        if self.reset() && !gc.vi.dcr.reset() {
-            gc.vi.dcr = DisplayConfiguration::from_raw(0);
+        if self.reset() && !sys.vi.dcr.reset() {
+            sys.vi.dcr = DisplayConfiguration::from_raw(0);
         } else {
-            gc.vi.dcr = self;
+            sys.vi.dcr = self;
         }
 
-        vi::ensure_half_line_scheduled(gc);
+        vi::ensure_half_line_scheduled(sys);
     }
 }
 
@@ -129,12 +129,12 @@ pub struct HorizontalTiming0 {
 crate::mmio_reg!(HorizontalTiming0: u32 @ 0xCC002004);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for HorizontalTiming0 {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.vi.htr0
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.vi.htr0
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.vi.htr0 = self;
-        vi::ensure_half_line_scheduled(gc);
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.vi.htr0 = self;
+        vi::ensure_half_line_scheduled(sys);
     }
 }
 
@@ -166,12 +166,12 @@ pub struct VerticalTimingOdd {
 crate::mmio_reg!(VerticalTimingOdd: u32 @ 0xCC00200C);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for VerticalTimingOdd {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.vi.vto
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.vi.vto
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.vi.vto = self;
-        vi::ensure_half_line_scheduled(gc);
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.vi.vto = self;
+        vi::ensure_half_line_scheduled(sys);
     }
 }
 
@@ -188,12 +188,12 @@ pub struct VerticalTimingEven {
 crate::mmio_reg!(VerticalTimingEven: u32 @ 0xCC002010);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for VerticalTimingEven {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.vi.vte
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.vi.vte
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.vi.vte = self;
-        vi::ensure_half_line_scheduled(gc);
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.vi.vte = self;
+        vi::ensure_half_line_scheduled(sys);
     }
 }
 
@@ -310,9 +310,9 @@ pub struct DisplayPositionHorizontal {
 crate::mmio_reg!(DisplayPositionHorizontal: u16 @ 0xCC00202E);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DisplayPositionHorizontal {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        let cycles = gc.scheduler.cycles;
-        DisplayPositionHorizontal::from_raw(gc.vi.dph_value(SYSTEM, cycles))
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        let cycles = sys.scheduler.cycles;
+        DisplayPositionHorizontal::from_raw(sys.vi.dph_value(SYSTEM, cycles))
     }
 
     fn write(self, _gc: &mut System<SYSTEM>, _: WriteMask) {
@@ -332,9 +332,9 @@ pub struct DisplayPositionCombined {}
 crate::mmio_reg!(DisplayPositionCombined: u32 @ 0xCC00202C);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DisplayPositionCombined {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        let dpv = gc.vi.dpv.raw() as u32;
-        let dph = gc.vi.dph_value(SYSTEM, gc.scheduler.cycles) as u32;
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        let dpv = sys.vi.dpv.raw() as u32;
+        let dph = sys.vi.dph_value(SYSTEM, sys.scheduler.cycles) as u32;
         DisplayPositionCombined::from_raw((dpv << 16) | dph)
     }
 
@@ -364,12 +364,12 @@ pub struct DisplayInterrupt0 {
 crate::mmio_reg!(DisplayInterrupt0: u32 @ 0xCC002030);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DisplayInterrupt0 {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.vi.di0
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.vi.di0
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.vi.di0 = self;
-        vi::refresh_interrupts(gc);
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.vi.di0 = self;
+        vi::refresh_interrupts(sys);
     }
 }
 
@@ -390,12 +390,12 @@ pub struct DisplayInterrupt1 {
 crate::mmio_reg!(DisplayInterrupt1: u32 @ 0xCC002034);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DisplayInterrupt1 {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.vi.di1
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.vi.di1
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.vi.di1 = self;
-        vi::refresh_interrupts(gc);
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.vi.di1 = self;
+        vi::refresh_interrupts(sys);
     }
 }
 
@@ -416,12 +416,12 @@ pub struct DisplayInterrupt2 {
 crate::mmio_reg!(DisplayInterrupt2: u32 @ 0xCC002038);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DisplayInterrupt2 {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.vi.di2
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.vi.di2
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.vi.di2 = self;
-        vi::refresh_interrupts(gc);
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.vi.di2 = self;
+        vi::refresh_interrupts(sys);
     }
 }
 
@@ -442,12 +442,12 @@ pub struct DisplayInterrupt3 {
 crate::mmio_reg!(DisplayInterrupt3: u32 @ 0xCC00203C);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DisplayInterrupt3 {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.vi.di3
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.vi.di3
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.vi.di3 = self;
-        vi::refresh_interrupts(gc);
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.vi.di3 = self;
+        vi::refresh_interrupts(sys);
     }
 }
 
@@ -629,12 +629,12 @@ pub struct ViClockSelect {
 crate::mmio_reg!(ViClockSelect: u16 @ 0xCC00206C);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for ViClockSelect {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.vi.viclk
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.vi.viclk
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.vi.viclk = self;
-        vi::ensure_half_line_scheduled(gc);
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.vi.viclk = self;
+        vi::ensure_half_line_scheduled(sys);
     }
 }
 

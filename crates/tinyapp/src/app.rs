@@ -4,6 +4,7 @@ use crossbeam_channel::Receiver;
 use egui::ViewportId;
 use gecko::flipper::si::pad::PadStatus;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -217,6 +218,8 @@ pub struct App {
     pub state: Option<State>,
     pub present_mode: wgpu::PresentMode,
     pub init: Option<AppInit>,
+    pub _audio_stream: Option<cpal::Stream>,
+    pub shutdown_requested: Arc<AtomicBool>,
 }
 
 pub struct AppInit {
@@ -324,7 +327,12 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, _event: ()) {
+        if self.shutdown_requested.load(Ordering::Relaxed) {
+            event_loop.exit();
+            return;
+        }
+
         if let Some(window) = &self.window {
             window.request_redraw();
         }

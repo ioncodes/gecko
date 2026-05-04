@@ -1,3 +1,4 @@
+use crate::audio::{AudioSink, EmptyAudioSink};
 use crate::dvd::DvdInterface;
 use crate::flipper::ai::AudioInterface;
 use crate::flipper::cp::CommandProcessor;
@@ -50,6 +51,9 @@ pub struct System<const SYSTEM: SystemId> {
     /// GX dispatches actions here.
     pub render_sink: Box<dyn RenderSink>,
 
+    /// AID DMA pushes 8-frame stereo s16 blocks here.
+    pub audio_sink: Box<dyn AudioSink>,
+
     #[cfg(feature = "idle-skip")]
     pub(crate) idle: IdleDetector,
 
@@ -84,6 +88,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             hollywood: Hollywood::new(),
 
             render_sink: Box::new(EmptyRenderSink),
+            audio_sink: Box::new(EmptyAudioSink),
 
             #[cfg(feature = "idle-skip")]
             idle: IdleDetector::new(),

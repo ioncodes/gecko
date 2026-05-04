@@ -265,39 +265,39 @@ crate::mmio_device_dispatch! {
 }
 
 #[inline(always)]
-pub fn ensure_half_line_scheduled<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
-    if !gc.vi.half_line_scheduled {
-        let ticks_per_hl = gc.vi.ticks_per_half_line(SYSTEM);
+pub fn ensure_half_line_scheduled<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    if !sys.vi.half_line_scheduled {
+        let ticks_per_hl = sys.vi.ticks_per_half_line(SYSTEM);
         if ticks_per_hl > 0 {
-            gc.vi.half_line_scheduled = true;
-            gc.scheduler.schedule_in(ticks_per_hl, |gc| {
-                let prev_hl = gc.vi.half_line_count;
-                gc.vi.on_half_line(gc.scheduler.cycles);
-                gc.vi.half_line_scheduled = false;
+            sys.vi.half_line_scheduled = true;
+            sys.scheduler.schedule_in(ticks_per_hl, |sys| {
+                let prev_hl = sys.vi.half_line_count;
+                sys.vi.on_half_line(sys.scheduler.cycles);
+                sys.vi.half_line_scheduled = false;
 
-                let curr_hl = gc.vi.half_line_count;
-                let total_hl = gc.vi.total_half_lines();
+                let curr_hl = sys.vi.half_line_count;
+                let total_hl = sys.vi.total_half_lines();
                 let odd_field_start = 0u32;
-                let even_field_start = gc.vi.half_lines_per_odd_field();
+                let even_field_start = sys.vi.half_lines_per_odd_field();
                 if total_hl > 0 && (curr_hl == odd_field_start || curr_hl == even_field_start) && curr_hl != prev_hl {
-                    crate::flipper::gx::present_xfb(gc);
+                    crate::flipper::gx::present_xfb(sys);
                 }
 
-                self::ensure_half_line_scheduled(gc);
-                self::refresh_interrupts(gc);
+                self::ensure_half_line_scheduled(sys);
+                self::refresh_interrupts(sys);
             });
         }
     }
 }
 
 #[inline(always)]
-pub fn refresh_interrupts<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
+pub fn refresh_interrupts<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     use crate::flipper::pi::InterruptFlag;
 
-    if gc.vi.vi_interrupt_active() {
-        gc.pi.assert_interrupt(InterruptFlag::Vi);
+    if sys.vi.vi_interrupt_active() {
+        sys.pi.assert_interrupt(InterruptFlag::Vi);
     } else {
-        gc.pi.clear_interrupt(InterruptFlag::Vi);
+        sys.pi.clear_interrupt(InterruptFlag::Vi);
     }
 }
 

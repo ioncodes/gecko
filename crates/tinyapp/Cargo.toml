@@ -7,6 +7,7 @@ edition = "2024"
 hooks = ["gecko/hooks", "dep:scripting"]
 hooks-mut-traps = ["hooks", "gecko/hooks-mut-traps", "scripting/hooks-mut-traps"]
 efb-writeback = ["backend-wgpu/efb-writeback"]
+audio-wav-dump = ["gecko/audio-wav-dump"]
 
 [dependencies]
 gecko = { path = "../gecko" }
@@ -20,6 +21,10 @@ egui = "0.33.3"
 egui-wgpu = "0.33.3"
 egui-winit = { version = "0.33.3", features = ["wayland", "x11"] }
 egui_plot = "0.34.1"
+tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 clap = { version = "4.6.0", features = ["derive"] }
 crossbeam-channel = "0.5.15"
+cpal = "0.17.3"
+ringbuf = "0.5.0"
+ctrlc = "3.5.2"

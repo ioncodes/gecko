@@ -1,3 +1,4 @@
+pub mod accelerator;
 pub mod addr;
 pub mod condition;
 pub mod core;
@@ -57,6 +58,9 @@ pub struct Dsp {
     pub dma_dsp_addr: u16,
     pub dma_ram_addr_hi: u16,
     pub dma_ram_addr_lo: u16,
+
+    // Audio sample accelerator (DSP IFX 0xFFD0..0xFFDF).
+    pub accelerator: accelerator::Accelerator,
 }
 
 impl Dsp {
@@ -94,6 +98,7 @@ impl Dsp {
             dma_dsp_addr: 0,
             dma_ram_addr_hi: 0,
             dma_ram_addr_lo: 0,
+            accelerator: accelerator::Accelerator::new(),
         }
     }
 
@@ -154,7 +159,8 @@ impl Dsp {
             ram_addr = format!("{ram_addr:08X}"),
             dsp_addr = format!("{dsp_addr:04X}"),
             len,
-            dscr = format!("{:04X}", self.dma_control.raw()),
+            dir = ?self.dma_control.direction(),
+            mem = ?self.dma_control.memory_type(),
             "DSP DMA"
         );
 
@@ -246,6 +252,28 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         }
         self::refresh_interrupts(self);
     }
+
+    /// Run the DSP synchronously up to `max_steps` instructions or until
+    /// the DSP-to-CPU mailbox is set busy (i.e. the DSP has answered the
+    /// command). Used by AID DMA path to make the CPUs mailbox writes
+    /// behave as if the DSP processed them immediately, so AX has time to
+    /// render and DMA the buffer before AID consumes it.
+    pub fn drain_dsp_synchronous(&mut self, max_steps: u32) {
+        let already_busy = self.dsp.mailbox_to_cpu_hi.busy();
+
+        for _ in 0..max_steps {
+            if !self.step_dsp_instruction() {
+                break;
+            }
+
+            if !already_busy && self.dsp.mailbox_to_cpu_hi.busy() {
+                // DSP responded; assume AX render is complete.
+                break;
+            }
+        }
+
+        self::refresh_interrupts(self);
+    }
 }
 
 crate::mmio_device_dispatch! {
@@ -287,6 +315,13 @@ impl Dsp {
         tracing::info!(size = len, "loaded DSP IROM");
     }
 
+    /// Load a binary file into the coefficient ROM (DMEM 0x1000..0x1FFF).
+    pub fn load_coef(&mut self, data: &[u8]) {
+        let len = data.len().min(self.coef.len());
+        self.coef[..len].copy_from_slice(&data[..len]);
+        tracing::info!(size = len, "loaded DSP coefficient ROM");
+    }
+
     #[inline(always)]
     pub fn interrupt_active(&self) -> bool {
         (self.csr.ai_interrupt() && self.csr.ai_interrupt_mask())
@@ -296,101 +331,150 @@ impl Dsp {
 }
 
 #[inline(always)]
-pub fn refresh_interrupts<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
+pub fn refresh_interrupts<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     use crate::flipper::pi::InterruptFlag;
 
-    if gc.dsp.interrupt_active() {
-        gc.pi.assert_interrupt(InterruptFlag::Dsp);
+    if sys.dsp.interrupt_active() {
+        sys.pi.assert_interrupt(InterruptFlag::Dsp);
     } else {
-        gc.pi.clear_interrupt(InterruptFlag::Dsp);
+        sys.pi.clear_interrupt(InterruptFlag::Dsp);
     }
 }
 
 #[inline(always)]
-pub fn read_dmem<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, addr: u16) -> u16 {
+pub fn read_dmem<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, addr: u16) -> u16 {
     match addr {
-        0x0000..0x1000 => read_word(&*gc.dsp.dram, addr),
-        0x1000..0x2000 => read_word(&*gc.dsp.coef, addr - 0x1000),
-        0xFF00..=0xFFFF => read_ifx(gc, addr),
+        0x0000..0x1000 => read_word(&*sys.dsp.dram, addr),
+        0x1000..0x2000 => read_word(&*sys.dsp.coef, addr - 0x1000),
+        0xFF00..=0xFFFF => read_ifx(sys, addr),
         _ => 0,
     }
 }
 
 #[inline(always)]
-pub fn write_dmem<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, addr: u16, value: u16) {
+pub fn write_dmem<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, addr: u16, value: u16) {
     match addr {
-        0x0000..0x1000 => write_word(&mut *gc.dsp.dram, addr, value),
-        0xFF00..=0xFFFF => write_ifx(gc, addr, value),
+        0x0000..0x1000 => write_word(&mut *sys.dsp.dram, addr, value),
+        0xFF00..=0xFFFF => write_ifx(sys, addr, value),
         _ => {}
     }
 }
 
 #[inline(always)]
-fn read_ifx<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, addr: u16) -> u16 {
+fn read_ifx<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, addr: u16) -> u16 {
     match addr {
         // CMBH (CPU Mailbox High): reading returns data + M bit.
         // M is only cleared when CMBL is read.
-        addr::IFX_CMBH => gc.dsp.mailbox_to_dsp_hi.raw(),
+        addr::IFX_CMBH => sys.dsp.mailbox_to_dsp_hi.raw(),
         // CMBL (CPU Mailbox Low): reading clears CMBH.M (busy)
         addr::IFX_CMBL => {
-            gc.dsp.mailbox_to_dsp_hi.set_busy(false);
-            gc.dsp.mailbox_to_dsp_lo.raw()
+            sys.dsp.mailbox_to_dsp_hi.set_busy(false);
+            sys.dsp.mailbox_to_dsp_lo.raw()
         }
         // DMBH (DSP Mailbox High): DSP reads back what it wrote
-        addr::IFX_DMBH => gc.dsp.mailbox_to_cpu_hi.raw(),
+        addr::IFX_DMBH => sys.dsp.mailbox_to_cpu_hi.raw(),
         // DMBL (DSP Mailbox Low): DSP reads back what it wrote (no side effects)
-        addr::IFX_DMBL => gc.dsp.mailbox_to_cpu_lo.raw(),
+        addr::IFX_DMBL => sys.dsp.mailbox_to_cpu_lo.raw(),
         // DSP DMA registers
-        addr::IFX_DSCR => gc.dsp.dma_control.raw(),
-        addr::IFX_DSBL => gc.dsp.dma_length,
-        addr::IFX_DSPA => gc.dsp.dma_dsp_addr,
-        addr::IFX_DSMAH => gc.dsp.dma_ram_addr_hi,
-        addr::IFX_DSMAL => gc.dsp.dma_ram_addr_lo,
+        addr::IFX_DSCR => sys.dsp.dma_control.raw(),
+        addr::IFX_DSBL => sys.dsp.dma_length,
+        addr::IFX_DSPA => sys.dsp.dma_dsp_addr,
+        addr::IFX_DSMAH => sys.dsp.dma_ram_addr_hi,
+        addr::IFX_DSMAL => sys.dsp.dma_ram_addr_lo,
+        // Audio sample accelerator
+        addr::IFX_FORMAT => sys.dsp.accelerator.format.raw(),
+        addr::IFX_ACSAH => (sys.dsp.accelerator.start_addr >> 16) as u16,
+        addr::IFX_ACSAL => sys.dsp.accelerator.start_addr as u16,
+        addr::IFX_ACEAH => (sys.dsp.accelerator.end_addr >> 16) as u16,
+        addr::IFX_ACEAL => sys.dsp.accelerator.end_addr as u16,
+        addr::IFX_ACCAH => (sys.dsp.accelerator.current_addr >> 16) as u16,
+        addr::IFX_ACCAL => sys.dsp.accelerator.current_addr as u16,
+        addr::IFX_PRED_SCALE => sys.dsp.accelerator.pred_scale,
+        addr::IFX_YN1 => sys.dsp.accelerator.yn1 as u16,
+        addr::IFX_YN2 => sys.dsp.accelerator.yn2 as u16,
+        addr::IFX_GAIN => sys.dsp.accelerator.gain as u16,
+        addr::IFX_ACIN => sys.dsp.accelerator.input,
+        addr::IFX_ACDSAMP => accelerator::read_decoded_sample::<SYSTEM>(&mut sys.dsp, sys.mmio.ram_view()),
+        addr::IFX_ACDRAW => accelerator::read_raw::<SYSTEM>(&mut sys.dsp, sys.mmio.ram_view()),
         _ => {
             tracing::debug!(addr = format!("{:04X}", addr), "Read from unknown DSP IFX register");
-            read_word(&*gc.dsp.ifx, addr - 0xFF00)
+            read_word(&*sys.dsp.ifx, addr - 0xFF00)
         }
     }
 }
 
 #[inline(always)]
-fn write_ifx<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, addr: u16, value: u16) {
+fn write_ifx<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, addr: u16, value: u16) {
     match addr {
         // DMBH (DSP Mailbox High): store data bits (14:0), busy is preserved
         addr::IFX_DMBH => {
-            let busy = gc.dsp.mailbox_to_cpu_hi.busy();
-            gc.dsp.mailbox_to_cpu_hi = regs::MailboxToCpuHi::from_raw(value & 0x7FFF).with_busy(busy);
+            let busy = sys.dsp.mailbox_to_cpu_hi.busy();
+            sys.dsp.mailbox_to_cpu_hi = regs::MailboxToCpuHi::from_raw(value & 0x7FFF).with_busy(busy);
         }
         // DMBL (DSP Mailbox Low): writing sets DMBH.M
         addr::IFX_DMBL => {
-            gc.dsp.mailbox_to_cpu_lo = regs::MailboxToCpuLo::from_raw(value);
-            gc.dsp.mailbox_to_cpu_hi.set_busy(true);
+            sys.dsp.mailbox_to_cpu_lo = regs::MailboxToCpuLo::from_raw(value);
+            sys.dsp.mailbox_to_cpu_hi.set_busy(true);
         }
         // DIRQ: DSP explicitly raises interrupt to CPU
         addr::IFX_DIRQ => {
             if value & 1 != 0 {
                 tracing::debug!("DSP DIRQ: requesting CPU interrupt");
-                gc.dsp.csr.set_dsp_interrupt(true);
+                sys.dsp.csr.set_dsp_interrupt(true);
             }
         }
         // CMBH/CMBL are read-only from DSP side
         addr::IFX_CMBH | addr::IFX_CMBL => {}
         // DSP DMA: writing DSBL triggers the transfer, run inline.
         addr::IFX_DSBL => {
-            gc.dsp.dma_length = value;
-            gc.dsp.process_dsp_dma(&mut gc.mmio);
+            sys.dsp.dma_length = value;
+            sys.dsp.process_dsp_dma(&mut sys.mmio);
         }
-        addr::IFX_DSCR => gc.dsp.dma_control = core::regs::DspDmaControl::from_raw(value),
-        addr::IFX_DSPA => gc.dsp.dma_dsp_addr = value,
-        addr::IFX_DSMAH => gc.dsp.dma_ram_addr_hi = value,
-        addr::IFX_DSMAL => gc.dsp.dma_ram_addr_lo = value,
+        addr::IFX_DSCR => sys.dsp.dma_control = core::regs::DspDmaControl::from_raw(value),
+        addr::IFX_DSPA => sys.dsp.dma_dsp_addr = value,
+        addr::IFX_DSMAH => sys.dsp.dma_ram_addr_hi = value,
+        addr::IFX_DSMAL => sys.dsp.dma_ram_addr_lo = value,
+        // Audio sample accelerator
+        addr::IFX_FORMAT => sys.dsp.accelerator.format = accelerator::SampleFormat::from_raw(value),
+        addr::IFX_ACSAH => {
+            let new = ((value as u32) << 16) | (sys.dsp.accelerator.start_addr & 0x0000_FFFF);
+            sys.dsp.accelerator.set_start_addr(new);
+        }
+        addr::IFX_ACSAL => {
+            let new = (sys.dsp.accelerator.start_addr & 0xFFFF_0000) | value as u32;
+            sys.dsp.accelerator.set_start_addr(new);
+        }
+        addr::IFX_ACEAH => {
+            let new = ((value as u32) << 16) | (sys.dsp.accelerator.end_addr & 0x0000_FFFF);
+            sys.dsp.accelerator.set_end_addr(new);
+        }
+        addr::IFX_ACEAL => {
+            let new = (sys.dsp.accelerator.end_addr & 0xFFFF_0000) | value as u32;
+            sys.dsp.accelerator.set_end_addr(new);
+        }
+        addr::IFX_ACCAH => {
+            let new = ((value as u32) << 16) | (sys.dsp.accelerator.current_addr & 0x0000_FFFF);
+            sys.dsp.accelerator.set_current_addr(new);
+        }
+        addr::IFX_ACCAL => {
+            let new = (sys.dsp.accelerator.current_addr & 0xFFFF_0000) | value as u32;
+            sys.dsp.accelerator.set_current_addr(new);
+        }
+        addr::IFX_PRED_SCALE => sys.dsp.accelerator.set_pred_scale(value),
+        addr::IFX_YN1 => sys.dsp.accelerator.yn1 = value as i16,
+        addr::IFX_YN2 => sys.dsp.accelerator.set_yn2(value as i16),
+        addr::IFX_GAIN => sys.dsp.accelerator.gain = value as i16,
+        addr::IFX_ACIN => sys.dsp.accelerator.input = value,
+        addr::IFX_ACDRAW => accelerator::write_raw::<SYSTEM>(&mut sys.dsp, sys.mmio.ram_view_mut(), value),
+        // ACDSAMP is read-only
+        addr::IFX_ACDSAMP => {}
         _ => {
             tracing::debug!(
                 addr = format!("{:04X}", addr),
                 value = format!("{:04X}", value),
                 "Write to unknown DSP IFX register"
             );
-            write_word(&mut *gc.dsp.ifx, addr - 0xFF00, value);
+            write_word(&mut *sys.dsp.ifx, addr - 0xFF00, value);
         }
     }
 }

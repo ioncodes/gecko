@@ -76,12 +76,12 @@ crate::mmio_device_dispatch! {
 }
 
 #[inline(always)]
-pub fn refresh_interrupts<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
+pub fn refresh_interrupts<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     use crate::flipper::pi::InterruptFlag;
 
-    if gc.cp.interrupt_active() {
-        gc.pi.assert_interrupt(InterruptFlag::Cp);
+    if sys.cp.interrupt_active() {
+        sys.pi.assert_interrupt(InterruptFlag::Cp);
     } else {
-        gc.pi.clear_interrupt(InterruptFlag::Cp);
+        sys.pi.clear_interrupt(InterruptFlag::Cp);
     }
 }

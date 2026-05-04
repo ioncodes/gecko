@@ -197,49 +197,49 @@ crate::mmio_device_dispatch! {
 }
 
 #[inline(always)]
-pub fn refresh_interrupts<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
+pub fn refresh_interrupts<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     use crate::flipper::pi::InterruptFlag;
 
-    if gc.exi.interrupt_active() {
-        gc.pi.assert_interrupt(InterruptFlag::Exi);
+    if sys.exi.interrupt_active() {
+        sys.pi.assert_interrupt(InterruptFlag::Exi);
     } else {
-        gc.pi.clear_interrupt(InterruptFlag::Exi);
+        sys.pi.clear_interrupt(InterruptFlag::Exi);
     }
 }
 
 #[inline(always)]
-pub fn on_chip_select_written<const CHANNEL: usize, const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, new_cs: u8) {
-    let prev = gc.exi.prev_cs[CHANNEL];
+pub fn on_chip_select_written<const CHANNEL: usize, const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, new_cs: u8) {
+    let prev = sys.exi.prev_cs[CHANNEL];
     if new_cs != prev && new_cs != 0 {
         if let Some(slot) = ExternalInterface::cs_to_slot(new_cs)
-            && let Some(device) = &mut gc.exi.devices[CHANNEL][slot]
+            && let Some(device) = &mut sys.exi.devices[CHANNEL][slot]
         {
             device.on_select();
         }
     }
-    gc.exi.prev_cs[CHANNEL] = new_cs;
+    sys.exi.prev_cs[CHANNEL] = new_cs;
 }
 
 #[inline(always)]
-pub fn run_dma<const CHANNEL: usize, const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
+pub fn run_dma<const CHANNEL: usize, const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     let (cs, transfer_type, address, length) = match CHANNEL {
         0 => (
-            gc.exi.ch0_csr.chip_select(),
-            gc.exi.ch0_cr.transfer_type(),
-            gc.exi.ch0_mar.address() << 5,
-            gc.exi.ch0_length.length() << 5,
+            sys.exi.ch0_csr.chip_select(),
+            sys.exi.ch0_cr.transfer_type(),
+            sys.exi.ch0_mar.address() << 5,
+            sys.exi.ch0_length.length() << 5,
         ),
         1 => (
-            gc.exi.ch1_csr.chip_select(),
-            gc.exi.ch1_cr.transfer_type(),
-            gc.exi.ch1_mar.address() << 5,
-            gc.exi.ch1_length.length() << 5,
+            sys.exi.ch1_csr.chip_select(),
+            sys.exi.ch1_cr.transfer_type(),
+            sys.exi.ch1_mar.address() << 5,
+            sys.exi.ch1_length.length() << 5,
         ),
         2 => (
-            gc.exi.ch2_csr.chip_select(),
-            gc.exi.ch2_cr.transfer_type(),
-            gc.exi.ch2_mar.address() << 5,
-            gc.exi.ch2_length.length() << 5,
+            sys.exi.ch2_csr.chip_select(),
+            sys.exi.ch2_cr.transfer_type(),
+            sys.exi.ch2_mar.address() << 5,
+            sys.exi.ch2_length.length() << 5,
         ),
         _ => unreachable!(),
     };
@@ -257,15 +257,15 @@ pub fn run_dma<const CHANNEL: usize, const SYSTEM: SystemId>(gc: &mut System<SYS
         Some(s) => s,
         None => {
             tracing::warn!(channel = CHANNEL, cs, "EXI DMA transfer with no/invalid chip select");
-            gc.exi.finish_transfer::<CHANNEL>();
+            sys.exi.finish_transfer::<CHANNEL>();
             return;
         }
     };
 
-    if let Some(device) = &mut gc.exi.devices[CHANNEL][slot] {
+    if let Some(device) = &mut sys.exi.devices[CHANNEL][slot] {
         match transfer_type {
-            TransferType::Read => device.dma_read(gc.mmio.phys_slice_mut(address, length as usize)),
-            TransferType::Write => device.dma_write(gc.mmio.phys_slice(address, length as usize)),
+            TransferType::Read => device.dma_read(sys.mmio.phys_slice_mut(address, length as usize)),
+            TransferType::Write => device.dma_write(sys.mmio.phys_slice(address, length as usize)),
             TransferType::ReadAndWrite | TransferType::Reserved => {
                 tracing::error!(
                     channel = CHANNEL,
@@ -276,5 +276,5 @@ pub fn run_dma<const CHANNEL: usize, const SYSTEM: SystemId>(gc: &mut System<SYS
         }
     }
 
-    gc.exi.finish_transfer::<CHANNEL>();
+    sys.exi.finish_transfer::<CHANNEL>();
 }

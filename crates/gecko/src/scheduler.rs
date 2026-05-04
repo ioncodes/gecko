@@ -153,17 +153,17 @@ impl<const SYSTEM: SystemId> Scheduler<SYSTEM> {
 }
 
 /// Reschedules itself every frame.
-pub fn vsync_handler<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
-    gc.vsync_pending = true;
-    let rate = gc.vi.dcr.video_format().refresh_rate();
-    gc.scheduler
+pub fn vsync_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    sys.vsync_pending = true;
+    let rate = sys.vi.dcr.video_format().refresh_rate();
+    sys.scheduler
         .schedule_in(rate.cycles_per_frame(SYSTEM), self::vsync_handler::<SYSTEM>);
 }
 
 /// Reschedules itself every DSP batch.
-pub fn dsp_batch_handler<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
-    gc.execute_dsp_batch();
-    gc.scheduler.schedule_in(
+pub fn dsp_batch_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    sys.execute_dsp_batch();
+    sys.scheduler.schedule_in(
         self::cpu_cycles_per_dsp_tick(SYSTEM) * self::DSP_BATCH_SIZE,
         self::dsp_batch_handler::<SYSTEM>,
     );

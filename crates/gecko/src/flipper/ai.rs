@@ -1,5 +1,6 @@
 pub mod regs;
 
+use crate::audio::{self, AidBlock};
 use crate::flipper::dsp;
 use crate::scheduler;
 use crate::system::{System, SystemId};
@@ -14,17 +15,19 @@ pub struct AudioInterface {
     pub interrupt_timing: regs::AiInterruptTiming,
     pub sample_counter_base_cycle: u64,
     pub audio_dma_remaining_blocks: u16,
+    pub audio_dma_current_addr: u32,
 }
 
 impl AudioInterface {
     pub fn new() -> Self {
         Self {
-            control: regs::AiControl::from_raw(0),
+            control: regs::AiControl::from_raw(0).with_dsp_sample_rate(regs::SampleRate::Rate32KHz),
             volume: regs::AiVolume::from_raw(0),
             sample_counter: regs::AiSampleCounter::from_raw(0),
             interrupt_timing: regs::AiInterruptTiming::from_raw(0),
             sample_counter_base_cycle: 0,
             audio_dma_remaining_blocks: 0,
+            audio_dma_current_addr: 0,
         }
     }
 
@@ -41,10 +44,7 @@ impl AudioInterface {
         }
 
         let elapsed = current_cycles.saturating_sub(self.sample_counter_base_cycle);
-        let sample_rate = match self.control.sample_rate() {
-            regs::SampleRate::Rate32KHz => 32_000,
-            regs::SampleRate::Rate48KHz => 48_000,
-        };
+        let sample_rate = self.control.sample_rate().hz() as u128;
         ((elapsed as u128 * sample_rate) / scheduler::cpu_clock(system) as u128) as u32
     }
 }
@@ -61,107 +61,114 @@ crate::mmio_device_dispatch! {
 }
 
 #[inline(always)]
-pub fn start_audio_dma<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
-    if !gc.dsp.audio_dma_control.play() {
+pub fn start_audio_dma<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    if !sys.dsp.audio_dma_control.play() {
         return;
     }
 
-    let blocks = gc.dsp.audio_dma_control.length();
+    let blocks = sys.dsp.audio_dma_control.length();
     if blocks == 0 {
-        stop_audio_dma(gc);
+        stop_audio_dma(sys);
         return;
     }
 
-    gc.scheduler.cancel(self::audio_dma_block_handler);
-    gc.ai.audio_dma_remaining_blocks = blocks;
-    gc.dsp.csr.set_dma_status(true);
+    sys.scheduler.cancel(self::audio_dma_block_handler);
+    sys.ai.audio_dma_remaining_blocks = blocks;
+    sys.ai.audio_dma_current_addr = sys.dsp.audio_dma_start_addr.raw();
+    sys.dsp.csr.set_dma_status(true);
 
-    let addr = gc.dsp.audio_dma_start_addr.raw();
+    let addr = sys.dsp.audio_dma_start_addr.raw();
     let len = blocks as u32 * AUDIO_DMA_BLOCK_BYTES;
 
-    tracing::debug!(addr = format!("{addr:08X}"), len, "Audio DMA");
+    tracing::debug!(addr = format!("{addr:08X}"), len, "AID DMA started");
 
-    // TODO: actually stream samples to audio output.
-    gc.scheduler
-        .schedule_in(cycles_per_audio_dma_block(gc), self::audio_dma_block_handler);
+    sys.scheduler
+        .schedule_in(cycles_per_audio_dma_block(sys), self::audio_dma_block_handler);
 }
 
 #[inline(always)]
-pub fn stop_audio_dma<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
-    gc.scheduler.cancel(self::audio_dma_block_handler);
-    gc.ai.audio_dma_remaining_blocks = 0;
-    gc.dsp.csr.set_dma_status(false);
+pub fn stop_audio_dma<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    sys.scheduler.cancel(self::audio_dma_block_handler);
+    sys.ai.audio_dma_remaining_blocks = 0;
+    sys.dsp.csr.set_dma_status(false);
 }
 
 #[inline(always)]
-pub fn audio_dma_block_handler<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
-    if !gc.dsp.audio_dma_control.play() {
-        stop_audio_dma(gc);
+pub fn audio_dma_block_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    if !sys.dsp.audio_dma_control.play() {
+        stop_audio_dma(sys);
         return;
     }
 
-    if gc.ai.audio_dma_remaining_blocks == 0 {
-        gc.ai.audio_dma_remaining_blocks = gc.dsp.audio_dma_control.length();
+    if sys.ai.audio_dma_remaining_blocks == 0 {
+        sys.ai.audio_dma_remaining_blocks = sys.dsp.audio_dma_control.length();
+        sys.ai.audio_dma_current_addr = sys.dsp.audio_dma_start_addr.raw();
     }
 
-    if gc.ai.audio_dma_remaining_blocks == 0 {
-        stop_audio_dma(gc);
+    if sys.ai.audio_dma_remaining_blocks == 0 {
+        stop_audio_dma(sys);
         return;
     }
 
-    gc.ai.audio_dma_remaining_blocks -= 1;
+    let block_bytes: [u8; 32] = {
+        let src = sys
+            .mmio
+            .virt_slice(sys.ai.audio_dma_current_addr, AUDIO_DMA_BLOCK_BYTES as usize);
+        let mut buf = [0u8; 32];
+        buf.copy_from_slice(src);
+        buf
+    };
+    let frames: AidBlock = audio::decode_aid_block(&block_bytes);
 
-    if gc.ai.audio_dma_remaining_blocks == 0 {
-        gc.dsp.csr.set_ai_interrupt(true);
-        dsp::refresh_interrupts(gc);
+    sys.audio_sink.push_stereo_block(&frames);
+    sys.ai.audio_dma_current_addr = sys.ai.audio_dma_current_addr.wrapping_add(AUDIO_DMA_BLOCK_BYTES);
+
+    sys.ai.audio_dma_remaining_blocks -= 1;
+
+    if sys.ai.audio_dma_remaining_blocks == 0 {
+        sys.dsp.csr.set_ai_interrupt(true);
+        dsp::refresh_interrupts(sys);
 
         tracing::debug!(
-            cycles = gc.scheduler.cycles,
-            csr = format!("{:04X}", gc.dsp.csr.raw()),
-            pi_intsr = format!("{:08X}", gc.pi.intsr.raw()),
-            pi_intmr = format!("{:08X}", gc.pi.intmr.raw()),
+            cycles = sys.scheduler.cycles,
+            csr = format!("{:04X}", sys.dsp.csr.raw()),
+            pi_intsr = format!("{:08X}", sys.pi.intsr.raw()),
+            pi_intmr = format!("{:08X}", sys.pi.intmr.raw()),
             "Audio DMA completion"
         );
-
-        gc.ai.audio_dma_remaining_blocks = gc.dsp.audio_dma_control.length();
     }
 
-    if gc.dsp.audio_dma_control.play() && gc.ai.audio_dma_remaining_blocks != 0 {
-        gc.dsp.csr.set_dma_status(true);
-        gc.scheduler
-            .schedule_in(cycles_per_audio_dma_block(gc), self::audio_dma_block_handler);
+    if sys.dsp.audio_dma_control.play() {
+        sys.dsp.csr.set_dma_status(true);
+        sys.scheduler
+            .schedule_in(cycles_per_audio_dma_block(sys), self::audio_dma_block_handler);
     } else {
-        stop_audio_dma(gc);
+        stop_audio_dma(sys);
     }
 }
 
 #[inline(always)]
-fn cycles_per_audio_dma_block<const SYSTEM: SystemId>(gc: &System<SYSTEM>) -> u64 {
-    let sample_rate = if gc.ai.control.dsp_sample_rate() {
-        32_000
-    } else {
-        48_000
-    };
-
+fn cycles_per_audio_dma_block<const SYSTEM: SystemId>(sys: &System<SYSTEM>) -> u64 {
+    let sample_rate = sys.ai.control.aid_sample_rate_hz() as u64;
     AUDIO_DMA_FRAMES_PER_BLOCK * scheduler::cpu_clock(SYSTEM) / sample_rate
 }
 
 #[inline(always)]
-pub fn refresh_interrupts<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
+pub fn refresh_interrupts<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     use crate::flipper::pi::InterruptFlag;
 
-    let threshold = gc.ai.interrupt_timing.sample_count();
+    let threshold = sys.ai.interrupt_timing.sample_count();
     if threshold != 0 {
-        let count = gc.ai.sample_count(SYSTEM, gc.scheduler.cycles);
-        gc.ai.sample_counter = regs::AiSampleCounter::from_raw(count);
+        let count = sys.ai.sample_count(SYSTEM, sys.scheduler.cycles);
+        sys.ai.sample_counter = regs::AiSampleCounter::from_raw(count);
         if count >= threshold {
-            gc.ai.control = gc.ai.control.with_interrupt(true);
+            sys.ai.control = sys.ai.control.with_interrupt(true);
         }
     }
 
-    if gc.ai.interrupt_active() {
-        gc.pi.assert_interrupt(InterruptFlag::Ai);
+    if sys.ai.interrupt_active() {
+        sys.pi.assert_interrupt(InterruptFlag::Ai);
     } else {
-        gc.pi.clear_interrupt(InterruptFlag::Ai);
+        sys.pi.clear_interrupt(InterruptFlag::Ai);
     }
 }

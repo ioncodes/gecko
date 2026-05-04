@@ -4,7 +4,7 @@ include!(concat!(env!("OUT_DIR"), "/dsp_ext_instr.rs"));
 impl Instruction {
     /// Extract the extension opcode byte from the instruction, if present.
     /// Returns `Some(ext)` for instructions with upper nibble >= 3, `None` otherwise.
-    #[inline]
+    #[inline(always)]
     pub fn ext_opcode(&self) -> Option<u8> {
         let nibble = (self.0 >> 12) & 0xF;
         if nibble >= 3 {

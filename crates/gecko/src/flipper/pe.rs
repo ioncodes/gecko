@@ -65,16 +65,16 @@ crate::mmio_device_dispatch! {
 }
 
 #[inline(always)]
-pub fn refresh_interrupts<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
-    if gc.pe.token_interrupt_active() {
-        gc.pi.assert_interrupt(InterruptFlag::PeToken);
+pub fn refresh_interrupts<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    if sys.pe.token_interrupt_active() {
+        sys.pi.assert_interrupt(InterruptFlag::PeToken);
     } else {
-        gc.pi.clear_interrupt(InterruptFlag::PeToken);
+        sys.pi.clear_interrupt(InterruptFlag::PeToken);
     }
 
-    if gc.pe.finish_interrupt_active() {
-        gc.pi.assert_interrupt(InterruptFlag::PeFinish);
+    if sys.pe.finish_interrupt_active() {
+        sys.pi.assert_interrupt(InterruptFlag::PeFinish);
     } else {
-        gc.pi.clear_interrupt(InterruptFlag::PeFinish);
+        sys.pi.clear_interrupt(InterruptFlag::PeFinish);
     }
 }

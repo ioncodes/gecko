@@ -54,16 +54,16 @@ pub fn cycles_until_underflow(value: u32) -> u64 {
     value as u64 * TIMEBASE_DIVISOR
 }
 
-pub fn underflow_handler<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
-    gc.gekko.dec.underflow(gc.scheduler.cycles);
-    gc.gekko.spr.dec = u32::MAX;
-    gc.scheduler
+pub fn underflow_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    sys.gekko.dec.underflow(sys.scheduler.cycles);
+    sys.gekko.spr.dec = u32::MAX;
+    sys.scheduler
         .schedule_in(cycles_until_underflow(u32::MAX), self::underflow_handler);
     tracing::debug!(
-        cycles = gc.scheduler.cycles,
-        ee = gc.gekko.msr.external_interrupt_enable(),
-        pi_pending = gc.pi.interrupt_pending(),
-        pc = format!("{:08X}", gc.gekko.pc),
+        cycles = sys.scheduler.cycles,
+        ee = sys.gekko.msr.external_interrupt_enable(),
+        pi_pending = sys.pi.interrupt_pending(),
+        pc = format!("{:08X}", sys.gekko.pc),
         "decrementer underflow"
     );
 }

@@ -64,16 +64,16 @@ impl Default for InterruptCause {
 }
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for InterruptCause {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.pi.intsr
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.pi.intsr
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
         // yagcd seems to be wrong, we should not clear everything on read,
         // but just do the usual w1c instead.
         const RSWST_MASK: u32 = 1 << 16;
-        let cleared = gc.pi.intsr.raw() & !self.raw();
-        gc.pi.intsr = InterruptCause::from_raw(cleared | (gc.pi.intsr.raw() & RSWST_MASK));
+        let cleared = sys.pi.intsr.raw() & !self.raw();
+        sys.pi.intsr = InterruptCause::from_raw(cleared | (sys.pi.intsr.raw() & RSWST_MASK));
     }
 }
 
@@ -141,11 +141,11 @@ pub struct FifoBase {
 crate::mmio_reg!(FifoBase: u32 @ 0xCC00300C);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for FifoBase {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        FifoBase::from_raw(gc.pi.fifo_base)
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        FifoBase::from_raw(sys.pi.fifo_base)
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.pi.fifo_base = self.raw();
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.pi.fifo_base = self.raw();
     }
 }
 
@@ -160,11 +160,11 @@ pub struct FifoEnd {
 crate::mmio_reg!(FifoEnd: u32 @ 0xCC003010);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for FifoEnd {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        FifoEnd::from_raw(gc.pi.fifo_end)
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        FifoEnd::from_raw(sys.pi.fifo_end)
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.pi.fifo_end = self.raw();
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.pi.fifo_end = self.raw();
     }
 }
 
@@ -179,11 +179,11 @@ pub struct FifoWritePtr {
 crate::mmio_reg!(FifoWritePtr: u32 @ 0xCC003014);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for FifoWritePtr {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        FifoWritePtr::from_raw(gc.pi.fifo_wptr)
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        FifoWritePtr::from_raw(sys.pi.fifo_wptr)
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.pi.fifo_wptr = self.raw() & 0x1FFF_FFE0;
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.pi.fifo_wptr = self.raw() & 0x1FFF_FFE0;
     }
 }
 

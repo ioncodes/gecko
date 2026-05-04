@@ -78,12 +78,12 @@ pub struct SiComcsr {
 crate::mmio_reg!(SiComcsr: u32 @ 0xCC006434);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for SiComcsr {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.si.comcsr
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.si.comcsr
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        let mut csr = gc.si.comcsr;
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        let mut csr = sys.si.comcsr;
 
         if self.tc_interrupt() {
             csr = csr.with_tc_interrupt(false);
@@ -103,14 +103,14 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for SiComcsr {
             .with_channel_enable(self.channel_enable())
             .with_channel_number(self.channel_number());
 
-        gc.si.comcsr = csr;
+        sys.si.comcsr = csr;
 
         // Process SI buffer transfer when TSTART is written
         if self.tstart() {
-            gc.si.run_si_buffer();
+            sys.si.run_si_buffer();
         }
 
-        si::refresh_interrupts(gc);
+        si::refresh_interrupts(sys);
     }
 }
 
@@ -181,12 +181,12 @@ pub struct SiStatusRegister {
 crate::mmio_reg!(SiStatusRegister: u32 @ 0xCC006438);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for SiStatusRegister {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.si.status
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.si.status
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        let mut status = gc.si.status;
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        let mut status = sys.si.status;
 
         if self.norep0() {
             status = status.with_norep0(false);
@@ -241,9 +241,9 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for SiStatusRegister {
         }
 
         if self.wr() {
-            gc.si.status = status;
-            gc.si.send_channel_commands();
-            status = gc.si.status;
+            sys.si.status = status;
+            sys.si.send_channel_commands();
+            status = sys.si.status;
             status = status
                 .with_wr(false)
                 .with_wrst0(false)
@@ -252,7 +252,7 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for SiStatusRegister {
                 .with_wrst3(false);
         }
 
-        gc.si.status = status;
-        si::refresh_interrupts(gc);
+        sys.si.status = status;
+        si::refresh_interrupts(sys);
     }
 }

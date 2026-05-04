@@ -3,7 +3,7 @@ use crate::system::{System, SystemId};
 
 impl<const SYSTEM: SystemId> System<SYSTEM> {
     // Load a 64-bit double from memory
-    #[inline]
+    #[inline(always)]
     pub fn read_f64(&mut self, addr: u32) -> f64 {
         let phys = crate::mmio::virt_to_phys(addr);
         if phys <= RAM_END - 7 {
@@ -16,7 +16,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     }
 
     /// Store a 64-bit double to memory
-    #[inline]
+    #[inline(always)]
     pub fn write_f64(&mut self, addr: u32, val: f64) {
         let phys = crate::mmio::virt_to_phys(addr);
         let bits = val.to_bits();
@@ -30,13 +30,13 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     }
 
     /// Load a 32-bit float from memory, return as f64
-    #[inline]
+    #[inline(always)]
     pub fn read_f32(&mut self, addr: u32) -> f64 {
         f32::from_bits(self.read_u32(addr)) as f64
     }
 
     /// Store f64 as 32-bit float to memory
-    #[inline]
+    #[inline(always)]
     pub fn write_f32(&mut self, addr: u32, val: f64) {
         self.write_u32(addr, (val as f32).to_bits());
     }

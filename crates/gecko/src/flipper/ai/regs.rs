@@ -17,6 +17,16 @@ pub enum SampleRate {
     Rate32KHz = 1,
 }
 
+impl SampleRate {
+    #[inline(always)]
+    pub fn hz(self) -> u32 {
+        match self {
+            SampleRate::Rate48KHz => 48_000,
+            SampleRate::Rate32KHz => 32_000,
+        }
+    }
+}
+
 #[chapa::bitfield(u32, order = lsb0)]
 #[derive(Copy, Clone, Debug)]
 pub struct AiControl {
@@ -39,17 +49,26 @@ pub struct AiControl {
     pub sample_counter_reset: bool,
 
     #[bits(6)]
-    pub dsp_sample_rate: bool,
+    pub dsp_sample_rate: SampleRate,
 }
 crate::mmio_reg!(AiControl: u32 @ 0xCC006C00);
 
+impl AiControl {
+    /// AID DMA streaming rate in Hz (driven by the DSP sample rate field).
+    #[inline(always)]
+    pub fn aid_sample_rate_hz(self) -> u32 {
+        self.dsp_sample_rate().hz()
+    }
+}
+
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AiControl {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.ai.control
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.ai.control
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        let mut cr = gc.ai.control;
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        let mut cr = sys.ai.control;
+        let old_aid_sample_rate = cr.aid_sample_rate_hz();
 
         // AIINT is w1c
         if self.interrupt() {
@@ -66,12 +85,23 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AiControl {
 
         // SCRESET resets the sample counter
         if self.sample_counter_reset() {
-            gc.ai.sample_counter_base_cycle = gc.scheduler.cycles;
-            gc.ai.sample_counter = AiSampleCounter::from_raw(0);
+            sys.ai.sample_counter_base_cycle = sys.scheduler.cycles;
+            sys.ai.sample_counter = AiSampleCounter::from_raw(0);
         }
 
-        gc.ai.control = cr;
-        ai::refresh_interrupts(gc);
+        sys.ai.control = cr;
+
+        let new_aid_sample_rate = sys.ai.control.aid_sample_rate_hz();
+        if old_aid_sample_rate != new_aid_sample_rate {
+            tracing::debug!(
+                old_sample_rate = old_aid_sample_rate,
+                new_sample_rate = new_aid_sample_rate,
+                "AID sample rate changed"
+            );
+            sys.audio_sink.set_sample_rate(new_aid_sample_rate);
+        }
+
+        ai::refresh_interrupts(sys);
     }
 }
 
@@ -99,8 +129,8 @@ pub struct AiSampleCounter {
 crate::mmio_reg!(AiSampleCounter: u32 @ 0xCC006C08);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AiSampleCounter {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        let count = gc.ai.sample_count(SYSTEM, gc.scheduler.cycles);
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        let count = sys.ai.sample_count(SYSTEM, sys.scheduler.cycles);
         AiSampleCounter::from_raw(count)
     }
 
@@ -119,12 +149,12 @@ pub struct AiInterruptTiming {
 crate::mmio_reg!(AiInterruptTiming: u32 @ 0xCC006C0C);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AiInterruptTiming {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.ai.interrupt_timing
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.ai.interrupt_timing
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.ai.interrupt_timing = self;
-        ai::refresh_interrupts(gc);
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.ai.interrupt_timing = self;
+        ai::refresh_interrupts(sys);
     }
 }

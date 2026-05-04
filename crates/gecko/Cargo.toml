@@ -12,6 +12,8 @@ hooks-mut-traps = ["hooks"]
 # thread which copies them into `Mmio::ram` synchronously. Expensive (GPU
 # stall, encode, RAM copy).
 efb-writeback = ["dep:crossbeam-channel"]
+# Enable the WAV file audio sink
+audio-wav-dump = ["dep:hound"]
 
 [build-dependencies]
 chipi-build = "0.9.1"
@@ -25,6 +27,7 @@ glam = { version = "0.32.1", features = ["bytemuck"] }
 bytemuck = { version = "1.25.0", features = ["derive"] }
 twox-hash = "2.1.2"
 crossbeam-channel = { version = "0.5.15", optional = true }
+hound = { version = "3.5.1", optional = true }
 multiversion = "0.8.0"
 rustc-hash = "2.1.2"
 crc32fast = "1.5.0"

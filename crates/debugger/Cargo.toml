@@ -9,7 +9,7 @@ efb-writeback = ["backend-wgpu/efb-writeback", "dep:crossbeam-channel"]
 renderdoc-capture = ["backend-wgpu/renderdoc-capture"]
 
 [dependencies]
-gecko = { path = "../gecko", features = ["hooks"] }
+gecko = { path = "../gecko", features = ["hooks", "audio-wav-dump"] }
 scripting = { path = "../scripting" }
 image = { path = "../image", features = ["symbols"] }
 dbglib = { path = "../dbglib" }

@@ -32,12 +32,12 @@ pub struct DiStatusRegister {
 crate::mmio_reg!(DiStatusRegister: u32 @ 0xCC006000);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiStatusRegister {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.di.status
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.di.status
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        let mut sr = gc.di.status;
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        let mut sr = sys.di.status;
 
         if self.break_complete() {
             sr = sr.with_break_complete(false);
@@ -59,8 +59,8 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiStatusRegister {
             .with_device_error_mask(self.device_error_mask())
             .with_transfer_complete_mask(self.transfer_complete_mask());
 
-        gc.di.status = sr;
-        dvd::refresh_interrupts(gc);
+        sys.di.status = sr;
+        dvd::refresh_interrupts(sys);
     }
 }
 
@@ -81,12 +81,12 @@ pub struct DiCoverRegister {
 crate::mmio_reg!(DiCoverRegister: u32 @ 0xCC006004);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiCoverRegister {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.di.cover
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.di.cover
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        let mut cvr = gc.di.cover;
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        let mut cvr = sys.di.cover;
 
         if self.cover_interrupt() {
             cvr = cvr.with_cover_interrupt(false);
@@ -94,8 +94,8 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiCoverRegister {
 
         cvr = cvr.with_cover_interrupt_mask(self.cover_interrupt_mask());
 
-        gc.di.cover = cvr;
-        dvd::refresh_interrupts(gc);
+        sys.di.cover = cvr;
+        dvd::refresh_interrupts(sys);
     }
 }
 
@@ -112,12 +112,12 @@ pub struct DiCommandBuf0 {
 crate::mmio_reg!(DiCommandBuf0: u32 @ 0xCC006008);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiCommandBuf0 {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        DiCommandBuf0::from_raw(gc.di.cmdbuf0)
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        DiCommandBuf0::from_raw(sys.di.cmdbuf0)
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.di.cmdbuf0 = self.raw();
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.di.cmdbuf0 = self.raw();
         let val = self.raw();
         tracing::debug!(
             cmd = format!("{:02X}", val >> 24),
@@ -137,12 +137,12 @@ pub struct DiCommandBuf1 {
 crate::mmio_reg!(DiCommandBuf1: u32 @ 0xCC00600C);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiCommandBuf1 {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        DiCommandBuf1::from_raw(gc.di.cmdbuf1)
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        DiCommandBuf1::from_raw(sys.di.cmdbuf1)
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.di.cmdbuf1 = self.raw();
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.di.cmdbuf1 = self.raw();
         tracing::debug!(val = format!("{:08X}", self.raw()), "DICMDBUF1 write");
     }
 }
@@ -156,12 +156,12 @@ pub struct DiCommandBuf2 {
 crate::mmio_reg!(DiCommandBuf2: u32 @ 0xCC006010);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiCommandBuf2 {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        DiCommandBuf2::from_raw(gc.di.cmdbuf2)
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        DiCommandBuf2::from_raw(sys.di.cmdbuf2)
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.di.cmdbuf2 = self.raw();
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.di.cmdbuf2 = self.raw();
         tracing::debug!(val = format!("{:08X}", self.raw()), "DICMDBUF2 write");
     }
 }
@@ -217,21 +217,21 @@ pub struct DiControlRegister {
 crate::mmio_reg!(DiControlRegister: u32 @ 0xCC00601C);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiControlRegister {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.di.control
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.di.control
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.di.control = self;
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.di.control = self;
 
         // tstart latches a transfer: resolve the command and run it now.
         // The scheduled "transfer complete" callback fires after the canonical
         // delay so the CPU side-effect ordering matches real hardware.
         if self.tstart() {
-            dvd::start_transfer(gc);
+            dvd::start_transfer(sys);
         }
 
-        dvd::refresh_interrupts(gc);
+        dvd::refresh_interrupts(sys);
     }
 }
 
@@ -246,12 +246,12 @@ pub struct DiImmBuf {
 crate::mmio_reg!(DiImmBuf: u32 @ 0xCC006020);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiImmBuf {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        DiImmBuf::from_raw(gc.di.immbuf)
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        DiImmBuf::from_raw(sys.di.immbuf)
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.di.immbuf = self.raw();
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.di.immbuf = self.raw();
     }
 }
 
@@ -272,8 +272,8 @@ impl Default for DiConfigurationRegister {
 }
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for DiConfigurationRegister {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.di.config
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.di.config
     }
 
     fn write(self, _gc: &mut System<SYSTEM>, _: WriteMask) {

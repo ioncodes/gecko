@@ -44,7 +44,7 @@ impl IdleDetector {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn check(&mut self, cia: u32, nia: u32) -> IdleCheck {
         // Branching to current is always a safe idle loop
         if nia == cia {

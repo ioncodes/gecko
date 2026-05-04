@@ -65,14 +65,14 @@ impl Default for ControlStatus {
 }
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for ControlStatus {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.dsp.csr
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.dsp.csr
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        tracing::trace!("CSR write: {:016b} (prev: {:016b})", self.raw(), gc.dsp.csr.raw());
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        tracing::trace!("CSR write: {:016b} (prev: {:016b})", self.raw(), sys.dsp.csr.raw());
 
-        let mut csr = gc.dsp.csr;
+        let mut csr = sys.dsp.csr;
 
         if self.ai_interrupt() {
             csr = csr.with_ai_interrupt(false);
@@ -100,13 +100,13 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for ControlStatus {
         if self.reset() {
             let addr = self.reset_vector().address();
             tracing::debug!(reset_vector = ?self.reset_vector(), pc = format!("{addr:04X}"), "DSP reset, executing from reset vector");
-            gc.dsp.registers.pc = addr;
+            sys.dsp.registers.pc = addr;
         }
         csr = csr.with_reset(false);
 
-        gc.dsp.csr = csr;
+        sys.dsp.csr = csr;
 
-        dsp::refresh_interrupts(gc);
+        dsp::refresh_interrupts(sys);
     }
 }
 
@@ -124,13 +124,13 @@ pub struct MailboxToDspHi {
 crate::mmio_reg!(MailboxToDspHi: u16 @ 0xCC005000);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for MailboxToDspHi {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.dsp.mailbox_to_dsp_hi
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.dsp.mailbox_to_dsp_hi
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
         // CPU writing CMBH sets data bits (14:0), busy is preserved
-        gc.dsp.mailbox_to_dsp_hi = self.with_busy(gc.dsp.mailbox_to_dsp_hi.busy());
+        sys.dsp.mailbox_to_dsp_hi = self.with_busy(sys.dsp.mailbox_to_dsp_hi.busy());
     }
 }
 
@@ -143,18 +143,28 @@ pub struct MailboxToDspLo {}
 crate::mmio_reg!(MailboxToDspLo: u16 @ 0xCC005002);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for MailboxToDspLo {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.dsp.mailbox_to_dsp_lo
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.dsp.mailbox_to_dsp_lo
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.dsp.mailbox_to_dsp_lo = self;
-        gc.dsp.mailbox_to_dsp_hi = gc.dsp.mailbox_to_dsp_hi.with_busy(true);
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.dsp.mailbox_to_dsp_lo = self;
+        sys.dsp.mailbox_to_dsp_hi = sys.dsp.mailbox_to_dsp_hi.with_busy(true);
         tracing::debug!(
-            hi = format!("{:04X}", gc.dsp.mailbox_to_dsp_hi.raw()),
+            hi = format!("{:04X}", sys.dsp.mailbox_to_dsp_hi.raw()),
             lo = format!("{:04X}", self.raw()),
             "CPU->DSP mailbox"
         );
+
+        // Synchronous DSP drain: let the DSP consume the command and
+        // answer the mailbox before the CPU returns. AX ucode reads the
+        // mailbox, renders 96 samples and DMAs them to the AID "ping pong?"
+        // buffer all within one mailbox roundtirp. Without this the
+        // periodic batch handler can run DSP a few hundred us late, so
+        // AID consumes the buffer with the prior cycle's contents at the
+        // start of each render before the new contents land.
+        // Based off of FFCC, thanks SpinningCube, zayd, JustinCase
+        sys.drain_dsp_synchronous(64 * 1024);
     }
 }
 
@@ -172,8 +182,8 @@ pub struct MailboxToCpuHi {
 crate::mmio_reg!(MailboxToCpuHi: u16 @ 0xCC005004);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for MailboxToCpuHi {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.dsp.mailbox_to_cpu_hi
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.dsp.mailbox_to_cpu_hi
     }
 
     fn write(self, _gc: &mut System<SYSTEM>, _: WriteMask) {
@@ -190,10 +200,10 @@ pub struct MailboxToCpuLo {}
 crate::mmio_reg!(MailboxToCpuLo: u16 @ 0xCC005006);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for MailboxToCpuLo {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        let val = gc.dsp.mailbox_to_cpu_lo;
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        let val = sys.dsp.mailbox_to_cpu_lo;
         // Reading DMBL clears DMBH.M (bit 15), signaling the CPU has consumed the mail
-        gc.dsp.mailbox_to_cpu_hi.set_busy(false);
+        sys.dsp.mailbox_to_cpu_hi.set_busy(false);
         val
     }
 
@@ -221,12 +231,12 @@ pub struct AramMode {
 crate::mmio_reg!(AramMode: u16 @ 0xCC005016);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AramMode {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.dsp.aram_mode.with_status(true)
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.dsp.aram_mode.with_status(true)
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.dsp.aram_mode = self;
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.dsp.aram_mode = self;
     }
 }
 
@@ -260,7 +270,16 @@ crate::mmio_default_access!(AramDmaAramAddr => System.dsp.aram_dma_aram_addr);
 #[derive(Copy, Clone, Debug)]
 pub struct AudioDmaStartAddr {}
 crate::mmio_reg!(AudioDmaStartAddr: u32 @ 0xCC005030);
-crate::mmio_default_access!(AudioDmaStartAddr => System.dsp.audio_dma_start_addr);
+
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AudioDmaStartAddr {
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.dsp.audio_dma_start_addr
+    }
+
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.dsp.audio_dma_start_addr = self;
+    }
+}
 
 // 0xCC005036 2 [W] Audio DMA Control/Length
 
@@ -276,19 +295,19 @@ pub struct AudioDmaControl {
 crate::mmio_reg!(AudioDmaControl: u16 @ 0xCC005036);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AudioDmaControl {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.dsp.audio_dma_control
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.dsp.audio_dma_control
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        let was_playing = gc.dsp.audio_dma_control.play();
-        gc.dsp.audio_dma_control = self;
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        let was_playing = sys.dsp.audio_dma_control.play();
+        sys.dsp.audio_dma_control = self;
         match (was_playing, self.play()) {
-            (false, true) => ai::start_audio_dma(gc),
-            (true, false) => ai::stop_audio_dma(gc),
+            (false, true) => ai::start_audio_dma(sys),
+            (true, false) => ai::stop_audio_dma(sys),
             _ => {}
         }
-        dsp::refresh_interrupts(gc);
+        dsp::refresh_interrupts(sys);
     }
 }
 
@@ -300,8 +319,8 @@ pub struct AudioDmaBlocksLeft {}
 crate::mmio_reg!(AudioDmaBlocksLeft: u16 @ 0xCC00503A);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AudioDmaBlocksLeft {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        Self::from_raw(gc.ai.audio_dma_remaining_blocks.saturating_sub(1))
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        Self::from_raw(sys.ai.audio_dma_remaining_blocks.saturating_sub(1))
     }
 
     fn write(self, _: &mut System<SYSTEM>, _: WriteMask) {}
@@ -327,19 +346,19 @@ pub struct AramDmaControl {
 crate::mmio_reg!(AramDmaControl: u32 @ 0xCC005028);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AramDmaControl {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.dsp.aram_dma_control
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.dsp.aram_dma_control
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.dsp.aram_dma_control = self;
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.dsp.aram_dma_control = self;
 
         const ARAM_DMA_DELAY_US: u64 = 20;
-        gc.scheduler.schedule_in(
+        sys.scheduler.schedule_in(
             crate::scheduler::microseconds_to_cycles(SYSTEM, ARAM_DMA_DELAY_US),
-            |gc| {
-                gc.dsp.process_aram_dma(&mut gc.mmio);
-                dsp::refresh_interrupts(gc);
+            |sys| {
+                sys.dsp.process_aram_dma(&mut sys.mmio);
+                dsp::refresh_interrupts(sys);
             },
         );
     }

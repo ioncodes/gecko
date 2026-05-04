@@ -93,29 +93,29 @@ crate::mmio_device_dispatch! {
 }
 
 #[inline(always)]
-pub fn refresh_interrupts<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
+pub fn refresh_interrupts<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     use crate::flipper::pi::InterruptFlag;
 
-    if gc.di.interrupt_active() {
-        gc.pi.assert_interrupt(InterruptFlag::Di);
+    if sys.di.interrupt_active() {
+        sys.pi.assert_interrupt(InterruptFlag::Di);
     } else {
-        gc.pi.clear_interrupt(InterruptFlag::Di);
+        sys.pi.clear_interrupt(InterruptFlag::Di);
     }
 }
 
-pub fn start_transfer<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
-    let Some(dvd) = gc.di.dvd.take() else {
+pub fn start_transfer<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    let Some(dvd) = sys.di.dvd.take() else {
         // TODO: Setting this causes unrecoverable error when there is no DVD
-        //gc.di.status.set_device_error(true);
-        gc.di.control.set_tstart(false);
+        //sys.di.status.set_device_error(true);
+        sys.di.control.set_tstart(false);
         return;
     };
 
-    if let Some(cmd) = gc.di.resolve_command() {
-        self::process_dvd_command(gc, cmd, &dvd);
+    if let Some(cmd) = sys.di.resolve_command() {
+        self::process_dvd_command(sys, cmd, &dvd);
     }
 
-    gc.di.dvd = Some(dvd);
+    sys.di.dvd = Some(dvd);
 
     // The interrupt must not fire until some time!!
     // This is important as it will break the IPL if we immediately raise it...
@@ -125,36 +125,36 @@ pub fn start_transfer<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
     // Else it will get trapped inside restore_irq, right after mtmsr, executing in a loop
     // of the DVD dispatch handler which in turn re-issues the same command...
     const DI_TRANSFER_DELAY_US: u64 = 20; // Based off of vxpm and hazel (~10k cycles at GC clock)
-    gc.scheduler.schedule_in(
+    sys.scheduler.schedule_in(
         crate::scheduler::microseconds_to_cycles(SYSTEM, DI_TRANSFER_DELAY_US),
-        |gc| {
-            gc.di.control.set_tstart(false);
+        |sys| {
+            sys.di.control.set_tstart(false);
             // DMA length tracks the progress of the transfer, so when it hits 0, the
             // transfer is complete. On failure, this would denote how many bytes were
             // not transferred, but we close our eyes and just hope nothing depends on
             // that!
-            gc.di.dma_length = regs::DiDmaLengthRegister::from_raw(0);
-            gc.di.status.set_transfer_complete(true);
-            self::refresh_interrupts(gc);
+            sys.di.dma_length = regs::DiDmaLengthRegister::from_raw(0);
+            sys.di.status.set_transfer_complete(true);
+            self::refresh_interrupts(sys);
         },
     );
 }
 
 #[inline(always)]
-fn process_dvd_command<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, cmd: Command, dvd: &dyn image::Dvd) {
+fn process_dvd_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd: Command, dvd: &dyn image::Dvd) {
     match cmd {
         Command::DriveInfo => {
-            let dst = gc.di.dma_address.address();
-            let buffer = gc.mmio.phys_slice_mut(dst, 0x20);
+            let dst = sys.di.dma_address.address();
+            let buffer = sys.mmio.phys_slice_mut(dst, 0x20);
             buffer.copy_from_slice(&[0x69; 0x20]); // TODO: Drive Info?
         }
         Command::ReadSectorData => {
-            let src = gc.di.cmdbuf1 << 2;
-            let dst = gc.di.dma_address.address();
-            let len = gc.di.cmdbuf2 as usize;
-            assert!(len == gc.di.dma_length.length() as usize, "DMA length mismatch");
+            let src = sys.di.cmdbuf1 << 2;
+            let dst = sys.di.dma_address.address();
+            let len = sys.di.cmdbuf2 as usize;
+            assert!(len == sys.di.dma_length.length() as usize, "DMA length mismatch");
 
-            let buffer = gc.mmio.phys_slice_mut(dst, len);
+            let buffer = sys.mmio.phys_slice_mut(dst, len);
             dvd.read_disc_into(src as usize, buffer);
 
             tracing::debug!(
@@ -165,11 +165,11 @@ fn process_dvd_command<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, cmd: Com
             );
         }
         Command::ReadDiskId => {
-            let src = gc.di.cmdbuf1;
-            let dst = gc.di.dma_address.address();
-            let len = gc.di.dma_length.length() as usize;
+            let src = sys.di.cmdbuf1;
+            let dst = sys.di.dma_address.address();
+            let len = sys.di.dma_length.length() as usize;
 
-            let buffer = gc.mmio.phys_slice_mut(dst, len);
+            let buffer = sys.mmio.phys_slice_mut(dst, len);
             dvd.read_disc_into(0, buffer);
 
             tracing::debug!(
@@ -181,7 +181,7 @@ fn process_dvd_command<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, cmd: Com
         }
         Command::AudioToggle(enable) => {
             tracing::warn!(enable, "AudioToggle stubbed");
-            gc.di.immbuf = 0;
+            sys.di.immbuf = 0;
         }
     }
 }

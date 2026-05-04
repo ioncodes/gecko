@@ -91,13 +91,13 @@ pub struct Channel0Status {
 crate::mmio_reg!(Channel0Status: u32 @ 0xCC006800);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel0Status {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.exi.ch0_csr
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.exi.ch0_csr
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        write_csr(&mut gc.exi.ch0_csr, self);
-        exi::on_chip_select_written::<0, SYSTEM>(gc, self.chip_select());
-        exi::refresh_interrupts(gc);
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        write_csr(&mut sys.exi.ch0_csr, self);
+        exi::on_chip_select_written::<0, SYSTEM>(sys, self.chip_select());
+        exi::refresh_interrupts(sys);
     }
 }
 
@@ -140,20 +140,20 @@ pub struct Channel0Control {
 crate::mmio_reg!(Channel0Control: u32 @ 0xCC00680C);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel0Control {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.exi.ch0_cr
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.exi.ch0_cr
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        let was_started = gc.exi.ch0_cr.transfer_start();
-        gc.exi.ch0_cr = self;
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        let was_started = sys.exi.ch0_cr.transfer_start();
+        sys.exi.ch0_cr = self;
         if self.transfer_start() && !was_started {
             if self.dma_mode() {
-                exi::run_dma::<0, SYSTEM>(gc);
+                exi::run_dma::<0, SYSTEM>(sys);
             } else {
-                gc.exi.start_immediate_transfer::<0>();
+                sys.exi.start_immediate_transfer::<0>();
             }
         }
-        exi::refresh_interrupts(gc);
+        exi::refresh_interrupts(sys);
     }
 }
 
@@ -194,13 +194,13 @@ pub struct Channel1Status {
 crate::mmio_reg!(Channel1Status: u32 @ 0xCC006814);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel1Status {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.exi.ch1_csr
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.exi.ch1_csr
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        write_csr(&mut gc.exi.ch1_csr, self);
-        exi::on_chip_select_written::<1, SYSTEM>(gc, self.chip_select());
-        exi::refresh_interrupts(gc);
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        write_csr(&mut sys.exi.ch1_csr, self);
+        exi::on_chip_select_written::<1, SYSTEM>(sys, self.chip_select());
+        exi::refresh_interrupts(sys);
     }
 }
 
@@ -243,20 +243,20 @@ pub struct Channel1Control {
 crate::mmio_reg!(Channel1Control: u32 @ 0xCC006820);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel1Control {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.exi.ch1_cr
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.exi.ch1_cr
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        let was_started = gc.exi.ch1_cr.transfer_start();
-        gc.exi.ch1_cr = self;
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        let was_started = sys.exi.ch1_cr.transfer_start();
+        sys.exi.ch1_cr = self;
         if self.transfer_start() && !was_started {
             if self.dma_mode() {
-                exi::run_dma::<1, SYSTEM>(gc);
+                exi::run_dma::<1, SYSTEM>(sys);
             } else {
-                gc.exi.start_immediate_transfer::<1>();
+                sys.exi.start_immediate_transfer::<1>();
             }
         }
-        exi::refresh_interrupts(gc);
+        exi::refresh_interrupts(sys);
     }
 }
 
@@ -297,13 +297,13 @@ pub struct Channel2Status {
 crate::mmio_reg!(Channel2Status: u32 @ 0xCC006828);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel2Status {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.exi.ch2_csr
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.exi.ch2_csr
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        write_csr(&mut gc.exi.ch2_csr, self);
-        exi::on_chip_select_written::<2, SYSTEM>(gc, self.chip_select());
-        exi::refresh_interrupts(gc);
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        write_csr(&mut sys.exi.ch2_csr, self);
+        exi::on_chip_select_written::<2, SYSTEM>(sys, self.chip_select());
+        exi::refresh_interrupts(sys);
     }
 }
 
@@ -348,20 +348,20 @@ pub struct Channel2Control {
 crate::mmio_reg!(Channel2Control: u32 @ 0xCC006834);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel2Control {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.exi.ch2_cr
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.exi.ch2_cr
     }
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        let was_started = gc.exi.ch2_cr.transfer_start();
-        gc.exi.ch2_cr = self;
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        let was_started = sys.exi.ch2_cr.transfer_start();
+        sys.exi.ch2_cr = self;
         if self.transfer_start() && !was_started {
             if self.dma_mode() {
-                exi::run_dma::<2, SYSTEM>(gc);
+                exi::run_dma::<2, SYSTEM>(sys);
             } else {
-                gc.exi.start_immediate_transfer::<2>();
+                sys.exi.start_immediate_transfer::<2>();
             }
         }
-        exi::refresh_interrupts(gc);
+        exi::refresh_interrupts(sys);
     }
 }
 

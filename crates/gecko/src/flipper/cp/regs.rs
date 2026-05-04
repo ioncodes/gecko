@@ -25,13 +25,13 @@ pub struct CpStatus {
 crate::mmio_reg!(CpStatus: u16 @ 0xCC000000);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for CpStatus {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.cp.status
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.cp.status
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.cp.status = self;
-        cp::refresh_interrupts(gc);
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.cp.status = self;
+        cp::refresh_interrupts(sys);
     }
 }
 
@@ -61,13 +61,13 @@ pub struct CpControl {
 crate::mmio_reg!(CpControl: u16 @ 0xCC000002);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for CpControl {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
-        gc.cp.control
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.cp.control
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
-        gc.cp.control = self;
-        cp::refresh_interrupts(gc);
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.cp.control = self;
+        cp::refresh_interrupts(sys);
     }
 }
 
@@ -90,14 +90,14 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for CpClear {
         Self::from_raw(0)
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, _: WriteMask) {
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
         if self.clear_overflow() {
-            gc.cp.status = gc.cp.status.with_fifo_overflow(false);
+            sys.cp.status = sys.cp.status.with_fifo_overflow(false);
         }
         if self.clear_underflow() {
-            gc.cp.status = gc.cp.status.with_fifo_underflow(false);
+            sys.cp.status = sys.cp.status.with_fifo_underflow(false);
         }
-        cp::refresh_interrupts(gc);
+        cp::refresh_interrupts(sys);
     }
 }
 

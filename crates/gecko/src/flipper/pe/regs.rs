@@ -62,17 +62,17 @@ pub struct InterruptStatus {
 crate::mmio_reg!(InterruptStatus: u16 @ 0xCC00100A);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for InterruptStatus {
-    fn read(gc: &mut System<SYSTEM>) -> Self {
+    fn read(sys: &mut System<SYSTEM>) -> Self {
         // Status bits (token/finish) always read back as zero.
-        gc.pe.sr.with_pe_token(false).with_pe_finish(false)
+        sys.pe.sr.with_pe_token(false).with_pe_finish(false)
     }
 
-    fn write(self, gc: &mut System<SYSTEM>, mask: WriteMask) {
+    fn write(self, sys: &mut System<SYSTEM>, mask: WriteMask) {
         if !mask.byte(1) {
             return;
         }
 
-        let mut sr = gc.pe.sr;
+        let mut sr = sys.pe.sr;
         sr = sr
             .with_pe_token_enable(self.pe_token_enable())
             .with_pe_finish_enable(self.pe_finish_enable());
@@ -82,8 +82,8 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for InterruptStatus {
         if self.pe_finish() {
             sr = sr.with_pe_finish(false);
         }
-        gc.pe.sr = sr;
-        pe::refresh_interrupts(gc);
+        sys.pe.sr = sr;
+        pe::refresh_interrupts(sys);
     }
 }
 

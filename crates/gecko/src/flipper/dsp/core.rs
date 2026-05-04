@@ -39,7 +39,6 @@ pub mod reg {
     pub const AC1M: u8 = 31;
 }
 
-#[derive(Default)]
 pub struct Registers {
     pub pc: u16,
     pub nia: u16,
@@ -69,6 +68,38 @@ pub struct Registers {
     /// Pre-instruction accumulator cache for extension opcodes.
     /// [0]=AC0L, [1]=AC1L, [2]=AC0M(sat), [3]=AC1M(sat), [4]=AC0M(raw), [5]=AC1M(raw)
     pub ext_ac_cache: [u16; 6],
+}
+
+impl Default for Registers {
+    fn default() -> Self {
+        Self {
+            pc: 0,
+            nia: 0,
+            cia: 0,
+            ar: [0; 4],
+            ix: [0; 4],
+            wr: [0xFFFF; 4], // Fuck you seriously
+            call_stack: stack::DspStack::default(),
+            data_stack: stack::DspStack::default(),
+            loop_addr: stack::DspStack::default(),
+            loop_counter: stack::DspStack::default(),
+            ac0_high: 0,
+            ac1_high: 0,
+            config: 0,
+            status: StatusRegister::default(),
+            product_low: 0,
+            product_mid1: 0,
+            product_high: 0,
+            product_mid2: 0,
+            ax: [0; 2],
+            axh: [0; 2],
+            ac0_low: 0,
+            ac1_low: 0,
+            ac0_mid: 0,
+            ac1_mid: 0,
+            ext_ac_cache: [0; 6],
+        }
+    }
 }
 
 impl Registers {

@@ -21,6 +21,9 @@ Gecko is still in development. Support may vary, while many games work perfectly
 - IPL skip patches for NTSC and PAL
 - `wgpu` based renderer backend
 - `wesl` based shader compiler
+- Modular audio backend, defaults to `cpal`
+  - Supports mixing audio sinks
+  - Supports dumping to .wav files
 - LUA scripting/hooks system for runtime introspection
 - A beautiful yet advanced egui-based debugging UI
 - Symbol parsing from ELFs and IDA Pro databases
@@ -37,7 +40,7 @@ WIP features:
 - IPL HLE backed by [solstice](https://codeberg.org/hazelwiss/solstice)
 - Idle skipping
 
-Gecko currently does **not** implement sound and does **not** support Wii controls.
+Gecko currently does **not** support Wii controls.
 
 ## Projects
 This is a table of the main projects. Refer to `crates/` to find out about all available projects.
@@ -70,6 +73,7 @@ wasm-pack build crates/web --target web --out-dir pkg --release  # web version
 | `hooks-mut-traps`   | `tinyapp` (off), `debugger` (off)                         | Let hooks re-register themselves at runtime             |
 | `gecko/idle-skip`   | (gecko, off)                                              | Skip idle PPC polling loops                             |
 | `efb-writeback`     | `tinyapp` (off), `debugger` (off)                         | EFB-to-texture writeback (needed by some games)         |
+| `audio-wav-dump`    | `tinyapp` (off)                                           | Write all emulated audio to `dump.wav` while running    |
 | `renderdoc-capture` | `debugger` (off)                                          | RenderDoc captures with debug markers, triggered by F10 |
 | `debug`             | `web` (off, on for [`/dbg`](https://gecko.layle.dev/dbg)) | Bundle the in-browser debugger UI                       |
 
@@ -84,6 +88,7 @@ Gecko does not ship any system files.
 ### GameCube
 - IPL (NTSC and PAL tested)
 - DSP IROM (may not be required if running homebrew DOLs)
+- DSP coefficient ROM (required for any title that produces audio)
 
 If you only have an encoded IPL, decode it first with multitool:
 
@@ -107,6 +112,7 @@ Reference SHA-256 hashes (these are the files the project is developed against):
 | `PAL_IPL.bin` (PAL, encoded) | `a5fd3ab0ed3d63ad365990cbf522f9f175e01d3b37e5f30a8e5a103cbbc749fd` |
 | `PAL_IPL.decoded.bin` (PAL)  | `011b66ce68d8dcb4f37460fcb322215bcda7df79072aeca22fdc690499deabac` |
 | `dsp_rom.bin`                | `49d987ee1eab29a157425b82d54516957a81e1bac247c8834e494642605c3e8c` |
+| `dsp_coef.bin`               | `d7741279c2e8ec5c5fb318f8fbdd6de6bf583520d288e836a5383233a4238179` |
 
 ## Usage
 Example invocations:
@@ -115,8 +121,8 @@ Example invocations:
 multitool ipl --action decode ipl.encoded.bin ipl.decoded.bin
 multitool dvd --extract game.rvz
 tinyapp --dol homebrew.dol  # may also require a DSP depending on the DOL
-tinyapp --dvd game.iso --ipl ipl.decoded.bin --dsp dsp_rom.bin --skip-ipl
-debugger --dvd game.rvz --ipl ipl.decoded.bin --dsp dsp_rom.bin --script example.lua
+tinyapp --dvd game.iso --ipl ipl.decoded.bin --dsp dsp_rom.bin --coef dsp_coef.bin --skip-ipl
+debugger --dvd game.rvz --ipl ipl.decoded.bin --dsp dsp_rom.bin --coef dsp_coef.bin --script example.lua
 ```
 
 The CLI options are largely the same across the sub projects (such as the debugger). For more options, see `--help`.

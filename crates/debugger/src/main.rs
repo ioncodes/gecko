@@ -8,6 +8,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
+use gecko::audio::WavAudioSink;
 use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER};
 use gecko::gamecube::GameCube;
 use gecko::wii::Wii;
@@ -61,6 +62,27 @@ impl EmulatorVariant {
         match self {
             Self::Gc(e) => e.dsp.load_irom(data),
             Self::Wii(e) => e.dsp.load_irom(data),
+        }
+    }
+
+    fn load_dsp_coef(&mut self, data: &[u8]) {
+        match self {
+            Self::Gc(e) => e.dsp.load_coef(data),
+            Self::Wii(e) => e.dsp.load_coef(data),
+        }
+    }
+
+    fn install_audio_sink(&mut self, sink: Box<dyn gecko::audio::AudioSink>) {
+        match self {
+            Self::Gc(e) => e.audio_sink = sink,
+            Self::Wii(e) => e.audio_sink = sink,
+        }
+    }
+
+    fn aid_sample_rate_hz(&self) -> u32 {
+        match self {
+            Self::Gc(e) => e.ai.control.aid_sample_rate_hz(),
+            Self::Wii(e) => e.ai.control.aid_sample_rate_hz(),
         }
     }
 }
@@ -257,6 +279,10 @@ struct Args {
     #[arg(long)]
     dsp: Option<String>,
 
+    /// Path to a DSP coefficient ROM binary
+    #[arg(long)]
+    coef: Option<String>,
+
     /// Path to a symbol file (ELF, IDA .idb, or .i64)
     #[arg(long)]
     symbols: Option<String>,
@@ -346,6 +372,11 @@ fn main() {
         emulator.load_dsp_irom(&dsp_data);
     }
 
+    if let Some(ref coef_path) = args.coef {
+        let coef_data = std::fs::read(coef_path).expect("failed to read DSP coefficient ROM");
+        emulator.load_dsp_coef(&coef_data);
+    }
+
     if let Some(ref path) = args.script {
         let host = scripting::LuaHost::from_file(path).expect("failed to load script");
         match &mut emulator {
@@ -363,6 +394,10 @@ fn main() {
         connected: true,
         ..PadStatus::default()
     });
+
+    // Debugger always dumps to WAV file
+    let emulated_rate = emulator.aid_sample_rate_hz();
+    emulator.install_audio_sink(Box::new(WavAudioSink::create("dump.wav", emulated_rate)));
 
     // Create wgpu resources before the event loop (adapter without a surface).
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {

@@ -202,19 +202,19 @@ crate::mmio_device_dispatch! {
 }
 
 #[inline(always)]
-pub fn si_read<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, phys: u32, size: u32) -> Option<u32> {
+pub fn si_read<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, phys: u32, size: u32) -> Option<u32> {
     let offset = phys - SI_BASE;
 
     if (0x80..=0xFF).contains(&offset) {
         let i = (offset - 0x80) as usize;
         return Some(match size {
-            1 => gc.si.io_buffer[i] as u32,
-            2 => u16::from_be_bytes([gc.si.io_buffer[i], gc.si.io_buffer[i + 1]]) as u32,
+            1 => sys.si.io_buffer[i] as u32,
+            2 => u16::from_be_bytes([sys.si.io_buffer[i], sys.si.io_buffer[i + 1]]) as u32,
             4 => u32::from_be_bytes([
-                gc.si.io_buffer[i],
-                gc.si.io_buffer[i + 1],
-                gc.si.io_buffer[i + 2],
-                gc.si.io_buffer[i + 3],
+                sys.si.io_buffer[i],
+                sys.si.io_buffer[i + 1],
+                sys.si.io_buffer[i + 2],
+                sys.si.io_buffer[i + 3],
             ]),
             _ => return None,
         });
@@ -223,26 +223,26 @@ pub fn si_read<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, phys: u32, size:
     if (0x00..=0x2F).contains(&offset) || (0x3C..=0x3F).contains(&offset) {
         let aligned = offset & !3;
         let word = match aligned {
-            0x00..=0x2C => gc.si.read_channel_reg(aligned),
-            0x3C => gc.si.exi_clock_count,
+            0x00..=0x2C => sys.si.read_channel_reg(aligned),
+            0x3C => sys.si.exi_clock_count,
             _ => return None,
         };
         return Some(crate::mmio::traits::read_be_subword(word, offset & 3, size));
     }
 
-    self::si_regs_read(gc, phys, size)
+    self::si_regs_read(sys, phys, size)
 }
 
 #[inline(always)]
-pub fn si_write<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, phys: u32, size: u32, val: u32) -> bool {
+pub fn si_write<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, phys: u32, size: u32, val: u32) -> bool {
     let offset = phys - SI_BASE;
 
     if (0x80..=0xFF).contains(&offset) {
         let i = (offset - 0x80) as usize;
         match size {
-            1 => gc.si.io_buffer[i] = val as u8,
-            2 => gc.si.io_buffer[i..i + 2].copy_from_slice(&(val as u16).to_be_bytes()),
-            4 => gc.si.io_buffer[i..i + 4].copy_from_slice(&val.to_be_bytes()),
+            1 => sys.si.io_buffer[i] = val as u8,
+            2 => sys.si.io_buffer[i..i + 2].copy_from_slice(&(val as u16).to_be_bytes()),
+            4 => sys.si.io_buffer[i..i + 4].copy_from_slice(&val.to_be_bytes()),
             _ => return false,
         }
         return true;
@@ -254,30 +254,30 @@ pub fn si_write<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>, phys: u32, size
             val
         } else {
             let current = match aligned {
-                0x00..=0x2C => gc.si.channel_reg_raw(aligned),
-                0x3C => gc.si.exi_clock_count,
+                0x00..=0x2C => sys.si.channel_reg_raw(aligned),
+                0x3C => sys.si.exi_clock_count,
                 _ => return false,
             };
             crate::mmio::traits::write_be_subword(current, offset & 3, size, val)
         };
         match aligned {
-            0x00..=0x2C => gc.si.write_channel_reg(aligned, merged),
-            0x3C => gc.si.exi_clock_count = merged,
+            0x00..=0x2C => sys.si.write_channel_reg(aligned, merged),
+            0x3C => sys.si.exi_clock_count = merged,
             _ => return false,
         }
         return true;
     }
 
-    self::si_regs_write(gc, phys, size, val)
+    self::si_regs_write(sys, phys, size, val)
 }
 
 #[inline(always)]
-pub fn refresh_interrupts<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
+pub fn refresh_interrupts<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     use crate::flipper::pi::InterruptFlag;
 
-    if gc.si.interrupt_active() {
-        gc.pi.assert_interrupt(InterruptFlag::Si);
+    if sys.si.interrupt_active() {
+        sys.pi.assert_interrupt(InterruptFlag::Si);
     } else {
-        gc.pi.clear_interrupt(InterruptFlag::Si);
+        sys.pi.clear_interrupt(InterruptFlag::Si);
     }
 }

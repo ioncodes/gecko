@@ -1,14 +1,19 @@
 mod app;
+mod audio;
 mod thread;
 
 use backend_wgpu::sink::TargetAspect;
 use clap::Parser;
 use crossbeam_channel::bounded;
+#[cfg(feature = "audio-wav-dump")]
+use gecko::audio::WavAudioSink;
+use gecko::audio::{AudioSink, EmptyAudioSink, MultiplexAudioSink};
 use gecko::flipper::si::pad::{self, PadStatus, STICK_CENTER};
 use gecko::gamecube::GameCube;
 use gecko::system::{self, System, SystemId};
 use gecko::wii::Wii;
 use image::Dol;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use winit::event_loop::EventLoop;
 use winit::keyboard::KeyCode;
@@ -52,6 +57,10 @@ struct Args {
     #[arg(long)]
     dsp: Option<String>,
 
+    /// Path to a DSP coefficient ROM binary
+    #[arg(long)]
+    coef: Option<String>,
+
     /// Path to a Lua script for scripting hooks
     #[cfg(feature = "hooks")]
     #[arg(long)]
@@ -60,6 +69,10 @@ struct Args {
     /// Display aspect ratio: auto (16:9 Wii / 4:3 GC), 4:3, 16:9, stretch
     #[arg(long, default_value = "auto")]
     aspect: String,
+
+    /// Disable audio output
+    #[arg(long)]
+    no_audio: bool,
 }
 
 fn resolve_aspect(arg: &str, system: SystemId) -> TargetAspect {
@@ -105,11 +118,11 @@ fn main() {
         if args.wii {
             let mut emulator = Wii::with_image(&dol);
             configure(&mut emulator, &args);
-            run(emulator, present_mode, &args.aspect);
+            run(emulator, present_mode, &args);
         } else {
             let mut emulator = GameCube::with_image(&dol);
             configure(&mut emulator, &args);
-            run(emulator, present_mode, &args.aspect);
+            run(emulator, present_mode, &args);
         }
     } else if let Some(ref ipl_path) = args.ipl {
         let ipl_data = std::fs::read(ipl_path).expect("failed to read IPL");
@@ -119,7 +132,7 @@ fn main() {
             emulator.insert_dvd(image::load_dvd(dvd_data));
         }
         configure(&mut emulator, &args);
-        run(emulator, present_mode, &args.aspect);
+        run(emulator, present_mode, &args);
     } else if let Some(ref dvd_path) = args.dvd {
         let dvd_data = std::fs::read(dvd_path).expect("failed to read DVD");
         let dvd = image::load_dvd(dvd_data);
@@ -135,12 +148,12 @@ fn main() {
             };
             let mut emulator = builder.build();
             configure(&mut emulator, &args);
-            run(emulator, present_mode, &args.aspect);
+            run(emulator, present_mode, &args);
         } else {
             println!("Detected GameCube disc, booting via IPL HLE");
             let mut emulator = GameCube::with_ipl_hle(dvd);
             configure(&mut emulator, &args);
-            run(emulator, present_mode, &args.aspect);
+            run(emulator, present_mode, &args);
         }
     } else {
         panic!("provide one of --dol, --ipl, or --dvd");
@@ -151,6 +164,11 @@ fn configure<const SYSTEM: SystemId>(emulator: &mut System<SYSTEM>, args: &Args)
     if let Some(ref dsp_path) = args.dsp {
         let dsp_data = std::fs::read(dsp_path).expect("failed to read DSP IROM");
         emulator.dsp.load_irom(&dsp_data);
+    }
+
+    if let Some(ref coef_path) = args.coef {
+        let coef_data = std::fs::read(coef_path).expect("failed to read DSP coefficient ROM");
+        emulator.dsp.load_coef(&coef_data);
     }
 
     #[cfg(feature = "hooks")]
@@ -169,8 +187,8 @@ fn configure<const SYSTEM: SystemId>(emulator: &mut System<SYSTEM>, args: &Args)
     });
 }
 
-fn run<const SYSTEM: SystemId>(mut emulator: System<SYSTEM>, present_mode: wgpu::PresentMode, aspect_arg: &str) {
-    let target_aspect = resolve_aspect(aspect_arg, SYSTEM);
+fn run<const SYSTEM: SystemId>(mut emulator: System<SYSTEM>, present_mode: wgpu::PresentMode, args: &Args) {
+    let target_aspect = resolve_aspect(&args.aspect, SYSTEM);
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
         ..Default::default()
@@ -197,6 +215,8 @@ fn run<const SYSTEM: SystemId>(mut emulator: System<SYSTEM>, present_mode: wgpu:
         emulator.gx.efb_writeback_rx = renderer.take_writeback_rx();
     }
 
+    let audio_stream = install_audio_sink(args, &mut emulator);
+
     let input = Arc::new(Mutex::new(*emulator.primary_controller_mut()));
 
     let (frame_tx, frame_rx) = bounded::<thread::FrameMessage>(2);
@@ -204,8 +224,29 @@ fn run<const SYSTEM: SystemId>(mut emulator: System<SYSTEM>, present_mode: wgpu:
     let event_loop = EventLoop::new().unwrap();
     let proxy = event_loop.create_proxy();
 
+    // Ctrl+C / SIGINT routes through the winit event loop so it tears down
+    // through the same path as the window close button. Crucial for the
+    // WAV dump: hound only patches the RIFF header sizes when the writer
+    // is dropped and Drop only runs if the emu thread is joined cleanly.
+    let shutdown_requested = Arc::new(AtomicBool::new(false));
+    {
+        let shutdown = shutdown_requested.clone();
+        let proxy = event_loop.create_proxy();
+        if let Err(err) = ctrlc::set_handler(move || {
+            if shutdown.swap(true, Ordering::Relaxed) {
+                // Motherfucker wants to hard exit so let him
+                std::process::exit(69);
+            }
+
+            tracing::info!("Ctrl+C received, requesting graceful shutdown");
+            let _ = proxy.send_event(());
+        }) {
+            tracing::warn!(?err, "failed to install Ctrl+C handler");
+        }
+    }
+
     let emu_input = input.clone();
-    std::thread::Builder::new()
+    let emu_handle = std::thread::Builder::new()
         .name("emu".into())
         .spawn(move || thread::emu_thread::<SYSTEM>(emulator, frame_tx, emu_input, proxy))
         .expect("failed to spawn emulator thread");
@@ -224,8 +265,46 @@ fn run<const SYSTEM: SystemId>(mut emulator: System<SYSTEM>, present_mode: wgpu:
             renderer,
             surface_format,
         }),
+        _audio_stream: audio_stream,
+        shutdown_requested,
     };
     event_loop.run_app(&mut app).unwrap();
+
+    // Let it down nicely :)
+    drop(app);
+    if let Err(err) = emu_handle.join() {
+        tracing::error!(?err, "emu thread panicked");
+    }
+}
+
+fn install_audio_sink<const SYSTEM: SystemId>(args: &Args, emulator: &mut System<SYSTEM>) -> Option<cpal::Stream> {
+    let emulated_rate = emulator.ai.control.aid_sample_rate_hz();
+
+    let mut sinks: Vec<Box<dyn AudioSink>> = Vec::new();
+    let mut stream: Option<cpal::Stream> = None;
+
+    if !args.no_audio {
+        match audio::open(emulated_rate) {
+            Ok(backend) => {
+                sinks.push(Box::new(backend.sink));
+                stream = Some(backend.stream);
+            }
+            Err(err) => {
+                tracing::warn!(?err, "Failed to open CPAL output; running silent");
+            }
+        }
+    }
+
+    #[cfg(feature = "audio-wav-dump")]
+    sinks.push(Box::new(WavAudioSink::create("dump.wav", emulated_rate)));
+
+    emulator.audio_sink = match sinks.len() {
+        0 => Box::new(EmptyAudioSink),
+        1 => sinks.into_iter().next().unwrap(),
+        _ => Box::new(MultiplexAudioSink::new(sinks)),
+    };
+
+    stream
 }
 
 fn update_pad(pad: &mut PadStatus, key: KeyCode, pressed: bool) {

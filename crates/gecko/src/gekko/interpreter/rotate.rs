@@ -2,7 +2,7 @@ use crate::gekko::instruction::Instruction;
 use crate::gekko::lut::*;
 use crate::system::{System, SystemId};
 
-#[inline]
+#[inline(always)]
 fn mask(mb: u32, me: u32) -> u32 {
     let begin = 0xFFFF_FFFFu32 >> mb;
     let end = if me >= 31 { 0 } else { 0xFFFF_FFFFu32 >> (me + 1) };

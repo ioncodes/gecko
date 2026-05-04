@@ -179,27 +179,27 @@ impl GraphicsProcessor {
     }
 }
 
-pub fn present_xfb<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
-    if gc.gx.xfb_copies.is_empty() {
+pub fn present_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    if sys.gx.xfb_copies.is_empty() {
         return;
     }
 
-    let (frame_w, frame_h) = gc.vi.frame_dimensions();
-    let vi_base = gc.vi.xfb_addr();
+    let (frame_w, frame_h) = sys.vi.frame_dimensions();
+    let vi_base = sys.vi.xfb_addr();
 
     // All copies in a frame share the same stride.
-    let bytes_per_row = gc.gx.xfb_copies[0].dest_stride as u64;
+    let bytes_per_row = sys.gx.xfb_copies[0].dest_stride as u64;
     if bytes_per_row == 0 {
         tracing::warn!("present_xfb: zero bytes_per_row, dropping XFB copies");
-        gc.gx.xfb_copies.clear();
+        sys.gx.xfb_copies.clear();
         return;
     }
     let xfb_bytes = bytes_per_row * frame_h as u64;
     let stride_in_pixels = (bytes_per_row / 2) as u32;
 
     let build_parts = |base_addr: u32| -> Vec<XfbPart> {
-        let mut parts = Vec::with_capacity(gc.gx.xfb_copies.len());
-        for (id, copy) in gc.gx.xfb_copies.iter().enumerate() {
+        let mut parts = Vec::with_capacity(sys.gx.xfb_copies.len());
+        for (id, copy) in sys.gx.xfb_copies.iter().enumerate() {
             if copy.dest_addr < base_addr {
                 continue;
             }
@@ -234,7 +234,7 @@ pub fn present_xfb<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
         parts
     };
 
-    let min_base = gc.gx.xfb_copies.iter().map(|c| c.dest_addr).min().unwrap_or(0);
+    let min_base = sys.gx.xfb_copies.iter().map(|c| c.dest_addr).min().unwrap_or(0);
 
     let parts = if vi_base != 0 {
         let p = build_parts(vi_base);
@@ -245,16 +245,16 @@ pub fn present_xfb<const SYSTEM: SystemId>(gc: &mut System<SYSTEM>) {
 
     if parts.is_empty() {
         tracing::warn!("present_xfb: no XFB copies matched the frame buffer region");
-        gc.gx.xfb_copies.clear();
+        sys.gx.xfb_copies.clear();
         return;
     }
 
-    gc.render_sink.exec(GxAction::PresentXfb {
+    sys.render_sink.exec(GxAction::PresentXfb {
         width: frame_w,
         height: frame_h,
         parts,
     });
-    gc.gx.xfb_copies.clear();
+    sys.gx.xfb_copies.clear();
 }
 
 impl<const SYSTEM: SystemId> System<SYSTEM> {
