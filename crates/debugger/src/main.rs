@@ -50,7 +50,7 @@ impl EmulatorVariant {
     }
 
     #[cfg(feature = "efb-writeback")]
-    fn install_efb_writeback(&mut self, rx: Option<crossbeam_channel::Receiver<gecko::flipper::gx::WritebackEvent>>) {
+    fn install_efb_writeback(&mut self, rx: Option<crossbeam_channel::Receiver<gecko::host::EfbWriteback>>) {
         match self {
             Self::Gc(e) => e.gx.efb_writeback_rx = rx,
             Self::Wii(e) => e.gx.efb_writeback_rx = rx,

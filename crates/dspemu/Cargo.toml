@@ -3,9 +3,6 @@ name = "dspemu"
 version = "0.1.0"
 edition = "2024"
 
-[features]
-idle-skip = ["gecko/idle-skip"]
-
 [dependencies]
 gecko = { path = "../gecko" }
 disasm = { path = "../disasm" }

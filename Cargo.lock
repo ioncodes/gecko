@@ -759,6 +759,7 @@ version = "0.1.0"
 dependencies = [
  "backend-wgpu",
  "clap",
+ "crossbeam-channel",
  "dbglib",
  "egui",
  "egui-phosphor",

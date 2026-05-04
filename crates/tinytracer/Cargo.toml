@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-idle-skip = ["gecko/idle-skip"]
 hooks = ["gecko/hooks", "dep:scripting"]
 hooks-mut-traps = ["hooks", "gecko/hooks-mut-traps", "scripting/hooks-mut-traps"]
 

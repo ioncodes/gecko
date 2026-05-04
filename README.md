@@ -68,10 +68,12 @@ wasm-pack build crates/web --target web --out-dir pkg --release  # web version
 | ------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
 | `hooks`             | `tinyapp` (off), `debugger` (on)                          | Lua scripting and hooks                                 |
 | `hooks-mut-traps`   | `tinyapp` (off), `debugger` (off)                         | Let hooks re-register themselves at runtime             |
-| `idle-skip`         | `tinyapp` (off), `debugger` (off)                         | Skip idle PPC polling loops                             |
+| `gecko/idle-skip`   | (gecko, off)                                              | Skip idle PPC polling loops                             |
 | `efb-writeback`     | `tinyapp` (off), `debugger` (off)                         | EFB-to-texture writeback (needed by some games)         |
 | `renderdoc-capture` | `debugger` (off)                                          | RenderDoc captures with debug markers, triggered by F10 |
 | `debug`             | `web` (off, on for [`/dbg`](https://gecko.layle.dev/dbg)) | Bundle the in-browser debugger UI                       |
+
+`idle-skip` lives on the `gecko` crate; enable it from any binary with `--features gecko/idle-skip` (e.g. `cargo run -p tinyapp --features gecko/idle-skip`).
 
 For exact build invocations refer to the GitHub CI actions file. PGO optimized compilation is supported, refer to the `Justfile`.
 
