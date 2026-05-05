@@ -40,8 +40,6 @@ WIP features:
 - IPL HLE backed by [solstice](https://codeberg.org/hazelwiss/solstice)
 - Idle skipping
 
-Gecko currently does **not** support Wii controls.
-
 ## Projects
 This is a table of the main projects. Refer to `crates/` to find out about all available projects.
 
