@@ -24,7 +24,7 @@ Gecko is still in development. Support may vary, while many games work perfectly
 - Modular audio backend, defaults to `cpal`
   - Supports mixing audio sinks
   - Supports dumping to .wav files
-- LUA scripting/hooks system for runtime introspection
+- Lua scripting system for runtime introspection
 - A beautiful yet advanced egui-based debugging UI
 - Symbol parsing from ELFs and IDA Pro databases
 - RenderDoc captures with all sorts of debug markers
@@ -65,15 +65,15 @@ wasm-pack build crates/web --target web --out-dir pkg --release  # web version
 
 ### Features
 
-| Flag                | Crates                                                    | Description                                             |
-| ------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
-| `hooks`             | `tinyapp` (off), `debugger` (on)                          | Lua scripting and hooks                                 |
-| `hooks-mut-traps`   | `tinyapp` (off), `debugger` (off)                         | Let hooks re-register themselves at runtime             |
-| `gecko/idle-skip`   | (gecko, off)                                              | Skip idle PPC polling loops                             |
-| `efb-writeback`     | `tinyapp` (off), `debugger` (off)                         | EFB-to-texture writeback (needed by some games)         |
-| `audio-wav-dump`    | `tinyapp` (off)                                           | Write all emulated audio to `dump.wav` while running    |
-| `renderdoc-capture` | `debugger` (off)                                          | RenderDoc captures with debug markers, triggered by F10 |
-| `debug`             | `web` (off, on for [`/dbg`](https://gecko.layle.dev/dbg)) | Bundle the in-browser debugger UI                       |
+| Flag                  | Crates                                                    | Description                                             |
+| --------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
+| `scripting`           | `tinyapp` (off); `debugger` (on)                          | Lua scripting support and the `--script` option         |
+| `scripting-mut-traps` | `tinyapp` (off), `debugger` (off)                         | Let scripting hooks re-register themselves at runtime   |
+| `gecko/idle-skip`     | (gecko, off)                                              | Skip idle PPC polling loops                             |
+| `efb-writeback`       | `tinyapp` (off), `debugger` (off)                         | EFB-to-texture writeback (needed by some games)         |
+| `audio-wav-dump`      | `tinyapp` (off)                                           | Write all emulated audio to `dump.wav` while running    |
+| `renderdoc-capture`   | `debugger` (off)                                          | RenderDoc captures with debug markers, triggered by F10 |
+| `debug`               | `web` (off, on for [`/dbg`](https://gecko.layle.dev/dbg)) | Bundle the in-browser debugger UI                       |
 
 `idle-skip` lives on the `gecko` crate; enable it from any binary with `--features gecko/idle-skip` (e.g. `cargo run -p tinyapp --features gecko/idle-skip`).
 

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-hooks-mut-traps = ["gecko/hooks-mut-traps", "scripting/hooks-mut-traps"]
+scripting-mut-traps = ["gecko/hooks-mut-traps", "scripting/hooks-mut-traps"]
 efb-writeback = ["backend-wgpu/efb-writeback", "dep:crossbeam-channel"]
 renderdoc-capture = ["backend-wgpu/renderdoc-capture"]
 

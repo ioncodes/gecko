@@ -64,7 +64,7 @@ struct Args {
     coef: Option<String>,
 
     /// Path to a Lua script for scripting hooks
-    #[cfg(feature = "hooks")]
+    #[cfg(feature = "scripting")]
     #[arg(long)]
     script: Option<String>,
 
@@ -141,7 +141,7 @@ fn main() {
         if dvd.header().is_wii() {
             println!("Detected Wii disc, booting via apploader HLE");
             let builder = Wii::apploader_hle(dvd);
-            #[cfg(feature = "hooks")]
+            #[cfg(feature = "scripting")]
             let builder = if let Some(ref path) = args.script {
                 let host = scripting::LuaHost::from_file(path).expect("failed to load script");
                 builder.lua_host(Box::new(host))
@@ -173,7 +173,7 @@ fn configure<const SYSTEM: SystemId>(emulator: &mut System<SYSTEM>, args: &Args)
         emulator.dsp.load_coef(&coef_data);
     }
 
-    #[cfg(feature = "hooks")]
+    #[cfg(feature = "scripting")]
     if let Some(ref path) = args.script {
         // Already attached for Wii apploader HLE; only attach here for other
         // boot paths.

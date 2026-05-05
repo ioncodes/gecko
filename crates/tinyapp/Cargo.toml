@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-hooks = ["gecko/hooks", "dep:scripting"]
-hooks-mut-traps = ["hooks", "gecko/hooks-mut-traps", "scripting/hooks-mut-traps"]
+scripting = ["gecko/hooks", "dep:scripting"]
+scripting-mut-traps = ["scripting", "gecko/hooks-mut-traps", "scripting/hooks-mut-traps"]
 efb-writeback = ["backend-wgpu/efb-writeback"]
 audio-wav-dump = ["gecko/audio-wav-dump"]
 
