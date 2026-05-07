@@ -6,7 +6,6 @@ pub mod gamecube;
 pub mod gekko;
 pub mod hollywood;
 pub mod host;
-pub mod idle;
 pub mod input;
 pub mod ipl;
 pub mod mmio;

@@ -5,6 +5,8 @@ pub mod fpscr;
 pub mod instruction;
 pub mod interpreter;
 pub mod irq;
+#[cfg(feature = "jit")]
+pub mod jit;
 pub mod msr;
 pub mod spr;
 pub mod sr;
@@ -37,12 +39,15 @@ pub struct Gekko {
     // These are used during instruction execution to track the current
     // and next PC values. In essence, by writing to `next_pc`, instructions
     // can change the flow of execution (e.g. for branches and jumps).
-    pub cia: u32,                  // Current Instruction Address
-    pub nia: u32,                  // Next Instruction Address
-    pub reserve_addr: Option<u32>, // lwarx/stwcx. reservation address
+    pub cia: u32, // Current Instruction Address
+    pub nia: u32, // Next Instruction Address
+    pub reserve_addr: u32,
 }
 
 impl Gekko {
+    /// Sentinel used by `lwarx` / `stwcx.`
+    pub const NO_RESERVATION: u32 = 0xFF69_1337;
+
     pub fn new(initial_pc: u32) -> Self {
         let mut spr = spr::Spr::default();
         spr.dec = u32::MAX;
@@ -60,7 +65,7 @@ impl Gekko {
             msr: msr::Msr::default(),
             fpscr: fpscr::Fpscr::default(),
             sr: [sr::Sr::default(); 16],
-            reserve_addr: None,
+            reserve_addr: Self::NO_RESERVATION,
         }
     }
 

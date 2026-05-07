@@ -191,7 +191,7 @@ pub fn lwarx<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instructio
         .wrapping_add(ctx.gekko.read_gpr(instr.rb()));
     let val = ctx.read_u32(addr);
     ctx.gekko.write_gpr(instr.rd(), val);
-    ctx.gekko.reserve_addr = Some(addr);
+    ctx.gekko.reserve_addr = addr;
 }
 
 #[inline(always)]
@@ -201,10 +201,10 @@ pub fn stwcx_dot<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instru
         .read_gpr_or_zero(instr.ra())
         .wrapping_add(ctx.gekko.read_gpr(instr.rb()));
     let so = ctx.gekko.spr.xer.summary_overflow();
-    let store_performed = ctx.gekko.reserve_addr == Some(addr);
+    let store_performed = ctx.gekko.reserve_addr == addr;
     if store_performed {
         ctx.write_u32(addr, ctx.gekko.read_gpr(instr.rs()));
-        ctx.gekko.reserve_addr = None;
+        ctx.gekko.reserve_addr = crate::gekko::Gekko::NO_RESERVATION;
         ctx.gekko.cr.set_cr0(ConditionField::new().with_eq(true).with_so(so));
     } else {
         ctx.gekko.cr.set_cr0(ConditionField::new().with_so(so));

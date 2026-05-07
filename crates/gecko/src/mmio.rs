@@ -7,6 +7,11 @@ pub mod traits;
 use crate::system::{SystemId, WII};
 use constants::*;
 
+pub const FASTMEM_LUT_PAGES: usize = 1 << 15;
+pub const FASTMEM_PAGE_BYTES: usize = 1 << 17;
+pub const FASTMEM_PAGE_MASK: u32 = (FASTMEM_PAGE_BYTES as u32) - 1;
+pub const FASTMEM_PAGE_SHIFT: u32 = 17;
+
 pub struct Mmio<const SYSTEM: SystemId> {
     pub ram: Vec<u8>,
     pub efb: Vec<u8>,
@@ -14,6 +19,9 @@ pub struct Mmio<const SYSTEM: SystemId> {
     pub ipl: Vec<u8>,
     pub lcache: Vec<u8>,
     pub mem2: Vec<u8>,
+    pub ram_ptr: usize,
+    pub fastmem_lut: Vec<usize>,
+    pub fastmem_lut_ptr: usize,
 }
 
 /// Read-only view over MEM1 plus (on Wii) MEM2, addressed by physical
@@ -75,13 +83,55 @@ impl<'a> RamViewMut<'a> {
 
 impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
     pub fn new() -> Self {
+        let ram = vec![0u8; RAM_SIZE];
+        let ram_ptr = ram.as_ptr() as usize;
+        let mem2 = if SYSTEM == WII { vec![0; MEM2_SIZE] } else { Vec::new() };
+
+        let mut fastmem_lut = vec![0usize; FASTMEM_LUT_PAGES];
+
+        // Map MEM1 (24 MiB) at all three aliases:
+        //   * physical 0x0000_0000..0x017F_FFFF
+        //   * cached   0x8000_0000..0x817F_FFFF
+        //   * uncached 0xC000_0000..0xC17F_FFFF
+        let mem1_pages = (RAM_SIZE / FASTMEM_PAGE_BYTES) as u32;
+        let bases = [0x0000_0000u32, 0x8000_0000, 0xC000_0000];
+        for base in bases {
+            let lut_base = (base >> FASTMEM_PAGE_SHIFT) as usize;
+            for i in 0..mem1_pages {
+                let host_addr = ram_ptr + (i as usize) * FASTMEM_PAGE_BYTES;
+                fastmem_lut[lut_base + i as usize] = host_addr;
+            }
+        }
+
+        // Wii: also map MEM2 (64 MiB) at its three aliases:
+        //   * physical 0x1000_0000..0x13FF_FFFF
+        //   * cached   0x9000_0000..0x93FF_FFFF
+        //   * uncached 0xD000_0000..0xD3FF_FFFF
+        if SYSTEM == WII {
+            let mem2_pages = (MEM2_SIZE / FASTMEM_PAGE_BYTES) as u32;
+            let mem2_ptr = mem2.as_ptr() as usize;
+            let bases = [0x1000_0000u32, 0x9000_0000, 0xD000_0000];
+            for base in bases {
+                let lut_base = (base >> FASTMEM_PAGE_SHIFT) as usize;
+                for i in 0..mem2_pages {
+                    let host_addr = mem2_ptr + (i as usize) * FASTMEM_PAGE_BYTES;
+                    fastmem_lut[lut_base + i as usize] = host_addr;
+                }
+            }
+        }
+
+        let fastmem_lut_ptr = fastmem_lut.as_ptr() as usize;
+
         Mmio {
-            ram: vec![0; RAM_SIZE],
+            ram,
             efb: vec![0; EFB_SIZE],
             hwr: vec![0; HW_REG_SIZE],
             ipl: vec![0; 0],
             lcache: vec![0; LCACHE_SIZE],
-            mem2: if SYSTEM == WII { vec![0; MEM2_SIZE] } else { Vec::new() },
+            mem2,
+            ram_ptr,
+            fastmem_lut,
+            fastmem_lut_ptr,
         }
     }
 

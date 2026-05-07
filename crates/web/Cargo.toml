@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 debug = ["dep:dbglib", "dep:egui-phosphor"]
 
 [dependencies]
-gecko = { path = "../gecko" }
+gecko = { path = "../gecko", default-features = false }
 image = { path = "../image", default-features = false }
 backend-wgpu = { path = "../backend-wgpu" }
 dbglib = { path = "../dbglib", optional = true }

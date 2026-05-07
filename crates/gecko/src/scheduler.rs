@@ -41,8 +41,8 @@ struct ScheduledEvent<const SYSTEM: SystemId> {
 
 pub struct Scheduler<const SYSTEM: SystemId> {
     pub cycles: u64,
-    next_deadline: u64,
-    timebase_offset: i64,
+    pub(crate) next_deadline: u64,
+    pub(crate) timebase_offset: i64,
     events: VecDeque<ScheduledEvent<SYSTEM>>,
 }
 

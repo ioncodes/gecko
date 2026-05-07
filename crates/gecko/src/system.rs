@@ -16,8 +16,6 @@ use crate::hollywood::Hollywood;
 #[cfg(feature = "hooks")]
 use crate::hooks::{HookFilters, HookFlags, HookState, Host};
 use crate::host::{EmptyRenderSink, RenderSink};
-#[cfg(feature = "idle-skip")]
-use crate::idle::{IDLE_LOOP_MAX_INSTRS, IdleCheck, IdleDetector};
 use crate::mmio::Mmio;
 use crate::scheduler::Scheduler;
 use crate::starlet::Starlet;
@@ -55,15 +53,15 @@ pub struct System<const SYSTEM: SystemId> {
     /// AID DMA pushes 8-frame stereo s16 blocks here.
     pub audio_sink: Box<dyn AudioSink>,
 
-    #[cfg(feature = "idle-skip")]
-    pub(crate) idle: IdleDetector,
-
     #[cfg(feature = "hooks")]
     pub hook_host: Option<Box<dyn Host<SYSTEM> + Send>>,
     #[cfg(feature = "hooks")]
     pub hook_flags: HookFlags,
     #[cfg(feature = "hooks")]
     pub hook_filters: HookFilters,
+
+    #[cfg(feature = "jit")]
+    pub jit: Option<Box<crate::gekko::jit::JitEngine<SYSTEM>>>,
 }
 
 impl<const SYSTEM: SystemId> System<SYSTEM> {
@@ -91,15 +89,15 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             render_sink: Box::new(EmptyRenderSink),
             audio_sink: Box::new(EmptyAudioSink),
 
-            #[cfg(feature = "idle-skip")]
-            idle: IdleDetector::new(),
-
             #[cfg(feature = "hooks")]
             hook_host: None,
             #[cfg(feature = "hooks")]
             hook_flags: HookFlags::empty(),
             #[cfg(feature = "hooks")]
             hook_filters: HookFilters::default(),
+
+            #[cfg(feature = "jit")]
+            jit: None,
         }
     }
 
@@ -153,21 +151,6 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             }
         }
 
-        #[cfg(feature = "idle-skip")]
-        match self.idle.check(self.gekko.cia, self.gekko.nia) {
-            IdleCheck::Skip => {
-                self.scheduler.cycles = self.scheduler.next_deadline();
-            }
-            IdleCheck::Validate { start, end } => {
-                let safe = self.is_polling_loop(start, end);
-                self.idle.set_validated(safe);
-                if safe {
-                    self.scheduler.cycles = self.scheduler.next_deadline();
-                }
-            }
-            IdleCheck::Continue => {}
-        }
-
         self.gekko.pc = self.gekko.nia;
     }
 
@@ -195,26 +178,50 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         self.prepare_frame();
         while !self.vsync_pending {
             self.scheduler.refresh_deadline();
-            // Execute a slice of CPU instructions until the next event deadline
-            while self.scheduler.cycles < self.scheduler.next_deadline() {
-                self.step_cpu();
+            #[cfg(feature = "jit")]
+            {
+                self.run_until_deadline_jit();
+            }
+            #[cfg(not(feature = "jit"))]
+            {
+                while self.scheduler.cycles < self.scheduler.next_deadline() {
+                    self.step_cpu();
+                }
             }
             // Drain all events that are now due
             self.drain_events();
         }
     }
 
-    /// Read the instructions in `[start, end]` and check whether the loop is a
-    /// side effect free MMIO polling loop that can safely be skipped.
-    #[cfg(feature = "idle-skip")]
-    #[inline(always)]
-    fn is_polling_loop(&self, start: u32, end: u32) -> bool {
-        let count = ((end - start) / 4 + 1) as usize;
-        let mut buf = [0u32; IDLE_LOOP_MAX_INSTRS];
-        for i in 0..count.min(buf.len()) {
-            buf[i] = self.mmio.fetch_instruction(start + (i as u32) * 4);
+    /// JIT inner loop: runs compiled blocks back-to-back until
+    /// `scheduler.cycles >= next_deadline`. Interrupts are checked at block
+    /// boundaries.
+    #[cfg(feature = "jit")]
+    fn run_until_deadline_jit(&mut self) {
+        let mut jit = match self.jit.take() {
+            Some(jit) => jit,
+            None => Box::new(crate::gekko::jit::JitEngine::<SYSTEM>::new()),
+        };
+
+        while self.scheduler.cycles < self.scheduler.next_deadline() {
+            if self.gekko.msr.external_interrupt_enable() {
+                if self.pi.interrupt_pending() {
+                    self.cause_external_interrupt();
+                    self.scheduler.cycles += 2;
+                    continue;
+                }
+
+                if self.gekko.dec.interrupt_pending() {
+                    self.cause_decrementer_interrupt();
+                    self.scheduler.cycles += 2;
+                    continue;
+                }
+            }
+
+            jit.run_block(self);
         }
-        crate::idle::validate_polling_loop(&buf[..count.min(buf.len())], &self.gekko.gprs)
+
+        self.jit = Some(jit);
     }
 
     pub fn frame_size(&self) -> (usize, usize) {
