@@ -228,10 +228,11 @@ pub fn gather_pipe_bursted<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
                 ),
             }
 
-            let next_wptr = if wptr == sys.pi.fifo_end {
+            let advanced = wptr.wrapping_add(GP_BURST);
+            let next_wptr = if sys.pi.fifo_end != 0 && advanced >= sys.pi.fifo_end {
                 sys.pi.fifo_base
             } else {
-                wptr.wrapping_add(GP_BURST)
+                advanced
             };
 
             sys.pi.fifo_wptr = next_wptr;
