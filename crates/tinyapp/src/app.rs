@@ -92,7 +92,7 @@ impl State {
         let frame = match self.surface.get_current_texture() {
             Ok(f) => f,
             Err(e) => {
-                eprintln!("surface error: {e}");
+                tracing::error!(?e, "surface error");
                 return;
             }
         };

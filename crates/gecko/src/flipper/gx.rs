@@ -17,8 +17,7 @@ use crate::flipper::gx::regs::{
 };
 #[cfg(feature = "efb-writeback")]
 use crate::host::EfbWriteback;
-use crate::host::{DrawVertex, GxAction, LightData, RenderSink, TextureKey, XfbPart};
-use crate::mmio::Mmio;
+use crate::host::{DrawVertex, GxAction, LightData, TextureKey, XfbPart};
 use crate::system::{System, SystemId};
 use rustc_hash::FxHashMap;
 
@@ -32,6 +31,7 @@ pub struct GraphicsProcessor {
     pub cp_regs: Vec<u32>,
     pub xf_mem: Vec<u32>,
     pub fifo: Vec<u8>,
+    pub dl_scratch: Vec<u8>,
 
     // Current GX state to snapshot into a Draw action later
     pub cur_textures: [Option<draw::TextureDescriptor>; 8],
@@ -72,9 +72,9 @@ pub struct GraphicsProcessor {
     // XFB copies accumulated since the last vblank. `present_xfb()` drains
     // this at each field boundary to emit a PresentXfb action.
     pub xfb_copies: Vec<XfbCopy>,
-    pub vertices_scratch: Vec<draw::Vertex>,
     pub draw_vertices_scratch: Vec<DrawVertex>,
     pub lighting_dirty: bool,
+    pub konst_dirty: bool,
     pub cached_color_ctrl: [ChanCtrl; 2],
     pub cached_alpha_ctrl: [ChanCtrl; 2],
     pub cached_ambient_color: [[f32; 4]; 2],
@@ -128,6 +128,7 @@ impl GraphicsProcessor {
             cp_regs: vec![0; CP_REG_SIZE],
             xf_mem: vec![0; XF_MEM_SIZE],
             fifo: Vec::with_capacity(256),
+            dl_scratch: Vec::with_capacity(4096),
             projection: Matrix4::default(),
             cur_textures: Default::default(),
             cur_tluts: [draw::TlutRef::default(); 8],
@@ -156,9 +157,9 @@ impl GraphicsProcessor {
             cur_scissor_offset_x: 0,
             cur_scissor_offset_y: 0,
             xfb_copies: Vec::new(),
-            vertices_scratch: Vec::with_capacity(256),
             draw_vertices_scratch: Vec::with_capacity(256),
             lighting_dirty: true,
+            konst_dirty: true,
             cached_color_ctrl: [ChanCtrl::default(); 2],
             cached_alpha_ctrl: [ChanCtrl::default(); 2],
             cached_ambient_color: [[0.0; 4]; 2],
@@ -170,18 +171,6 @@ impl GraphicsProcessor {
             #[cfg(feature = "efb-writeback")]
             efb_writeback_rx: None,
         }
-    }
-
-    fn execute_display_list<const SYSTEM: SystemId>(
-        &mut self,
-        mmio: &mut Mmio<SYSTEM>,
-        renderer: &mut dyn RenderSink,
-        data: &[u8],
-    ) {
-        let saved = std::mem::take(&mut self.fifo);
-        self.fifo = data.to_vec();
-        self.drain_fifo(mmio, renderer);
-        self.fifo = saved;
     }
 }
 

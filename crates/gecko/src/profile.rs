@@ -72,6 +72,7 @@ pub struct PprofConfig {
     pub hz: u32,
     pub secs: u32,
     pub out: PathBuf,
+    pub delay_vsyncs: u32,
 }
 
 #[cfg(all(feature = "profile", windows))]

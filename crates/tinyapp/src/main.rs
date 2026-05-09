@@ -113,6 +113,16 @@ struct Args {
     #[cfg(feature = "profile")]
     #[arg(long, default_value = "./profile-dumps/pprof-samples.csv")]
     pprof_out: String,
+
+    /// Delay starting pprof for N emulated vsyncs (e.g. 3600 = 60s of in-game vsyncs)
+    #[cfg(feature = "profile")]
+    #[arg(long, default_value_t = 0)]
+    pprof_delay: u32,
+
+    /// Append per-second emu FPS samples to a CSV at this path (requires --features fps-counter)
+    #[cfg(feature = "fps-counter")]
+    #[arg(long)]
+    fps_log: Option<String>,
 }
 
 fn resolve_aspect(arg: &str, system: SystemId) -> TargetAspect {
@@ -185,7 +195,7 @@ fn main() {
         let dvd = image::load_dvd(dvd_data);
         let game_id = self::game_id_from_header(dvd.header());
         if dvd.header().is_wii() {
-            println!("Detected Wii disc, booting via apploader HLE");
+            tracing::info!("Detected Wii disc, booting via apploader HLE");
             let builder = Wii::apploader_hle(dvd);
             #[cfg(feature = "scripting")]
             let builder = if let Some(ref path) = args.script {
@@ -198,7 +208,7 @@ fn main() {
             configure(&mut emulator, &args);
             run(emulator, present_mode, &args, Some(game_id));
         } else {
-            println!("Detected GameCube disc, booting via IPL HLE");
+            tracing::info!("Detected GameCube disc, booting via IPL HLE");
             let mut emulator = GameCube::with_ipl_hle(dvd);
             configure(&mut emulator, &args);
             run(emulator, present_mode, &args, Some(game_id));
@@ -261,6 +271,7 @@ fn configure<const SYSTEM: SystemId>(emulator: &mut System<SYSTEM>, args: &Args)
             hz: args.pprof_hz,
             secs,
             out: std::path::PathBuf::from(&args.pprof_out),
+            delay_vsyncs: args.pprof_delay,
         });
     }
 }
@@ -302,6 +313,11 @@ fn run<const SYSTEM: SystemId>(
 
     #[cfg(feature = "fps-counter")]
     let fps_shared = emulator.fps_counter.shared();
+    #[cfg(feature = "fps-counter")]
+    if let Some(ref path) = args.fps_log {
+        emulator.fps_counter.log_path = Some(std::path::PathBuf::from(path));
+        let _ = std::fs::write(path, "wall_secs,fps,native_pct,vsyncs\n");
+    }
 
     let input = Arc::new(Mutex::new(HostInput::neutral_for(SYSTEM)));
 
@@ -334,12 +350,12 @@ fn run<const SYSTEM: SystemId>(
         let (ppc_c, ppc_s, dsp_c, dsp_s) = emulator.load_jit_cache(id);
         if ppc_c > 0 || dsp_c > 0 || ppc_s > 0 || dsp_s > 0 {
             tracing::info!(
+                game = id.as_str(),
                 ppc_compiled = ppc_c,
                 ppc_skipped = ppc_s,
                 dsp_compiled = dsp_c,
                 dsp_skipped = dsp_s,
-                game = id.as_str(),
-                "pre-compiled JIT blocks from cache"
+                "JIT cache loaded",
             );
         }
     }

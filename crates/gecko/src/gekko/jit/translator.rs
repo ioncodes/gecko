@@ -168,8 +168,48 @@ pub fn translate<const SYSTEM: SystemId>(
     let exit_block = builder.create_block();
     builder.append_block_param(exit_block, types::I32);
 
+    if let IdleClass::PointerIterLoop { gpr, stride } = idle_class {
+        let rb_off = self::gpr_offset::<SYSTEM>(gpr);
+        let ctr_off = abi::ctr_offset::<SYSTEM>() as i32;
+        let cyc_off = abi::cycles_offset::<SYSTEM>() as i32;
+
+        let rb_val = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, rb_off);
+        let ctr_val = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, ctr_off);
+
+        let stride_v = builder.ins().iconst(types::I32, stride as i64);
+        let delta = builder.ins().imul(ctr_val, stride_v);
+        let new_rb = builder.ins().iadd(rb_val, delta);
+        builder.ins().store(MemFlags::trusted(), new_rb, ctx_ptr, rb_off);
+
+        let zero_v = builder.ins().iconst(types::I32, 0);
+        builder.ins().store(MemFlags::trusted(), zero_v, ctx_ptr, ctr_off);
+
+        let cyc_val = builder.ins().load(types::I64, MemFlags::trusted(), ctx_ptr, cyc_off);
+        let ctr_64 = builder.ins().uextend(types::I64, ctr_val);
+        let per_iter = builder.ins().iconst(types::I64, 3 * CYCLES_PER_INSTR);
+        let cyc_delta = builder.ins().imul(ctr_64, per_iter);
+        let new_cyc = builder.ins().iadd(cyc_val, cyc_delta);
+        builder.ins().store(MemFlags::trusted(), new_cyc, ctx_ptr, cyc_off);
+
+        let final_nia = builder.ins().iconst(types::I32, spec.start_pc.wrapping_add(12) as i64);
+
+        if let Some(slot_addr) = chain_fall_addr {
+            emit_chain_or_exit::<SYSTEM>(&mut builder, ctx_ptr, slot_addr, block_sig_ref, final_nia, exit_block);
+        } else {
+            builder.ins().jump(exit_block, &[final_nia.into()]);
+        }
+
+        builder.switch_to_block(exit_block);
+        builder.seal_block(exit_block);
+        let exit_nia = builder.block_params(exit_block)[0];
+        builder.ins().return_(&[exit_nia]);
+        builder.finalize();
+        return;
+    }
+
     let mut last_terminator_nia: Option<Value> = None;
     let mut chained = false;
+    let mut pending_cycles: i64 = 0;
 
     let mut t = JitTranslator {
         builder_ptr: &mut builder as *mut FunctionBuilder<'_> as *mut () as usize,
@@ -197,11 +237,16 @@ pub fn translate<const SYSTEM: SystemId>(
         t.handled_natively = false;
         let chained_before = t.chained;
 
+        if is_terminator && pending_cycles > 0 {
+            emit_cycles_add::<SYSTEM>(&mut builder, ctx_ptr, pending_cycles);
+            pending_cycles = 0;
+        }
+
         super::dispatch::<SYSTEM>(&mut t, instr);
 
         if t.handled_natively {
             if !t.chained || chained_before {
-                emit_cycles_add::<SYSTEM>(&mut builder, ctx_ptr, CYCLES_PER_INSTR);
+                pending_cycles += CYCLES_PER_INSTR;
             }
 
             if t.chained && !chained_before {
@@ -212,6 +257,11 @@ pub fn translate<const SYSTEM: SystemId>(
                 last_terminator_nia = Some(nia);
             }
         } else {
+            if pending_cycles > 0 {
+                emit_cycles_add::<SYSTEM>(&mut builder, ctx_ptr, pending_cycles);
+                pending_cycles = 0;
+            }
+
             let pc_const = builder.ins().iconst(types::I32, pc as i64);
             let raw_const = builder.ins().iconst(types::I32, instr.0 as i64);
             let call = builder
@@ -235,6 +285,10 @@ pub fn translate<const SYSTEM: SystemId>(
         }
     }
     drop(t);
+
+    if pending_cycles > 0 {
+        self::emit_cycles_add::<SYSTEM>(&mut builder, ctx_ptr, pending_cycles);
+    }
 
     if !chained {
         if idle_class != IdleClass::None {
@@ -323,6 +377,7 @@ pub(crate) fn emit_divwu<const SYSTEM: SystemId>(
 
     let div_block = builder.create_block();
     let zero_block = builder.create_block();
+    builder.set_cold_block(zero_block);
     let merge = builder.create_block();
     builder.append_block_param(merge, types::I32);
 
@@ -355,6 +410,7 @@ pub(crate) fn emit_divw<const SYSTEM: SystemId>(
 
     let div_block = builder.create_block();
     let bad_block = builder.create_block();
+    builder.set_cold_block(bad_block);
     let merge = builder.create_block();
     builder.append_block_param(merge, types::I32);
 
@@ -586,6 +642,7 @@ pub(crate) fn emit_trap_check<const SYSTEM: SystemId>(
 
     if let Some(c) = cond {
         let trap_block = builder.create_block();
+        builder.set_cold_block(trap_block);
         let cont_block = builder.create_block();
         builder.ins().brif(c, trap_block, &[], cont_block, &[]);
 
@@ -1412,6 +1469,7 @@ pub(crate) fn emit_inline_cache_dispatch<const SYSTEM: SystemId>(
 
     let hit_block = builder.create_block();
     let miss_block = builder.create_block();
+    builder.set_cold_block(miss_block);
     builder.ins().brif(ok, hit_block, &[], miss_block, &[]);
 
     builder.switch_to_block(miss_block);
@@ -1682,6 +1740,7 @@ pub(crate) fn emit_chain_or_exit<const SYSTEM: SystemId>(
     let target_ptr = builder.ins().load(types::I64, MemFlags::trusted(), slot_const, 0);
     let is_null = builder.ins().icmp_imm(IntCC::Equal, target_ptr, 0);
     let dispatch_block = builder.create_block();
+    builder.set_cold_block(dispatch_block);
     let tailcall_block = builder.create_block();
     builder.ins().brif(is_null, dispatch_block, &[], tailcall_block, &[]);
 
@@ -1722,6 +1781,7 @@ pub(crate) fn emit_call_or_exit<const SYSTEM: SystemId>(
     let is_null = builder.ins().icmp_imm(IntCC::Equal, target_ptr, 0);
 
     let dispatch_block = builder.create_block();
+    builder.set_cold_block(dispatch_block);
     let call_block = builder.create_block();
     builder.ins().brif(is_null, dispatch_block, &[], call_block, &[]);
 
@@ -2002,6 +2062,7 @@ pub(crate) fn emit_lha_d_form<const SYSTEM: SystemId>(
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
     builder.append_block_param(merge, types::I32);
 
@@ -2096,6 +2157,7 @@ pub(crate) fn emit_u32_store_at_ea<const SYSTEM: SystemId>(
 ) {
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
 
     let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
@@ -2136,6 +2198,7 @@ pub(crate) fn emit_psq_x<const SYSTEM: SystemId>(
     let easy = emit_gqr_type_zero_check::<SYSTEM>(builder, ctx_ptr, instr.i_22_24(), store);
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
     builder.ins().brif(easy, fast_block, &[], slow_block, &[]);
 
@@ -2310,6 +2373,7 @@ pub(crate) fn emit_lha_xform<const SYSTEM: SystemId>(
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
     builder.append_block_param(merge, types::I32);
 
@@ -2356,6 +2420,7 @@ pub(crate) fn emit_load_xform_brx<const SYSTEM: SystemId>(
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
     builder.append_block_param(merge, types::I32);
 
@@ -2410,6 +2475,7 @@ pub(crate) fn emit_store_xform_brx<const SYSTEM: SystemId>(
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
 
     let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
@@ -2513,6 +2579,7 @@ pub(crate) fn emit_msr_fp_guard<const SYSTEM: SystemId>(
     let fp_bit = builder.ins().band_imm(msr, 0x2000);
     let fp_disabled = builder.ins().icmp_imm(IntCC::Equal, fp_bit, 0);
     let trap_block = builder.create_block();
+    builder.set_cold_block(trap_block);
     let cont_block = builder.create_block();
     builder.ins().brif(fp_disabled, trap_block, &[], cont_block, &[]);
 
@@ -2577,6 +2644,7 @@ pub(crate) fn emit_lfs<const SYSTEM: SystemId>(
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
     builder.append_block_param(merge, types::F64);
 
@@ -2619,6 +2687,7 @@ pub(crate) fn emit_lfd<const SYSTEM: SystemId>(
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
     builder.append_block_param(merge, types::F64);
 
@@ -2661,6 +2730,7 @@ pub(crate) fn emit_stfs<const SYSTEM: SystemId>(
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
 
     let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
@@ -2699,6 +2769,7 @@ pub(crate) fn emit_stfd<const SYSTEM: SystemId>(
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
 
     let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
@@ -2774,6 +2845,7 @@ pub(crate) fn emit_lfs_at_ea<const SYSTEM: SystemId>(
 ) {
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
     builder.append_block_param(merge, types::F64);
 
@@ -2814,6 +2886,7 @@ pub(crate) fn emit_lfd_at_ea<const SYSTEM: SystemId>(
 ) {
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
     builder.append_block_param(merge, types::F64);
 
@@ -2855,6 +2928,7 @@ pub(crate) fn emit_stfs_at_ea<const SYSTEM: SystemId>(
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
 
     let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
@@ -2893,6 +2967,7 @@ pub(crate) fn emit_stfd_at_ea<const SYSTEM: SystemId>(
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
 
     let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
@@ -2935,6 +3010,7 @@ pub(crate) fn emit_psq_l<const SYSTEM: SystemId>(
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
     builder.ins().brif(easy, fast_block, &[], slow_block, &[]);
 
@@ -2990,6 +3066,7 @@ pub(crate) fn emit_psq_st<const SYSTEM: SystemId>(
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
     builder.ins().brif(easy, fast_block, &[], slow_block, &[]);
 
@@ -3356,6 +3433,7 @@ pub(crate) fn emit_read_f32<const SYSTEM: SystemId>(
 ) -> Value {
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
     builder.append_block_param(merge, types::F64);
 
@@ -3395,6 +3473,7 @@ pub(crate) fn emit_write_f32<const SYSTEM: SystemId>(
 ) {
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
 
     let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
@@ -4146,6 +4225,7 @@ pub(crate) fn emit_load_at_ea<const SYSTEM: SystemId>(
 ) {
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
     builder.append_block_param(merge, types::I32);
 
@@ -4225,6 +4305,7 @@ pub(crate) fn emit_store_at_ea<const SYSTEM: SystemId>(
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
     let merge = builder.create_block();
 
     let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);

@@ -211,7 +211,7 @@ pub struct DrawVertex {
 }
 
 /// Per-light snapshot for the draw call.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct LightData {
     pub color: [f32; 4],
     pub cosatt: [f32; 4],
@@ -226,6 +226,18 @@ pub trait RenderSink: Send {
     /// Submit a single action. Implementations should not block unless
     /// back-pressure from the renderer requires it.
     fn exec(&mut self, action: GxAction);
+
+    fn actions_sent_total(&self) -> u64 {
+        0
+    }
+
+    fn channel_len(&self) -> usize {
+        0
+    }
+
+    fn channel_capacity(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// Swallows every action. Used by headless runners (tinybench, tinytracer)

@@ -115,7 +115,7 @@ impl GraphicsProcessor {
             );
             self.cur_num_tev_stages = stages;
             self.cur_num_indirect_stages = indirect_stages;
-            self.resolve_konst_colors();
+            self.konst_dirty = true;
             renderer.exec(GxAction::SetCullMode(gen_mode.cull_mode()));
         }
 
@@ -159,12 +159,12 @@ impl GraphicsProcessor {
 
         // TEV KSEL (constant color selection) registers: recalculate konst colors
         if idx >= BP_TEV_KSEL_0 && idx <= BP_TEV_KSEL_0 + 7 {
-            self.resolve_konst_colors();
+            self.konst_dirty = true;
         }
 
         // TEV color register writes also affect konst colors
         if idx >= BP_TEV_REGISTERL_0 && idx <= BP_TEV_REGISTERL_0 + 7 {
-            self.resolve_konst_colors();
+            self.konst_dirty = true;
         }
 
         // PE finish

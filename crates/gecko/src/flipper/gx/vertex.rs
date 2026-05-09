@@ -46,7 +46,7 @@ impl GraphicsProcessor {
         mmio: &mut Mmio<SYSTEM>,
         renderer: &mut dyn RenderSink,
         cmd: u8,
-        data: Vec<u8>,
+        data: &[u8],
     ) {
         #[cfg(feature = "gx-stats")]
         let _gx_stats_t0 = std::time::Instant::now();
@@ -73,46 +73,29 @@ impl GraphicsProcessor {
             self.stats.draws_by_primitive[(primitive as usize) & 0x7] += 1;
         }
 
-        self.vertices_scratch.clear();
-        self.vertices_scratch.reserve(vertex_count);
+        self.draw_vertices_scratch.clear();
+        self.draw_vertices_scratch.reserve(vertex_count);
 
-        let mut cur = Cursor::new(&data);
-
+        let mut cur = Cursor::new(data);
         let view = mmio.ram_view();
-        for i in 0..vertex_count {
-            let vertex = self.decode_vertex(&mut cur, &data, &view, &vf, i);
-            self.vertices_scratch.push(vertex);
+
+        for _ in 0..vertex_count {
+            let v = self.decode_vertex(&mut cur, data, &view, &vf);
+            self.draw_vertices_scratch.push(v);
         }
 
         let modelview = self.build_modelview_matrix(vf.default_pos_mtx_idx);
 
-        tracing::debug!(
-            primitive = format!("{:?}", primitive),
-            vertices = format!("{:?}", self.vertices_scratch),
-            pos_mtx_idx = vf.default_pos_mtx_idx,
-            modelview = format!("{:?}", modelview),
-            projection = format!("{:?}", self.projection),
-            "draw call created"
-        );
-
-        // Resolve TEV color registers to f32 arrays for the snapshot
         let tev_color_regs = self.resolve_tev_color_regs();
         let tev_orders = self.resolve_tev_orders();
 
         self.rebuild_lighting_cache_if_dirty();
 
-        self.draw_vertices_scratch.clear();
-        self.draw_vertices_scratch.reserve(self.vertices_scratch.len());
-        for v in &self.vertices_scratch {
-            self.draw_vertices_scratch.push(DrawVertex {
-                position: v.position,
-                normal: v.normal,
-                color0: v.color0,
-                color1: v.color1,
-                pos_view: v.pos_view,
-                texcoords: std::array::from_fn(|i| v.texcoords[i].unwrap_or([0.0, 0.0, 1.0])),
-            });
+        if self.konst_dirty {
+            self.resolve_konst_colors();
+            self.konst_dirty = false;
         }
+
         let draw_vertices = std::mem::take(&mut self.draw_vertices_scratch);
 
         // Flatten the three indirect matrices to 6 rows. Row 2M is row
@@ -165,7 +148,7 @@ impl GraphicsProcessor {
             alpha_ctrl: self.cached_alpha_ctrl,
             ambient_color: self.cached_ambient_color,
             material_color: self.cached_material_color,
-            lights: self.cached_lights.clone(),
+            lights: self.cached_lights,
         }));
 
         #[cfg(feature = "gx-stats")]
@@ -326,14 +309,7 @@ impl GraphicsProcessor {
         }
     }
 
-    fn decode_vertex(
-        &self,
-        cur: &mut Cursor<&Vec<u8>>,
-        data: &[u8],
-        ram: &RamView<'_>,
-        vf: &VertexFormat,
-        vertex_idx: usize,
-    ) -> draw::Vertex {
+    fn decode_vertex(&self, cur: &mut Cursor<&[u8]>, data: &[u8], ram: &RamView<'_>, vf: &VertexFormat) -> DrawVertex {
         // Resolve an indexed vertex attribute (positions, normals, colors,
         // texcoords) to a slice in whichever bank holds it. If the address
         // falls outside both MEM1 and MEM2, fall back to a zero-filled
@@ -482,27 +458,20 @@ impl GraphicsProcessor {
         let normal_view = Vec3::from(normal).transform(&nrm_mtx).normalize();
         let pos_view = self.xf_transform_3x4(pos_mtx_base, position);
 
-        // Texture coordinate generation (XF texgen)
-        // compute_texgen now returns [f32; 3] (s, t, q) with perspective
-        // divide deferred to the fragment shader.
         let num_texgens = (self.xf_mem[XF_NUM_TEXGENS] as usize).min(8);
-        let mut texcoords: [Option<[f32; 3]>; 8] = [None; 8];
+        let mut texcoords: [[f32; 3]; 8] = [[0.0, 0.0, 1.0]; 8];
+
         for tg_idx in 0..num_texgens {
-            texcoords[tg_idx] = Some(self.compute_texgen(tg_idx, position, normal, &raw_texcoords, &tex_mtx_idx));
+            texcoords[tg_idx] = self.compute_texgen(tg_idx, position, normal, &raw_texcoords, &tex_mtx_idx);
         }
-        // For texcoords beyond num_texgens, pass through raw values with q=1
+
         for tg_idx in num_texgens..8 {
-            texcoords[tg_idx] = raw_texcoords[tg_idx].map(|st| [st[0], st[1], 1.0]);
+            if let Some(st) = raw_texcoords[tg_idx] {
+                texcoords[tg_idx] = [st[0], st[1], 1.0];
+            }
         }
 
-        tracing::debug!(
-            vertex = vertex_idx,
-            position = format!("{:02X?}", position),
-            color0 = format!("{:?}", color0),
-            "Vertex"
-        );
-
-        draw::Vertex {
+        DrawVertex {
             position,
             color0,
             color1,
@@ -605,7 +574,7 @@ impl GraphicsProcessor {
     }
 }
 
-fn read_index(cur: &mut Cursor<&Vec<u8>>, attr: AttributeType) -> usize {
+fn read_index(cur: &mut Cursor<&[u8]>, attr: AttributeType) -> usize {
     match attr {
         AttributeType::Index8 => {
             let mut buf = [0u8; 1];

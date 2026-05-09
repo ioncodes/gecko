@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
@@ -11,15 +12,20 @@ pub type FpsShared = Arc<AtomicU64>;
 pub struct FpsCounter {
     pub vsync_count: u32,
     pub last_tick: Instant,
+    pub run_start: Instant,
     pub shared: FpsShared,
+    pub log_path: Option<PathBuf>,
 }
 
 impl FpsCounter {
     pub fn new() -> Self {
+        let now = Instant::now();
         Self {
             vsync_count: 0,
-            last_tick: Instant::now(),
+            last_tick: now,
+            run_start: now,
             shared: Arc::new(AtomicU64::new(0)),
+            log_path: None,
         }
     }
 
@@ -70,6 +76,15 @@ pub fn fps_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
         pct = format!("{native_pct:.1}"),
         "emu fps"
     );
+
+    if let Some(path) = sys.fps_counter.log_path.clone() {
+        use std::io::Write;
+
+        let t = now.duration_since(sys.fps_counter.run_start).as_secs_f64();
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(f, "{t:.3},{fps:.2},{native_pct:.2},{vsyncs}");
+        }
+    }
 
     sys.fps_counter
         .shared

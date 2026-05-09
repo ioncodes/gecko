@@ -3,11 +3,12 @@ use crossbeam_channel::{Receiver, Sender, bounded};
 #[cfg(feature = "efb-writeback")]
 use gecko::host::EfbWriteback;
 use gecko::host::{GxAction, RenderSink};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 #[cfg(feature = "renderdoc-capture")]
 use std::time::Duration;
 
-const CHANNEL_CAPACITY: usize = 8192;
+const CHANNEL_CAPACITY: usize = 65536;
 
 /// Holds the XFB output texture view that the worker updates and the main
 /// thread reads for blitting.
@@ -113,6 +114,7 @@ pub struct Renderer {
     blit_bind_group_layout: wgpu::BindGroupLayout,
     blit_sampler: wgpu::Sampler,
     target_aspect: TargetAspect,
+    actions_sent: Arc<AtomicU64>,
     /// Receiver end of the EFB-to-texture writeback channel. Taken by the
     /// emulator setup code (via [`Renderer::take_writeback_rx`]) and
     /// installed into `GraphicsProcessor::efb_writeback_rx`. Wrapped in
@@ -236,6 +238,7 @@ impl Renderer {
             blit_bind_group_layout,
             blit_sampler,
             target_aspect,
+            actions_sent: Arc::new(AtomicU64::new(0)),
             #[cfg(feature = "efb-writeback")]
             writeback_rx: Arc::new(Mutex::new(Some(writeback_rx))),
         }
@@ -348,7 +351,20 @@ impl Renderer {
 
 impl RenderSink for Renderer {
     fn exec(&mut self, action: GxAction) {
+        self.actions_sent.fetch_add(1, Ordering::Relaxed);
         let _ = self.tx.send(WorkerMsg::Action(action));
+    }
+
+    fn actions_sent_total(&self) -> u64 {
+        self.actions_sent.load(Ordering::Relaxed)
+    }
+
+    fn channel_len(&self) -> usize {
+        self.tx.len()
+    }
+
+    fn channel_capacity(&self) -> Option<usize> {
+        self.tx.capacity()
     }
 }
 

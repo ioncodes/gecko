@@ -334,10 +334,13 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             0
         };
 
+        let actions_sent = self.render_sink.actions_sent_total();
+        let channel_len = self.render_sink.channel_len();
+        let channel_cap = self.render_sink.channel_capacity().unwrap_or(0);
         let result = crate::profile::write_file_atomic(&path, |f| {
             writeln!(
                 f,
-                "vsync_count={}\ndraw_calls={}\nvertices={}\nfifo_bytes={}\ntexture_loads={}\nxfb_presents={}\nbp_writes={}\nxf_writes={}\ncreate_draw_call_ns={}\navg_draw_call_ns={}",
+                "vsync_count={}\ndraw_calls={}\nvertices={}\nfifo_bytes={}\ntexture_loads={}\nxfb_presents={}\nbp_writes={}\nxf_writes={}\ncreate_draw_call_ns={}\navg_draw_call_ns={}\nrender_actions_sent={}\nrender_channel_len={}\nrender_channel_cap={}",
                 self.vsync_count,
                 s.draw_calls,
                 s.vertices,
@@ -348,6 +351,9 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 s.xf_writes,
                 s.create_draw_call_ns,
                 avg_draw_ns,
+                actions_sent,
+                channel_len,
+                channel_cap,
             )?;
             writeln!(f, "\n--- draws by primitive ---")?;
 
@@ -458,18 +464,21 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[cfg(feature = "profile")]
     fn tick_pprof_session(&mut self) {
         if self.pprof_session.is_none() {
-            if let Some(cfg) = self.pprof_config.take() {
-                match crate::profile::IpSampler::start_for_current_thread(cfg.hz, cfg.secs, cfg.out.clone()) {
-                    Ok(s) => {
-                        tracing::info!(
-                            "pprof: sampling at {} Hz for {} s, writing to {}",
-                            cfg.hz,
-                            cfg.secs,
-                            cfg.out.display()
-                        );
-                        self.pprof_session = Some(s);
+            if let Some(cfg) = self.pprof_config.as_ref() {
+                if self.vsync_count >= cfg.delay_vsyncs as u64 {
+                    let cfg = self.pprof_config.take().unwrap();
+                    match crate::profile::IpSampler::start_for_current_thread(cfg.hz, cfg.secs, cfg.out.clone()) {
+                        Ok(s) => {
+                            tracing::info!(
+                                hz = cfg.hz,
+                                secs = cfg.secs,
+                                out = %cfg.out.display(),
+                                "pprof: sampling started",
+                            );
+                            self.pprof_session = Some(s);
+                        }
+                        Err(err) => tracing::warn!(?err, "failed to start pprof sampler"),
                     }
-                    Err(err) => tracing::warn!(?err, "failed to start pprof sampler"),
                 }
             }
         }

@@ -39,7 +39,7 @@ pub struct BlockLookupSlot {
     pub entry: usize,
 }
 
-pub const BLOCK_LOOKUP_TABLE_SIZE: usize = 8192;
+pub const BLOCK_LOOKUP_TABLE_SIZE: usize = 131072;
 pub const BLOCK_LOOKUP_TABLE_MASK: u32 = (BLOCK_LOOKUP_TABLE_SIZE as u32) - 1;
 
 #[derive(Clone, Copy)]
@@ -93,6 +93,7 @@ pub struct JitEngine<const SYSTEM: SystemId> {
     trampoline_fn: TrampolineFn,
     block_lookup_table_addr: usize,
     block_seq: u64,
+    dump_pc: Option<u32>,
 }
 
 impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
@@ -487,6 +488,9 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             trampoline_fn,
             block_lookup_table_addr,
             block_seq: 0,
+            dump_pc: std::env::var("GECKO_DUMP_PC")
+                .ok()
+                .and_then(|s| u32::from_str_radix(s.trim().trim_start_matches("0x"), 16).ok()),
         }
     }
 
@@ -839,9 +843,53 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             self.pending_chain_slots.entry(target_pc).or_default().push(slot_addr);
         }
 
+        let want_dump = self.dump_pc == Some(spec.start_pc);
+        if want_dump {
+            self.ctx.set_disasm(true);
+        }
+
         self.module
             .define_function(func_id, &mut self.ctx)
             .expect("define block");
+
+        if want_dump {
+            if let Some(cc) = self.ctx.compiled_code() {
+                let path = format!("./profile-dumps/jit-disasm-{:08x}.txt", spec.start_pc);
+                let mut s = String::new();
+
+                use std::fmt::Write as _;
+
+                let _ = writeln!(
+                    s,
+                    "; PPC block at {:#010x}, len={} instrs, terminator={:?}",
+                    spec.start_pc,
+                    spec.instrs.len(),
+                    spec.terminator
+                );
+
+                for (i, &raw) in spec.instrs.iter().enumerate() {
+                    let pc = spec.pc_of(i);
+                    let _ = writeln!(s, ";   {:08x}  {:08x}", pc, raw);
+                }
+
+                let _ = writeln!(s, "; --- cranelift vcode ---");
+                if let Some(vcode) = cc.vcode.as_ref() {
+                    s.push_str(vcode);
+                }
+
+                let _ = writeln!(s, "\n; --- emitted bytes ({} bytes) ---", cc.code_buffer().len());
+                for chunk in cc.code_buffer().chunks(16) {
+                    s.push_str("; ");
+                    for b in chunk {
+                        let _ = write!(s, "{:02x} ", b);
+                    }
+                    s.push('\n');
+                }
+
+                let _ = std::fs::write(&path, s);
+                tracing::info!(pc = format_args!("{:#010x}", spec.start_pc).to_string(), %path, "dumped JIT disasm");
+            }
+        }
 
         self.module.finalize_definitions().expect("finalize");
         let entry = self.module.get_finalized_function(func_id) as usize;

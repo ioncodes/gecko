@@ -1,7 +1,7 @@
 use crate::gekko::instruction::Instruction;
 use crate::system::{System, SystemId};
 
-pub const MAX_BLOCK_INSTRS: usize = 64;
+pub const MAX_BLOCK_INSTRS: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TermKind {
@@ -46,7 +46,7 @@ impl BlockSpec {
 }
 
 pub fn discover<const SYSTEM: SystemId>(sys: &System<SYSTEM>, start_pc: u32) -> BlockSpec {
-    const EXTENSION_MAX_FORWARD_BYTES: u32 = 256;
+    const EXTENSION_MAX_FORWARD_BYTES: u32 = 1024;
 
     let mut instrs: Vec<u32> = Vec::with_capacity(8);
     let mut pcs: Vec<u32> = Vec::with_capacity(8);
