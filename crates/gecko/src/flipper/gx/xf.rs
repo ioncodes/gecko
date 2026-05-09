@@ -4,21 +4,23 @@ use super::{GraphicsProcessor, draw};
 use crate::host::{GxAction, RenderSink};
 use crate::mmio::RamView;
 
+const XF_LIGHT_END: usize = XF_LIGHT_BASE + 8 * XF_LIGHT_STRIDE;
+const XF_CHAN_CFG_BEGIN: usize = XF_AMBIENT_COLOR0;
+const XF_CHAN_CFG_END: usize = XF_ALPHA_CTRL1 + 1;
+
+#[inline(always)]
+fn ranges_overlap(a_begin: usize, a_end: usize, b_begin: usize, b_end: usize) -> bool {
+    a_begin < b_end && b_begin < a_end
+}
+
 impl GraphicsProcessor {
+    #[inline(always)]
     pub fn xf_transform_3x4(&self, base: usize, v: [f32; 3]) -> Vec3 {
+        let m: [f32; 12] = std::array::from_fn(|i| f32::from_bits(self.xf_mem[base + i]));
         Vec3(
-            f32::from_bits(self.xf_mem[base]) * v[0]
-                + f32::from_bits(self.xf_mem[base + 1]) * v[1]
-                + f32::from_bits(self.xf_mem[base + 2]) * v[2]
-                + f32::from_bits(self.xf_mem[base + 3]),
-            f32::from_bits(self.xf_mem[base + 4]) * v[0]
-                + f32::from_bits(self.xf_mem[base + 5]) * v[1]
-                + f32::from_bits(self.xf_mem[base + 6]) * v[2]
-                + f32::from_bits(self.xf_mem[base + 7]),
-            f32::from_bits(self.xf_mem[base + 8]) * v[0]
-                + f32::from_bits(self.xf_mem[base + 9]) * v[1]
-                + f32::from_bits(self.xf_mem[base + 10]) * v[2]
-                + f32::from_bits(self.xf_mem[base + 11]),
+            m[0] * v[0] + m[1] * v[1] + m[2] * v[2] + m[3],
+            m[4] * v[0] + m[5] * v[1] + m[6] * v[2] + m[7],
+            m[8] * v[0] + m[9] * v[1] + m[10] * v[2] + m[11],
         )
     }
 
@@ -136,6 +138,12 @@ impl GraphicsProcessor {
             self.rebuild_viewport();
             renderer.exec(GxAction::SetViewport(self.cur_viewport));
         }
+
+        if self::ranges_overlap(addr, end, XF_LIGHT_BASE, XF_LIGHT_END)
+            || self::ranges_overlap(addr, end, XF_CHAN_CFG_BEGIN, XF_CHAN_CFG_END)
+        {
+            self.lighting_dirty = true;
+        }
     }
 
     #[inline(always)]
@@ -184,6 +192,12 @@ impl GraphicsProcessor {
         if dst_addr <= XF_VIEWPORT_END && end > XF_VIEWPORT_BASE {
             self.rebuild_viewport();
             renderer.exec(GxAction::SetViewport(self.cur_viewport));
+        }
+
+        if self::ranges_overlap(dst_addr, end, XF_LIGHT_BASE, XF_LIGHT_END)
+            || self::ranges_overlap(dst_addr, end, XF_CHAN_CFG_BEGIN, XF_CHAN_CFG_END)
+        {
+            self.lighting_dirty = true;
         }
     }
 }

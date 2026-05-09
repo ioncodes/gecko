@@ -228,6 +228,78 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         self.on_vsync_boundary();
     }
 
+    #[cfg(feature = "jit")]
+    pub fn load_jit_cache(&mut self, game_id: &str) -> (usize, usize, usize, usize) {
+        let mut ppc_compiled = 0;
+        let mut ppc_skipped = 0;
+        let mut dsp_compiled = 0;
+        let mut dsp_skipped = 0;
+
+        let ppc_path = crate::jit_cache::ppc_cache_path(game_id);
+        if let Ok(blocks) = crate::jit_cache::load_ppc_blocks(&ppc_path) {
+            tracing::info!(count = blocks.len(), "loaded PPC JIT block cache");
+
+            if self.jit.is_none() {
+                self.jit = Some(Box::new(crate::gekko::jit::JitEngine::<SYSTEM>::new()));
+            }
+
+            let mut jit = self.jit.take().unwrap();
+            let (c, s) = jit.precompile_blocks(self, &blocks);
+            ppc_compiled = c;
+            ppc_skipped = s;
+
+            self.jit = Some(jit);
+        }
+
+        let dsp_path = crate::jit_cache::dsp_cache_path(game_id);
+        if let Ok(blocks) = crate::jit_cache::load_dsp_blocks(&dsp_path) {
+            tracing::info!(count = blocks.len(), "loaded DSP JIT block cache");
+
+            if self.dsp.jit.is_none() {
+                self.dsp.jit = Some(Box::new(crate::flipper::dsp::jit::JitEngine::<SYSTEM>::new()));
+            }
+
+            let iram_ptr = self.dsp.iram.as_ptr();
+            let irom_ptr = self.dsp.irom.as_ptr();
+            let iram_len = self.dsp.iram.len();
+            let irom_len = self.dsp.irom.len();
+            let iram = unsafe { ::core::slice::from_raw_parts(iram_ptr, iram_len) };
+            let irom = unsafe { ::core::slice::from_raw_parts(irom_ptr, irom_len) };
+
+            let (c, s) = self.dsp.jit.as_mut().unwrap().precompile_blocks(iram, irom, &blocks);
+            dsp_compiled = c;
+            dsp_skipped = s;
+        }
+
+        (ppc_compiled, ppc_skipped, dsp_compiled, dsp_skipped)
+    }
+
+    #[cfg(feature = "jit")]
+    pub fn save_jit_cache(&self, game_id: &str) -> std::io::Result<(usize, usize)> {
+        let cached_system = if SYSTEM == WII {
+            crate::jit_cache::CachedSystem::Wii
+        } else {
+            crate::jit_cache::CachedSystem::Gc
+        };
+
+        let mut ppc_count = 0;
+        let mut dsp_count = 0;
+
+        if let Some(jit) = self.jit.as_ref() {
+            let blocks = jit.cached_blocks();
+            ppc_count = blocks.len();
+            crate::jit_cache::save_ppc_blocks(&crate::jit_cache::ppc_cache_path(game_id), cached_system, &blocks)?;
+        }
+
+        if let Some(jit) = self.dsp.jit.as_ref() {
+            let blocks = jit.cached_blocks();
+            dsp_count = blocks.len();
+            crate::jit_cache::save_dsp_blocks(&crate::jit_cache::dsp_cache_path(game_id), cached_system, &blocks)?;
+        }
+
+        Ok((ppc_count, dsp_count))
+    }
+
     #[cfg(any(feature = "jit-stats", feature = "profile", feature = "gx-stats"))]
     fn on_vsync_boundary(&mut self) {
         self.vsync_count = self.vsync_count.wrapping_add(1);
@@ -247,7 +319,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         if !self.heatmap.enabled || self.heatmap.interval_frames == 0 {
             return;
         }
-        
+
         if self.vsync_count % self.heatmap.interval_frames as u64 != 0 {
             return;
         }

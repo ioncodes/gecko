@@ -2,7 +2,7 @@ use super::constants::*;
 use super::math::{Vec3, unpack_rgba};
 use super::regs::{self, *};
 use super::{GraphicsProcessor, draw};
-use crate::host::{DrawData, DrawVertex, GxAction, LightData, RenderSink};
+use crate::host::{DrawData, DrawVertex, GxAction, RenderSink};
 use crate::mmio::{Mmio, RamView};
 use crate::system::SystemId;
 use std::io::{Cursor, Read};
@@ -75,7 +75,7 @@ impl GraphicsProcessor {
 
         self.vertices_scratch.clear();
         self.vertices_scratch.reserve(vertex_count);
-        
+
         let mut cur = Cursor::new(&data);
 
         let view = mmio.ram_view();
@@ -99,29 +99,7 @@ impl GraphicsProcessor {
         let tev_color_regs = self.resolve_tev_color_regs();
         let tev_orders = self.resolve_tev_orders();
 
-        // Snapshot light data for the action stream
-        let light_colors = self.snapshot_light_field(XF_LIGHT_COLOR);
-        let light_cosatt = self.snapshot_light_field(XF_LIGHT_A0);
-        let light_distatt = self.snapshot_light_field(XF_LIGHT_K0);
-        let light_pos = self.snapshot_light_field(XF_LIGHT_PX);
-        let light_dir = self.snapshot_light_field(XF_LIGHT_NX);
-
-        let color_ctrl = [
-            regs::ChanCtrl::from_raw(self.xf_mem[XF_COLOR_CTRL0]),
-            regs::ChanCtrl::from_raw(self.xf_mem[XF_COLOR_CTRL1]),
-        ];
-        let alpha_ctrl = [
-            regs::ChanCtrl::from_raw(self.xf_mem[XF_ALPHA_CTRL0]),
-            regs::ChanCtrl::from_raw(self.xf_mem[XF_ALPHA_CTRL1]),
-        ];
-        let ambient_color = [
-            unpack_rgba(self.xf_mem[XF_AMBIENT_COLOR0]),
-            unpack_rgba(self.xf_mem[XF_AMBIENT_COLOR1]),
-        ];
-        let material_color = [
-            unpack_rgba(self.xf_mem[XF_MATERIAL_COLOR0]),
-            unpack_rgba(self.xf_mem[XF_MATERIAL_COLOR1]),
-        ];
+        self.rebuild_lighting_cache_if_dirty();
 
         self.draw_vertices_scratch.clear();
         self.draw_vertices_scratch.reserve(self.vertices_scratch.len());
@@ -136,14 +114,6 @@ impl GraphicsProcessor {
             });
         }
         let draw_vertices = std::mem::take(&mut self.draw_vertices_scratch);
-
-        let lights: [LightData; 8] = std::array::from_fn(|i| LightData {
-            color: light_colors[i],
-            cosatt: light_cosatt[i],
-            distatt: light_distatt[i],
-            position: light_pos[i],
-            direction: light_dir[i],
-        });
 
         // Flatten the three indirect matrices to 6 rows. Row 2M is row
         // 0 of matrix M, row 2M+1 is row 1. The .w lane carries the
@@ -191,11 +161,11 @@ impl GraphicsProcessor {
             num_indirect_stages: self.cur_num_indirect_stages,
             bump_imask: self.cur_bump_imask,
             tev_indirect: std::array::from_fn(|i| self.cur_tev_indirect[i].raw()),
-            color_ctrl,
-            alpha_ctrl,
-            ambient_color,
-            material_color,
-            lights,
+            color_ctrl: self.cached_color_ctrl,
+            alpha_ctrl: self.cached_alpha_ctrl,
+            ambient_color: self.cached_ambient_color,
+            material_color: self.cached_material_color,
+            lights: self.cached_lights.clone(),
         }));
 
         #[cfg(feature = "gx-stats")]
@@ -572,22 +542,66 @@ impl GraphicsProcessor {
         ])
     }
 
-    fn snapshot_light_field(&self, field_offset: usize) -> [[f32; 4]; 8] {
-        std::array::from_fn(|i| {
-            let base = XF_LIGHT_BASE + i * XF_LIGHT_STRIDE + field_offset;
-            if field_offset == XF_LIGHT_COLOR {
-                // Color is stored as packed RGBA, not float
-                unpack_rgba(self.xf_mem[base])
-            } else {
-                // Float vec3, w = 0
-                [
-                    f32::from_bits(self.xf_mem[base]),
-                    f32::from_bits(self.xf_mem[base + 1]),
-                    f32::from_bits(self.xf_mem[base + 2]),
-                    0.0,
-                ]
-            }
-        })
+    fn rebuild_lighting_cache_if_dirty(&mut self) {
+        if !self.lighting_dirty {
+            return;
+        }
+
+        self.cached_color_ctrl = [
+            regs::ChanCtrl::from_raw(self.xf_mem[XF_COLOR_CTRL0]),
+            regs::ChanCtrl::from_raw(self.xf_mem[XF_COLOR_CTRL1]),
+        ];
+
+        self.cached_alpha_ctrl = [
+            regs::ChanCtrl::from_raw(self.xf_mem[XF_ALPHA_CTRL0]),
+            regs::ChanCtrl::from_raw(self.xf_mem[XF_ALPHA_CTRL1]),
+        ];
+
+        self.cached_ambient_color = [
+            unpack_rgba(self.xf_mem[XF_AMBIENT_COLOR0]),
+            unpack_rgba(self.xf_mem[XF_AMBIENT_COLOR1]),
+        ];
+
+        self.cached_material_color = [
+            unpack_rgba(self.xf_mem[XF_MATERIAL_COLOR0]),
+            unpack_rgba(self.xf_mem[XF_MATERIAL_COLOR1]),
+        ];
+
+        for i in 0..8 {
+            let base = XF_LIGHT_BASE + i * XF_LIGHT_STRIDE;
+
+            self.cached_lights[i].color = unpack_rgba(self.xf_mem[base + XF_LIGHT_COLOR]);
+
+            self.cached_lights[i].cosatt = [
+                f32::from_bits(self.xf_mem[base + XF_LIGHT_A0]),
+                f32::from_bits(self.xf_mem[base + XF_LIGHT_A0 + 1]),
+                f32::from_bits(self.xf_mem[base + XF_LIGHT_A0 + 2]),
+                0.0,
+            ];
+
+            self.cached_lights[i].distatt = [
+                f32::from_bits(self.xf_mem[base + XF_LIGHT_K0]),
+                f32::from_bits(self.xf_mem[base + XF_LIGHT_K0 + 1]),
+                f32::from_bits(self.xf_mem[base + XF_LIGHT_K0 + 2]),
+                0.0,
+            ];
+
+            self.cached_lights[i].position = [
+                f32::from_bits(self.xf_mem[base + XF_LIGHT_PX]),
+                f32::from_bits(self.xf_mem[base + XF_LIGHT_PX + 1]),
+                f32::from_bits(self.xf_mem[base + XF_LIGHT_PX + 2]),
+                0.0,
+            ];
+
+            self.cached_lights[i].direction = [
+                f32::from_bits(self.xf_mem[base + XF_LIGHT_NX]),
+                f32::from_bits(self.xf_mem[base + XF_LIGHT_NX + 1]),
+                f32::from_bits(self.xf_mem[base + XF_LIGHT_NX + 2]),
+                0.0,
+            ];
+        }
+
+        self.lighting_dirty = false;
     }
 }
 
@@ -607,14 +621,14 @@ fn read_index(cur: &mut Cursor<&Vec<u8>>, attr: AttributeType) -> usize {
     }
 }
 
-#[inline]
+#[inline(always)]
 fn decode_position(data: &[u8], vat: &VatA) -> [f32; 3] {
     let num = vat.pos_cnt().components();
     let recip = 1.0f32 / ((1u32 << vat.pos_shift()) as f32);
     self::decode_components::<3>(data, num, vat.pos_fmt(), recip)
 }
 
-#[inline]
+#[inline(always)]
 fn decode_normal(data: &[u8], vat: &VatA) -> [f32; 3] {
     let cnt = vat.nrm_cnt().components().min(3);
     let fmt = vat.nrm_fmt();
@@ -626,7 +640,7 @@ fn decode_normal(data: &[u8], vat: &VatA) -> [f32; 3] {
     self::decode_components::<3>(data, cnt, fmt, recip)
 }
 
-#[inline]
+#[inline(always)]
 fn decode_texcoord(data: &[u8], fmt: ComponentFormat, shift: u8, cnt: TexCount) -> [f32; 2] {
     let num = cnt.components();
     let recip = 1.0f32 / ((1u32 << shift) as f32);
@@ -637,7 +651,7 @@ fn decode_texcoord(data: &[u8], fmt: ComponentFormat, shift: u8, cnt: TexCount) 
 #[inline(always)]
 fn decode_components<const N: usize>(data: &[u8], num: usize, fmt: ComponentFormat, recip: f32) -> [f32; N] {
     let mut result = [0.0f32; N];
-    
+
     match fmt {
         ComponentFormat::U8 => {
             for i in 0..num {
@@ -724,4 +738,3 @@ fn decode_color(data: &[u8], fmt: regs::ColorFormat, cnt: regs::ColorCount) -> [
         }
     }
 }
-

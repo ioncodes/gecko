@@ -286,7 +286,7 @@ impl GraphicsProcessor {
             {
                 self.stats.texture_loads += 1;
             }
-            
+
             renderer.exec(GxAction::LoadTexture {
                 id: cache_id,
                 width,

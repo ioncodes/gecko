@@ -12,25 +12,24 @@ impl GraphicsProcessor {
         tex_mtx_indices: &[u8; 8],
     ) -> [f32; 3] {
         let tg = TexGenReg::from_raw(self.xf_mem[XF_TEXGEN_BASE + texgen_idx]);
-        let dt = DualTexGenReg::from_raw(self.xf_mem[XF_DUALTEX_BASE + texgen_idx]);
 
-        // Select the source input vector based on texgen source_row
         let src = self.select_texgen_source(&tg, position, normal, raw_texcoords);
 
-        // Form input vector based on input_form
         let input = match tg.input_form() {
             super::regs::TexGenInputForm::Ab11 => [src[0], src[1], 1.0, 1.0],
             super::regs::TexGenInputForm::Abc1 => [src[0], src[1], src[2], 1.0],
         };
 
-        // Texture matrix base from per-vertex index
         let tex_mtx_base = tex_mtx_indices[texgen_idx] as usize * XF_POS_MTX_STRIDE;
 
-        // Multiply input by texture matrix (2x4 or 3x4 depending on projection)
         let (s, t, q) = self.apply_tex_matrix(&tg, tex_mtx_base, &input);
 
-        // Dual texgen post-transform (normalization + post-matrix multiply)
-        let (s, t, q) = self.apply_dual_texgen(s, t, q, &dt);
+        let (s, t, q) = if self.xf_mem[XF_DUAL_TEX_ENABLE] != 0 {
+            let dt = DualTexGenReg::from_raw(self.xf_mem[XF_DUALTEX_BASE + texgen_idx]);
+            self.apply_dual_texgen(s, t, q, &dt)
+        } else {
+            (s, t, q)
+        };
 
         // Return (s, t, q) as a 3-component vector. The perspective divide
         // (s/q, t/q) is deferred to the fragment shader so the rasterizer
@@ -93,66 +92,37 @@ impl GraphicsProcessor {
         }
     }
 
+    #[inline(always)]
     fn apply_tex_matrix(&self, tg: &TexGenReg, tex_mtx_base: usize, input: &[f32; 4]) -> (f32, f32, f32) {
+        let m: [f32; 12] = std::array::from_fn(|i| f32::from_bits(self.xf_mem[tex_mtx_base + i]));
+        let s = m[0] * input[0] + m[1] * input[1] + m[2] * input[2] + m[3] * input[3];
+        let t = m[4] * input[0] + m[5] * input[1] + m[6] * input[2] + m[7] * input[3];
+
         match tg.projection() {
-            super::regs::TexGenProjection::St => {
-                // 2x4 matrix -> (s, t)
-                let s = f32::from_bits(self.xf_mem[tex_mtx_base]) * input[0]
-                    + f32::from_bits(self.xf_mem[tex_mtx_base + 1]) * input[1]
-                    + f32::from_bits(self.xf_mem[tex_mtx_base + 2]) * input[2]
-                    + f32::from_bits(self.xf_mem[tex_mtx_base + 3]) * input[3];
-                let t = f32::from_bits(self.xf_mem[tex_mtx_base + 4]) * input[0]
-                    + f32::from_bits(self.xf_mem[tex_mtx_base + 5]) * input[1]
-                    + f32::from_bits(self.xf_mem[tex_mtx_base + 6]) * input[2]
-                    + f32::from_bits(self.xf_mem[tex_mtx_base + 7]) * input[3];
-                (s, t, 1.0)
-            }
+            super::regs::TexGenProjection::St => (s, t, 1.0),
             super::regs::TexGenProjection::Stq => {
-                // 3x4 matrix -> (s, t, q)
-                let s = f32::from_bits(self.xf_mem[tex_mtx_base]) * input[0]
-                    + f32::from_bits(self.xf_mem[tex_mtx_base + 1]) * input[1]
-                    + f32::from_bits(self.xf_mem[tex_mtx_base + 2]) * input[2]
-                    + f32::from_bits(self.xf_mem[tex_mtx_base + 3]) * input[3];
-                let t = f32::from_bits(self.xf_mem[tex_mtx_base + 4]) * input[0]
-                    + f32::from_bits(self.xf_mem[tex_mtx_base + 5]) * input[1]
-                    + f32::from_bits(self.xf_mem[tex_mtx_base + 6]) * input[2]
-                    + f32::from_bits(self.xf_mem[tex_mtx_base + 7]) * input[3];
-                let q = f32::from_bits(self.xf_mem[tex_mtx_base + 8]) * input[0]
-                    + f32::from_bits(self.xf_mem[tex_mtx_base + 9]) * input[1]
-                    + f32::from_bits(self.xf_mem[tex_mtx_base + 10]) * input[2]
-                    + f32::from_bits(self.xf_mem[tex_mtx_base + 11]) * input[3];
+                let q = m[8] * input[0] + m[9] * input[1] + m[10] * input[2] + m[11] * input[3];
                 (s, t, q)
             }
         }
     }
 
+    #[inline(always)]
     fn apply_dual_texgen(&self, s: f32, t: f32, q: f32, dt: &DualTexGenReg) -> (f32, f32, f32) {
-        let dual_tex_enabled = self.xf_mem[XF_DUAL_TEX_ENABLE] != 0;
-        if !dual_tex_enabled {
-            return (s, t, q);
-        }
-
         let post_base = XF_POST_MTX_BASE + dt.post_mtx_idx() as usize * 4;
-        // Normalize (s, t, q) only if dt.normalize() is set
         let (ns, nt, nq) = if dt.normalize() {
             let inv_q = if q.abs() > f32::EPSILON { 1.0 / q } else { 1.0 };
             (s * inv_q, t * inv_q, inv_q)
         } else {
             (s, t, q)
         };
-        // Post-transform: 3x4 matrix multiply on (ns, nt, nq)
-        let ps = f32::from_bits(self.xf_mem[post_base]) * ns
-            + f32::from_bits(self.xf_mem[post_base + 1]) * nt
-            + f32::from_bits(self.xf_mem[post_base + 2]) * nq
-            + f32::from_bits(self.xf_mem[post_base + 3]);
-        let pt = f32::from_bits(self.xf_mem[post_base + 4]) * ns
-            + f32::from_bits(self.xf_mem[post_base + 5]) * nt
-            + f32::from_bits(self.xf_mem[post_base + 6]) * nq
-            + f32::from_bits(self.xf_mem[post_base + 7]);
-        let pq = f32::from_bits(self.xf_mem[post_base + 8]) * ns
-            + f32::from_bits(self.xf_mem[post_base + 9]) * nt
-            + f32::from_bits(self.xf_mem[post_base + 10]) * nq
-            + f32::from_bits(self.xf_mem[post_base + 11]);
+
+        let m: [f32; 12] = std::array::from_fn(|i| f32::from_bits(self.xf_mem[post_base + i]));
+
+        let ps = m[0] * ns + m[1] * nt + m[2] * nq + m[3];
+        let pt = m[4] * ns + m[5] * nt + m[6] * nq + m[7];
+        let pq = m[8] * ns + m[9] * nt + m[10] * nq + m[11];
+
         (ps, pt, pq)
     }
 }

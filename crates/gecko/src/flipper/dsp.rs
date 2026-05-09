@@ -767,6 +767,13 @@ pub trait DspJitHandle {
     fn dump_hot_blocks(&self, top_k: usize);
     fn dump_hot_blocks_csv(&self, top_k: usize, path: &std::path::Path) -> std::io::Result<()>;
     fn dump_top_clif(&mut self, top_k: usize, iram: &[u8], irom: &[u8]);
+    fn cached_blocks(&self) -> Vec<crate::jit_cache::CachedBlockDsp>;
+    fn precompile_blocks(
+        &mut self,
+        iram: &[u8],
+        irom: &[u8],
+        blocks: &[crate::jit_cache::CachedBlockDsp],
+    ) -> (usize, usize);
 }
 
 #[cfg(feature = "jit")]
@@ -796,6 +803,19 @@ impl<const SYSTEM: SystemId> DspJitHandle for jit::JitEngine<SYSTEM> {
         return Self::dump_hot_blocks_csv(self, _top_k, _path);
         #[cfg(not(feature = "jit-stats"))]
         Ok(())
+    }
+
+    fn cached_blocks(&self) -> Vec<crate::jit_cache::CachedBlockDsp> {
+        Self::cached_blocks(self)
+    }
+
+    fn precompile_blocks(
+        &mut self,
+        iram: &[u8],
+        irom: &[u8],
+        blocks: &[crate::jit_cache::CachedBlockDsp],
+    ) -> (usize, usize) {
+        Self::precompile_blocks(self, iram, irom, blocks)
     }
 
     fn dump_top_clif(&mut self, _top_k: usize, _iram: &[u8], _irom: &[u8]) {

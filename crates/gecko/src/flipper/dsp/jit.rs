@@ -50,8 +50,7 @@ pub struct JitEngine<const SYSTEM: SystemId> {
     chain_depth_histogram: [u64; CHAIN_DEPTH_HISTOGRAM_LEN],
     #[cfg(feature = "jit-stats")]
     pub(crate) hits: FxHashMap<u16, u64>,
-    #[cfg(feature = "jit-stats")]
-    block_specs: FxHashMap<u16, block::BlockSpec>,
+    pub(crate) block_specs: FxHashMap<u16, block::BlockSpec>,
     #[cfg(feature = "jit-stats")]
     block_entry_counter_ptrs: FxHashMap<u16, usize>,
 }
@@ -354,7 +353,6 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             chain_depth_histogram: [0; CHAIN_DEPTH_HISTOGRAM_LEN],
             #[cfg(feature = "jit-stats")]
             hits: FxHashMap::default(),
-            #[cfg(feature = "jit-stats")]
             block_specs: FxHashMap::default(),
             #[cfg(feature = "jit-stats")]
             block_entry_counter_ptrs: FxHashMap::default(),
@@ -413,9 +411,61 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         #[cfg(feature = "jit-stats")]
         {
             *self.hits.entry(start_pc).or_insert(0) += 1;
-            self.block_specs.insert(start_pc, spec);
         }
+        self.block_specs.insert(start_pc, spec);
         entry
+    }
+
+    pub fn cached_blocks(&self) -> Vec<crate::jit_cache::CachedBlockDsp> {
+        self.cache
+            .keys()
+            .filter_map(|&pc| {
+                let spec = self.block_specs.get(&pc)?;
+                Some(crate::jit_cache::CachedBlockDsp {
+                    pc,
+                    instr_count: spec.instrs.len() as u16,
+                    hash: crate::jit_cache::hash_words(spec.instrs.iter().map(|e| e.raw)),
+                })
+            })
+            .collect()
+    }
+
+    pub fn precompile_blocks(
+        &mut self,
+        iram: &[u8],
+        irom: &[u8],
+        blocks: &[crate::jit_cache::CachedBlockDsp],
+    ) -> (usize, usize) {
+        let mut compiled = 0usize;
+        let mut skipped = 0usize;
+
+        for b in blocks {
+            if self.cache.contains_key(&b.pc) {
+                continue;
+            }
+
+            if b.instr_count == 0 {
+                skipped += 1;
+                continue;
+            }
+
+            let spec = block::discover(iram, irom, b.pc);
+            if spec.instrs.len() != b.instr_count as usize {
+                skipped += 1;
+                continue;
+            }
+
+            let actual = crate::jit_cache::hash_words(spec.instrs.iter().map(|e| e.raw));
+            if actual != b.hash {
+                skipped += 1;
+                continue;
+            }
+
+            self.lookup_or_compile(iram, irom, b.pc);
+
+            compiled += 1;
+        }
+        (compiled, skipped)
     }
 
     fn func_id_for(&mut self, pc: u16) -> FuncId {

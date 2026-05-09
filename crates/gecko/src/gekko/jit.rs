@@ -85,7 +85,6 @@ pub struct JitEngine<const SYSTEM: SystemId> {
     pending_chain_slots: FxHashMap<u32, Vec<usize>>,
     #[cfg(feature = "jit-stats")]
     hits: FxHashMap<u32, u64>,
-    #[cfg(feature = "jit-stats")]
     pub(crate) block_specs: FxHashMap<u32, block::BlockSpec>,
     #[cfg(feature = "jit-stats")]
     pub(crate) block_entry_counter_ptrs: FxHashMap<u32, usize>,
@@ -480,7 +479,6 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             pending_chain_slots: FxHashMap::default(),
             #[cfg(feature = "jit-stats")]
             hits: FxHashMap::default(),
-            #[cfg(feature = "jit-stats")]
             block_specs: FxHashMap::default(),
             #[cfg(feature = "jit-stats")]
             block_entry_counter_ptrs: FxHashMap::default(),
@@ -503,6 +501,58 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             (*table.add(idx)).pc = pc;
             (*table.add(idx)).entry = entry;
         }
+    }
+
+    pub fn cached_blocks(&self) -> Vec<crate::jit_cache::CachedBlockPpc> {
+        self.cache
+            .keys()
+            .filter_map(|&pc| {
+                let spec = self.block_specs.get(&pc)?;
+                Some(crate::jit_cache::CachedBlockPpc {
+                    pc,
+                    instr_count: spec.instrs.len() as u16,
+                    hash: crate::jit_cache::hash_words(spec.instrs.iter().copied()),
+                })
+            })
+            .collect()
+    }
+
+    pub fn precompile_blocks(
+        &mut self,
+        sys: &mut System<SYSTEM>,
+        blocks: &[crate::jit_cache::CachedBlockPpc],
+    ) -> (usize, usize) {
+        let mut compiled = 0usize;
+        let mut skipped = 0usize;
+
+        for b in blocks {
+            if self.cache.contains_key(&b.pc) {
+                continue;
+            }
+
+            let count = b.instr_count as u32;
+            if count == 0 {
+                skipped += 1;
+                continue;
+            }
+
+            let mut buf = Vec::with_capacity(count as usize);
+            for i in 0..count {
+                let instr_pc = b.pc.wrapping_add(i * 4);
+                buf.push(sys.mmio.fetch_instruction(instr_pc));
+            }
+
+            let actual = crate::jit_cache::hash_words(buf.into_iter());
+            if actual != b.hash {
+                skipped += 1;
+                continue;
+            }
+
+            self.lookup_or_compile(sys, b.pc);
+
+            compiled += 1;
+        }
+        (compiled, skipped)
     }
 
     pub fn lookup_or_compile(&mut self, sys: &mut System<SYSTEM>, pc: u32) -> BlockEntry {
@@ -532,10 +582,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
 
         let entry = self.compile(&spec, &gprs_snapshot);
         self.cache.insert(pc, entry);
-        #[cfg(feature = "jit-stats")]
-        {
-            self.block_specs.insert(pc, spec);
-        }
+        self.block_specs.insert(pc, spec);
 
         entry
     }

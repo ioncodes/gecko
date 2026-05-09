@@ -165,11 +165,11 @@ fn main() {
         if args.wii {
             let mut emulator = Wii::with_image(&dol);
             configure(&mut emulator, &args);
-            run(emulator, present_mode, &args);
+            run(emulator, present_mode, &args, None);
         } else {
             let mut emulator = GameCube::with_image(&dol);
             configure(&mut emulator, &args);
-            run(emulator, present_mode, &args);
+            run(emulator, present_mode, &args, None);
         }
     } else if let Some(ref ipl_path) = args.ipl {
         let ipl_data = std::fs::read(ipl_path).expect("failed to read IPL");
@@ -179,10 +179,11 @@ fn main() {
             emulator.insert_dvd(image::load_dvd(dvd_data));
         }
         configure(&mut emulator, &args);
-        run(emulator, present_mode, &args);
+        run(emulator, present_mode, &args, None);
     } else if let Some(ref dvd_path) = args.dvd {
         let dvd_data = std::fs::read(dvd_path).expect("failed to read DVD");
         let dvd = image::load_dvd(dvd_data);
+        let game_id = self::game_id_from_header(dvd.header());
         if dvd.header().is_wii() {
             println!("Detected Wii disc, booting via apploader HLE");
             let builder = Wii::apploader_hle(dvd);
@@ -195,16 +196,30 @@ fn main() {
             };
             let mut emulator = builder.build();
             configure(&mut emulator, &args);
-            run(emulator, present_mode, &args);
+            run(emulator, present_mode, &args, Some(game_id));
         } else {
             println!("Detected GameCube disc, booting via IPL HLE");
             let mut emulator = GameCube::with_ipl_hle(dvd);
             configure(&mut emulator, &args);
-            run(emulator, present_mode, &args);
+            run(emulator, present_mode, &args, Some(game_id));
         }
     } else {
         panic!("provide one of --dol, --ipl, or --dvd");
     }
+}
+
+fn game_id_from_header(header: &image::dvd::Header) -> String {
+    let mut buf = String::with_capacity(6);
+
+    for &b in &header.game_code {
+        buf.push(if b.is_ascii_graphic() { b as char } else { '_' });
+    }
+
+    for &b in &header.maker_code {
+        buf.push(if b.is_ascii_graphic() { b as char } else { '_' });
+    }
+
+    buf
 }
 
 fn configure<const SYSTEM: SystemId>(emulator: &mut System<SYSTEM>, args: &Args) {
@@ -250,7 +265,12 @@ fn configure<const SYSTEM: SystemId>(emulator: &mut System<SYSTEM>, args: &Args)
     }
 }
 
-fn run<const SYSTEM: SystemId>(mut emulator: System<SYSTEM>, present_mode: wgpu::PresentMode, args: &Args) {
+fn run<const SYSTEM: SystemId>(
+    mut emulator: System<SYSTEM>,
+    present_mode: wgpu::PresentMode,
+    args: &Args,
+    game_id: Option<String>,
+) {
     let target_aspect = resolve_aspect(&args.aspect, SYSTEM);
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
@@ -310,9 +330,23 @@ fn run<const SYSTEM: SystemId>(mut emulator: System<SYSTEM>, present_mode: wgpu:
     }
 
     let emu_input = input.clone();
+    if let Some(ref id) = game_id {
+        let (ppc_c, ppc_s, dsp_c, dsp_s) = emulator.load_jit_cache(id);
+        if ppc_c > 0 || dsp_c > 0 || ppc_s > 0 || dsp_s > 0 {
+            tracing::info!(
+                ppc_compiled = ppc_c,
+                ppc_skipped = ppc_s,
+                dsp_compiled = dsp_c,
+                dsp_skipped = dsp_s,
+                game = id.as_str(),
+                "pre-compiled JIT blocks from cache"
+            );
+        }
+    }
+
     let emu_handle = std::thread::Builder::new()
         .name("emu".into())
-        .spawn(move || thread::emu_thread::<SYSTEM>(emulator, emu_input, proxy))
+        .spawn(move || thread::emu_thread::<SYSTEM>(emulator, emu_input, proxy, game_id))
         .expect("failed to spawn emulator thread");
 
     let mut app = app::App {

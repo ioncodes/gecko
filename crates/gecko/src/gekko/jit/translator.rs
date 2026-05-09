@@ -1247,7 +1247,7 @@ fn emit_bclr_chain_fall<const SYSTEM: SystemId>(
 
     builder.switch_to_block(taken_block);
     builder.seal_block(taken_block);
-    
+
     if instr.lk() {
         let lr_val = builder.ins().iconst(types::I32, pc.wrapping_add(4) as i64);
         lr_store::<SYSTEM>(builder, ctx_ptr, lr_val);
@@ -1255,13 +1255,20 @@ fn emit_bclr_chain_fall<const SYSTEM: SystemId>(
 
     let lr = lr_load::<SYSTEM>(builder, ctx_ptr);
     let target_pc = builder.ins().band_imm(lr, !3i64);
-    emit_inline_cache_dispatch::<SYSTEM>(builder, ctx_ptr, target_pc, exit_block, block_sig_ref, lookup_table_addr);
+    emit_inline_cache_dispatch::<SYSTEM>(
+        builder,
+        ctx_ptr,
+        target_pc,
+        exit_block,
+        block_sig_ref,
+        lookup_table_addr,
+    );
 
     builder.switch_to_block(fall_block);
     builder.seal_block(fall_block);
-    
+
     let fall_v = builder.ins().iconst(types::I32, pc.wrapping_add(4) as i64);
-    
+
     if let Some(slot_addr) = fall_slot {
         emit_chain_or_exit::<SYSTEM>(builder, ctx_ptr, slot_addr, block_sig_ref, fall_v, exit_block);
     } else {
@@ -1304,7 +1311,14 @@ fn emit_bcctr_chain_fall<const SYSTEM: SystemId>(
     }
     let ctr = ctr_load::<SYSTEM>(builder, ctx_ptr);
     let target_pc = builder.ins().band_imm(ctr, !3i64);
-    emit_inline_cache_dispatch::<SYSTEM>(builder, ctx_ptr, target_pc, exit_block, block_sig_ref, lookup_table_addr);
+    emit_inline_cache_dispatch::<SYSTEM>(
+        builder,
+        ctx_ptr,
+        target_pc,
+        exit_block,
+        block_sig_ref,
+        lookup_table_addr,
+    );
 
     builder.switch_to_block(fall_block);
     builder.seal_block(fall_block);
@@ -3310,7 +3324,7 @@ pub(crate) fn emit_psq_store_quantized<const SYSTEM: SystemId>(
     let ps0_bits = builder.ins().bitcast(types::I32, MemFlags::new(), ps0_f32);
     let ps0_be = builder.ins().bswap(ps0_bits);
     builder.ins().store(MemFlags::new(), ps0_be, addr, 0);
-    
+
     if !w {
         let ps1_f64 = ps1_load::<SYSTEM>(builder, ctx_ptr, fs);
         let ps1_f32 = builder.ins().fdemote(types::F32, ps1_f64);
@@ -3318,19 +3332,19 @@ pub(crate) fn emit_psq_store_quantized<const SYSTEM: SystemId>(
         let ps1_be = builder.ins().bswap(ps1_bits);
         builder.ins().store(MemFlags::new(), ps1_be, addr, 4);
     }
-    
+
     builder.ins().jump(merge, &[]);
 
     builder.switch_to_block(slow_f32_block);
     builder.seal_block(slow_f32_block);
-    
+
     let fs_v = builder.ins().iconst(types::I32, fs as i64);
     let w_v = builder.ins().iconst(types::I32, if w { 1 } else { 0 });
     let gqr_const = builder.ins().iconst(types::I32, gqr_idx as i64);
     builder
         .ins()
         .call(local.do_psq_store, &[ctx_ptr, fs_v, ea, w_v, gqr_const]);
-    
+
     builder.ins().jump(merge, &[]);
 }
 

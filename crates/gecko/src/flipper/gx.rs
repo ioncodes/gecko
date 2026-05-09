@@ -12,10 +12,12 @@ mod xf;
 
 use crate::flipper::gx::constants::{BP_REG_SIZE, CP_REG_SIZE, TLUT_MEM_ENTRIES, XF_MEM_SIZE};
 use crate::flipper::gx::draw::Matrix4;
-use crate::flipper::gx::regs::{AlphaCompare, BlendMode, TevAlphaEnv, TevColorEnv, TevRegisterH, TevRegisterL, ZMode};
+use crate::flipper::gx::regs::{
+    AlphaCompare, BlendMode, ChanCtrl, TevAlphaEnv, TevColorEnv, TevRegisterH, TevRegisterL, ZMode,
+};
 #[cfg(feature = "efb-writeback")]
 use crate::host::EfbWriteback;
-use crate::host::{DrawVertex, GxAction, RenderSink, TextureKey, XfbPart};
+use crate::host::{DrawVertex, GxAction, LightData, RenderSink, TextureKey, XfbPart};
 use crate::mmio::Mmio;
 use crate::system::{System, SystemId};
 use rustc_hash::FxHashMap;
@@ -72,6 +74,12 @@ pub struct GraphicsProcessor {
     pub xfb_copies: Vec<XfbCopy>,
     pub vertices_scratch: Vec<draw::Vertex>,
     pub draw_vertices_scratch: Vec<DrawVertex>,
+    pub lighting_dirty: bool,
+    pub cached_color_ctrl: [ChanCtrl; 2],
+    pub cached_alpha_ctrl: [ChanCtrl; 2],
+    pub cached_ambient_color: [[f32; 4]; 2],
+    pub cached_material_color: [[f32; 4]; 2],
+    pub cached_lights: [LightData; 8],
     #[cfg(feature = "gx-stats")]
     pub(crate) stats: GxStats,
     // Hash of the raw texture data at each cache key; used to detect when
@@ -150,6 +158,12 @@ impl GraphicsProcessor {
             xfb_copies: Vec::new(),
             vertices_scratch: Vec::with_capacity(256),
             draw_vertices_scratch: Vec::with_capacity(256),
+            lighting_dirty: true,
+            cached_color_ctrl: [ChanCtrl::default(); 2],
+            cached_alpha_ctrl: [ChanCtrl::default(); 2],
+            cached_ambient_color: [[0.0; 4]; 2],
+            cached_material_color: [[0.0; 4]; 2],
+            cached_lights: std::array::from_fn(|_| LightData::default()),
             #[cfg(feature = "gx-stats")]
             stats: GxStats::default(),
             texture_hashes: FxHashMap::default(),
