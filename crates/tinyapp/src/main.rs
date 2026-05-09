@@ -74,6 +74,42 @@ struct Args {
     /// Disable audio output
     #[arg(long)]
     no_audio: bool,
+
+    /// Enable per-block JIT heatmap CSV dumps (requires --features jit-stats)
+    #[cfg(feature = "jit-stats")]
+    #[arg(long)]
+    heatmap: bool,
+
+    /// Frames between heatmap CSV writes
+    #[cfg(feature = "jit-stats")]
+    #[arg(long, default_value_t = 60)]
+    heatmap_interval_frames: u32,
+
+    /// Output directory for heatmap CSV files
+    #[cfg(feature = "jit-stats")]
+    #[arg(long, default_value = "./profile-dumps")]
+    heatmap_out: String,
+
+    /// Top-K rows per heatmap CSV
+    #[cfg(feature = "jit-stats")]
+    #[arg(long, default_value_t = 64)]
+    heatmap_top_k: usize,
+
+    /// Run an in-process pprof sampling profile for N seconds, then write a
+    /// flamegraph SVG (requires --features profile)
+    #[cfg(feature = "profile")]
+    #[arg(long)]
+    pprof_secs: Option<u32>,
+
+    /// Sampling rate (Hz) for pprof
+    #[cfg(feature = "profile")]
+    #[arg(long, default_value_t = 997)]
+    pprof_hz: u32,
+
+    /// Output path for the pprof samples CSV (rank,samples,pct,symbol)
+    #[cfg(feature = "profile")]
+    #[arg(long, default_value = "./profile-dumps/pprof-samples.csv")]
+    pprof_out: String,
 }
 
 fn resolve_aspect(arg: &str, system: SystemId) -> TargetAspect {
@@ -190,6 +226,25 @@ fn configure<const SYSTEM: SystemId>(emulator: &mut System<SYSTEM>, args: &Args)
     }
 
     emulator.apply_host_input(&HostInput::neutral_for(SYSTEM));
+
+    #[cfg(feature = "jit-stats")]
+    {
+        emulator.heatmap = gecko::profile::HeatmapConfig {
+            enabled: args.heatmap,
+            interval_frames: args.heatmap_interval_frames,
+            out_dir: std::path::PathBuf::from(&args.heatmap_out),
+            top_k: args.heatmap_top_k,
+        };
+    }
+
+    #[cfg(feature = "profile")]
+    if let Some(secs) = args.pprof_secs {
+        emulator.pprof_config = Some(gecko::profile::PprofConfig {
+            hz: args.pprof_hz,
+            secs,
+            out: std::path::PathBuf::from(&args.pprof_out),
+        });
+    }
 }
 
 fn run<const SYSTEM: SystemId>(mut emulator: System<SYSTEM>, present_mode: wgpu::PresentMode, args: &Args) {

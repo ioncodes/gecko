@@ -173,8 +173,23 @@ pub const fn dsp_batch_interval(system: SystemId) -> u64 {
 
 pub fn dsp_batch_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     sys.execute_dsp_batch();
-    if !sys.dsp.csr.halt() && !sys.dsp.csr.reset() {
-        sys.scheduler
-            .schedule_in(self::dsp_batch_interval(SYSTEM), self::dsp_batch_handler::<SYSTEM>);
+    if sys.dsp.csr.halt() || sys.dsp.csr.reset() {
+        return;
     }
+
+    let cpu_mail_quiet = !sys.dsp.mailbox_to_dsp_hi.busy();
+    let dsp_mail_full = sys.dsp.mailbox_to_cpu_hi.busy();
+    let (waits_cpu, waits_dsp) = sys.dsp.mailbox_wait_state();
+    let in_idle_wait = (cpu_mail_quiet && waits_cpu) || (dsp_mail_full && waits_dsp);
+    let pending_interrupt = sys.dsp.csr.pi_interrupt() && sys.dsp.registers.status.external_interrupt_enable();
+
+    if in_idle_wait && !pending_interrupt {
+        sys.dsp.scheduler_suspended = true;
+        #[cfg(feature = "jit-stats")]
+        crate::flipper::dsp::DSP_SUSPEND_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        return;
+    }
+
+    sys.scheduler
+        .schedule_in(self::dsp_batch_interval(SYSTEM), self::dsp_batch_handler::<SYSTEM>);
 }

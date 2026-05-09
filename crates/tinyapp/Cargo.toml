@@ -10,6 +10,8 @@ scripting-mut-traps = ["scripting", "gecko/hooks-mut-traps", "scripting/hooks-mu
 efb-writeback = ["backend-wgpu/efb-writeback"]
 audio-wav-dump = ["gecko/audio-wav-dump"]
 fps-counter = ["gecko/fps-counter"]
+jit-stats = ["gecko/jit-stats"]
+profile = ["gecko/profile"]
 
 [dependencies]
 gecko = { path = "../gecko" }

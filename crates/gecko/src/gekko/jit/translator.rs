@@ -101,6 +101,7 @@ pub fn translate<const SYSTEM: SystemId>(
     spec: &BlockSpec,
     gprs: &[u32; 32],
     chain: &ChainContext<'_>,
+    entry_counter_addr: Option<usize>,
 ) {
     let local = LocalFuncs {
         cause_invalid_opcode: module.declare_func_in_func(extern_funcs.cause_invalid_opcode, &mut ctx.func),
@@ -156,6 +157,13 @@ pub fn translate<const SYSTEM: SystemId>(
     builder.seal_block(entry);
 
     let ctx_ptr: Value = builder.block_params(entry)[0];
+
+    if let Some(addr) = entry_counter_addr {
+        let slot_v = builder.ins().iconst(types::I64, addr as i64);
+        let cur = builder.ins().load(types::I64, MemFlags::trusted(), slot_v, 0);
+        let next = builder.ins().iadd_imm(cur, 1);
+        builder.ins().store(MemFlags::trusted(), next, slot_v, 0);
+    }
 
     let exit_block = builder.create_block();
     builder.append_block_param(exit_block, types::I32);

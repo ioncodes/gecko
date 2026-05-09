@@ -20,10 +20,24 @@ pub extern "C" fn cause_invalid_opcode_wii(sys: *mut core::ffi::c_void, raw_inst
     cause_invalid_opcode::<WII>(sys.cast(), raw_instr, pc)
 }
 
+#[cfg(feature = "jit-stats")]
+pub static IDLE_SKIP_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(feature = "jit-stats")]
+pub static IDLE_SKIP_CYCLES_ADVANCED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[inline(always)]
 fn advance_to_deadline<const SYSTEM: SystemId>(sys: *mut System<SYSTEM>) {
     let sys = unsafe { &mut *sys };
     let deadline = sys.scheduler.next_deadline();
+
+    #[cfg(feature = "jit-stats")]
+    {
+        IDLE_SKIP_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if sys.scheduler.cycles < deadline {
+            IDLE_SKIP_CYCLES_ADVANCED.fetch_add(deadline - sys.scheduler.cycles, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
     if sys.scheduler.cycles < deadline {
         sys.scheduler.cycles = deadline;
     }

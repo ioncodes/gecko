@@ -85,6 +85,10 @@ pub struct JitEngine<const SYSTEM: SystemId> {
     pending_chain_slots: FxHashMap<u32, Vec<usize>>,
     #[cfg(feature = "jit-stats")]
     hits: FxHashMap<u32, u64>,
+    #[cfg(feature = "jit-stats")]
+    pub(crate) block_specs: FxHashMap<u32, block::BlockSpec>,
+    #[cfg(feature = "jit-stats")]
+    pub(crate) block_entry_counter_ptrs: FxHashMap<u32, usize>,
     block_sig: Signature,
     extern_funcs: ExternFuncs,
     trampoline_fn: TrampolineFn,
@@ -476,6 +480,10 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             pending_chain_slots: FxHashMap::default(),
             #[cfg(feature = "jit-stats")]
             hits: FxHashMap::default(),
+            #[cfg(feature = "jit-stats")]
+            block_specs: FxHashMap::default(),
+            #[cfg(feature = "jit-stats")]
+            block_entry_counter_ptrs: FxHashMap::default(),
             block_sig,
             extern_funcs,
             trampoline_fn,
@@ -524,8 +532,24 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
 
         let entry = self.compile(&spec, &gprs_snapshot);
         self.cache.insert(pc, entry);
+        #[cfg(feature = "jit-stats")]
+        {
+            self.block_specs.insert(pc, spec);
+        }
 
         entry
+    }
+
+    #[cfg(feature = "jit-stats")]
+    fn block_entry_counter_slot(&mut self, pc: u32) -> usize {
+        if let Some(&addr) = self.block_entry_counter_ptrs.get(&pc) {
+            return addr;
+        }
+
+        let slot: &'static mut u64 = Box::leak(Box::new(0u64));
+        let addr = slot as *mut u64 as usize;
+        self.block_entry_counter_ptrs.insert(pc, addr);
+        addr
     }
 
     fn func_id_for(&mut self, pc: u32) -> FuncId {
@@ -550,6 +574,88 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         let ctx_ptr = sys as *mut System<SYSTEM> as *mut core::ffi::c_void;
         let next_pc = unsafe { (self.trampoline_fn)(ctx_ptr, entry) };
         sys.gekko.pc = next_pc;
+    }
+
+    #[cfg(feature = "jit-stats")]
+    pub fn dump_hot_blocks_csv(&self, top_k: usize, path: &std::path::Path) -> std::io::Result<()> {
+        use std::io::Write;
+
+        let gprs_dummy = [0u32; 32];
+        let mut entries: Vec<(u32, u64, u64, usize, String, String)> = self
+            .block_entry_counter_ptrs
+            .iter()
+            .map(|(&pc, &addr)| {
+                let executions = unsafe { *(addr as *const u64) };
+                let dispatch_hits = self.hits.get(&pc).copied().unwrap_or(0);
+                let (len, term, idle) = self
+                    .block_specs
+                    .get(&pc)
+                    .map(|s| {
+                        (
+                            s.instrs.len(),
+                            format!("{:?}", s.terminator),
+                            format!("{:?}", idle::classify::<SYSTEM>(s, &gprs_dummy)),
+                        )
+                    })
+                    .unwrap_or((0, "?".to_string(), "?".to_string()));
+                (pc, executions, dispatch_hits, len, term, idle)
+            })
+            .collect();
+
+        entries.sort_by(|a, b| {
+            let ca = a.1.saturating_mul(a.3 as u64);
+            let cb = b.1.saturating_mul(b.3 as u64);
+            cb.cmp(&ca).then(b.1.cmp(&a.1))
+        });
+
+        crate::profile::write_file_atomic(path, |file| {
+            writeln!(
+                file,
+                "rank,start_pc,executions,dispatch_hits,instr_count,cycles_estimated,terminator,idle_class"
+            )?;
+
+            for (rank, (pc, exec, hits, len, term, idle)) in entries.iter().take(top_k).enumerate() {
+                let cycles = exec.saturating_mul(*len as u64);
+                writeln!(
+                    file,
+                    "{},{:#010X},{},{},{},{},{},{}",
+                    rank, pc, exec, hits, len, cycles, term, idle
+                )?;
+            }
+
+            Ok(())
+        })?;
+
+        let disasm_path = path.with_file_name(format!(
+            "{}-disasm.txt",
+            path.file_stem().and_then(|s| s.to_str()).unwrap_or("ppc-heatmap")
+        ));
+
+        crate::profile::write_file_atomic(&disasm_path, |dfile| {
+            writeln!(
+                dfile,
+                "# top {} hot PPC blocks (instructions)",
+                top_k.min(entries.len())
+            )?;
+
+            for (rank, (pc, exec, hits, len, term, idle)) in entries.iter().take(top_k).enumerate() {
+                writeln!(
+                    dfile,
+                    "\n#{} pc={:#010X} executions={} dispatch_hits={} len={} term={} idle={}",
+                    rank, pc, exec, hits, len, term, idle
+                )?;
+
+                if let Some(spec) = self.block_specs.get(pc) {
+                    for (i, &raw) in spec.instrs.iter().enumerate() {
+                        let ipc = spec.start_pc.wrapping_add((i as u32) * 4);
+                        let text = decode_gekko_instr(raw);
+                        writeln!(dfile, "  {:08X}  {:08X}  {}", ipc, raw, text)?;
+                    }
+                }
+            }
+
+            Ok(())
+        })
     }
 
     #[cfg(feature = "jit-stats")]
@@ -655,6 +761,11 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
 
         let mut pending_for_this_block: Vec<(u32, usize)> = Vec::new();
 
+        #[cfg(feature = "jit-stats")]
+        let entry_counter_addr = Some(self.block_entry_counter_slot(spec.start_pc));
+        #[cfg(not(feature = "jit-stats"))]
+        let entry_counter_addr: Option<usize> = None;
+
         let chain = translator::ChainContext {
             self_pc: spec.start_pc,
             self_func_id: func_id,
@@ -673,6 +784,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             spec,
             gprs,
             &chain,
+            entry_counter_addr,
         );
 
         drop(chain);
@@ -708,6 +820,15 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
 impl<const SYSTEM: SystemId> Default for JitEngine<SYSTEM> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(feature = "jit-stats")]
+fn decode_gekko_instr(raw: u32) -> String {
+    let bytes = raw.to_be_bytes();
+    match disasm::gekko::GekkoInstruction::decode(&bytes) {
+        Some((ins, _)) => format!("{ins}"),
+        None => format!("<undecoded raw={:08X}>", raw),
     }
 }
 

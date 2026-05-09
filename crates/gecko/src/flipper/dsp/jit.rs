@@ -502,6 +502,52 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
     }
 
     #[cfg(feature = "jit-stats")]
+    pub fn dump_hot_blocks_csv(&self, top_k: usize, path: &std::path::Path) -> std::io::Result<()> {
+        use std::io::Write;
+
+        let mut entries: Vec<(u16, u64, u64, usize, String, String)> = self
+            .block_entry_counter_ptrs
+            .iter()
+            .map(|(&pc, &addr)| {
+                let executions = unsafe { *(addr as *const u64) };
+                let dispatch_hits = self.hits.get(&pc).copied().unwrap_or(0);
+                let spec = self.block_specs.get(&pc);
+                let len = spec.map(|s| s.instrs.len()).unwrap_or(0);
+                let term = spec.map(|s| format!("{:?}", s.terminator)).unwrap_or_default();
+                let lead = spec
+                    .and_then(|s| s.instrs.first())
+                    .map(|e| disasm_mnemonic(e.raw))
+                    .unwrap_or_default();
+                (pc, executions, dispatch_hits, len, term, lead)
+            })
+            .collect();
+
+        entries.sort_by(|a, b| {
+            let ca = a.1.saturating_mul(a.3 as u64);
+            let cb = b.1.saturating_mul(b.3 as u64);
+            cb.cmp(&ca).then(b.1.cmp(&a.1))
+        });
+
+        crate::profile::write_file_atomic(path, |file| {
+            writeln!(
+                file,
+                "rank,start_pc,executions,dispatch_hits,instr_count,cycles_estimated,terminator,lead_mnemonic"
+            )?;
+
+            for (rank, (pc, exec, hits, len, term, lead)) in entries.iter().take(top_k).enumerate() {
+                let cycles = exec.saturating_mul(*len as u64);
+                writeln!(
+                    file,
+                    "{},{:#06X},{},{},{},{},{},{}",
+                    rank, pc, exec, hits, len, cycles, term, lead
+                )?;
+            }
+
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "jit-stats")]
     pub fn dump_hot_blocks(&self, top_k: usize) {
         let mut entries: Vec<(u16, u64)> = self.hits.iter().map(|(&pc, &n)| (pc, n)).collect();
         entries.sort_by(|a, b| b.1.cmp(&a.1));

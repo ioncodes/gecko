@@ -67,6 +67,18 @@ pub struct System<const SYSTEM: SystemId> {
 
     #[cfg(feature = "fps-counter")]
     pub fps_counter: FpsCounter,
+
+    #[cfg(any(feature = "jit-stats", feature = "profile"))]
+    pub heatmap: crate::profile::HeatmapConfig,
+
+    #[cfg(any(feature = "jit-stats", feature = "profile"))]
+    pub vsync_count: u64,
+
+    #[cfg(feature = "profile")]
+    pub pprof_config: Option<crate::profile::PprofConfig>,
+
+    #[cfg(feature = "profile")]
+    pub pprof_session: Option<crate::profile::IpSampler>,
 }
 
 impl<const SYSTEM: SystemId> System<SYSTEM> {
@@ -106,6 +118,18 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
             #[cfg(feature = "fps-counter")]
             fps_counter: FpsCounter::new(),
+
+            #[cfg(any(feature = "jit-stats", feature = "profile"))]
+            heatmap: crate::profile::HeatmapConfig::default(),
+
+            #[cfg(any(feature = "jit-stats", feature = "profile"))]
+            vsync_count: 0,
+
+            #[cfg(feature = "profile")]
+            pprof_config: None,
+
+            #[cfg(feature = "profile")]
+            pprof_session: None,
         }
     }
 
@@ -198,6 +222,100 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             }
             // Drain all events that are now due
             self.drain_events();
+        }
+
+        #[cfg(any(feature = "jit-stats", feature = "profile"))]
+        self.on_vsync_boundary();
+    }
+
+    #[cfg(any(feature = "jit-stats", feature = "profile"))]
+    fn on_vsync_boundary(&mut self) {
+        self.vsync_count = self.vsync_count.wrapping_add(1);
+
+        #[cfg(feature = "jit-stats")]
+        self.dump_heatmap_if_due();
+
+        #[cfg(feature = "profile")]
+        self.tick_pprof_session();
+    }
+
+    #[cfg(feature = "jit-stats")]
+    fn dump_heatmap_if_due(&mut self) {
+        if !self.heatmap.enabled || self.heatmap.interval_frames == 0 {
+            return;
+        }
+
+        if self.vsync_count % self.heatmap.interval_frames as u64 != 0 {
+            return;
+        }
+
+        #[cfg(feature = "jit")]
+        if let Some(jit) = self.jit.as_ref() {
+            if let Err(err) = jit.dump_hot_blocks_csv(self.heatmap.top_k, &self.heatmap.ppc_csv_path()) {
+                tracing::warn!(?err, "ppc heatmap dump failed");
+            }
+        }
+
+        if let Some(jit) = self.dsp.jit.as_ref() {
+            if let Err(err) = jit.dump_hot_blocks_csv(self.heatmap.top_k, &self.heatmap.dsp_csv_path()) {
+                tracing::warn!(?err, "dsp heatmap dump failed");
+            }
+        }
+
+        #[cfg(feature = "jit")]
+        self.dump_idle_skip_sidecar();
+    }
+
+    #[cfg(all(feature = "jit-stats", feature = "jit"))]
+    fn dump_idle_skip_sidecar(&self) {
+        use std::io::Write;
+        use std::sync::atomic::Ordering;
+
+        let calls = crate::gekko::jit::runtime::IDLE_SKIP_CALLS.load(Ordering::Relaxed);
+        let cycles = crate::gekko::jit::runtime::IDLE_SKIP_CYCLES_ADVANCED.load(Ordering::Relaxed);
+        let avg = if calls > 0 { cycles as f64 / calls as f64 } else { 0.0 };
+        let dsp_suspends = crate::flipper::dsp::DSP_SUSPEND_COUNT.load(Ordering::Relaxed);
+        let dsp_wakes = crate::flipper::dsp::DSP_WAKE_COUNT.load(Ordering::Relaxed);
+
+        let path = self.heatmap.out_dir.join("idle-skip.txt");
+        let result = crate::profile::write_file_atomic(&path, |f| {
+            writeln!(
+                f,
+                "vsync_count={}\nppc_idle_calls={}\nppc_cycles_advanced={}\nppc_avg_advance={:.1}\ndsp_suspends={}\ndsp_wakes={}",
+                self.vsync_count, calls, cycles, avg, dsp_suspends, dsp_wakes
+            )
+        });
+        if let Err(err) = result {
+            tracing::warn!(?err, "idle-skip sidecar write failed");
+        }
+    }
+
+    #[cfg(feature = "profile")]
+    fn tick_pprof_session(&mut self) {
+        if self.pprof_session.is_none() {
+            if let Some(cfg) = self.pprof_config.take() {
+                match crate::profile::IpSampler::start_for_current_thread(cfg.hz, cfg.secs, cfg.out.clone()) {
+                    Ok(s) => {
+                        tracing::info!(
+                            "pprof: sampling at {} Hz for {} s, writing to {}",
+                            cfg.hz,
+                            cfg.secs,
+                            cfg.out.display()
+                        );
+                        self.pprof_session = Some(s);
+                    }
+                    Err(err) => tracing::warn!(?err, "failed to start pprof sampler"),
+                }
+            }
+        }
+
+        let expired = self.pprof_session.as_ref().is_some_and(|s| s.expired());
+        if expired {
+            let session = self.pprof_session.take().unwrap();
+            match session.finish() {
+                Ok(path) => tracing::info!("pprof samples written to {}", path.display()),
+                Err(err) => tracing::warn!(?err, "pprof sample dump failed"),
+            }
         }
     }
 

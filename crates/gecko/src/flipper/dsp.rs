@@ -26,48 +26,6 @@ use crate::system::{System, SystemId};
 #[cfg(feature = "jit")]
 pub const DSP_JIT_CHAIN_BUDGET: u32 = 16;
 
-#[cfg(feature = "jit")]
-pub trait DspJitHandle {
-    fn run_block(&mut self, ctx_ptr: *mut ::core::ffi::c_void, iram: &[u8], irom: &[u8], start_pc: u16) -> u16;
-    fn record_chain_depth(&mut self, depth: u32);
-    fn flush(&mut self);
-    fn dump_hot_blocks(&self, top_k: usize);
-    fn dump_top_clif(&mut self, top_k: usize, iram: &[u8], irom: &[u8]);
-}
-
-#[cfg(feature = "jit")]
-impl<const SYSTEM: SystemId> DspJitHandle for jit::JitEngine<SYSTEM> {
-    fn run_block(&mut self, ctx_ptr: *mut ::core::ffi::c_void, iram: &[u8], irom: &[u8], start_pc: u16) -> u16 {
-        let entry = self.lookup_or_compile(iram, irom, start_pc);
-        Self::run_block(self, ctx_ptr, entry)
-    }
-    fn record_chain_depth(&mut self, depth: u32) {
-        Self::record_chain_depth(self, depth);
-    }
-    fn flush(&mut self) {
-        Self::flush(self);
-    }
-    fn dump_hot_blocks(&self, _top_k: usize) {
-        #[cfg(feature = "jit-stats")]
-        Self::dump_hot_blocks(self, _top_k);
-        #[cfg(not(feature = "jit-stats"))]
-        tracing::warn!("feature `jit-stats` is not enabled. Rebuild with `--features jit-stats`.");
-    }
-    fn dump_top_clif(&mut self, _top_k: usize, _iram: &[u8], _irom: &[u8]) {
-        #[cfg(feature = "jit-stats")]
-        {
-            let mut pcs: Vec<(u16, u64)> = self.hits.iter().map(|(&pc, &n)| (pc, n)).collect();
-            pcs.sort_by(|a, b| b.1.cmp(&a.1));
-            for (pc, hits) in pcs.into_iter().take(_top_k) {
-                tracing::info!("hits={hits} pc={pc:04X}");
-                self.dump_block_clif(pc, _iram, _irom);
-            }
-        }
-        #[cfg(not(feature = "jit-stats"))]
-        tracing::warn!("feature `jit-stats` is not enabled. Rebuild with `--features jit-stats`.");
-    }
-}
-
 pub struct Dsp {
     pub registers: core::Registers,
 
@@ -112,6 +70,8 @@ pub struct Dsp {
     pub instr_count: u32,
 
     pub poll_cache: std::cell::Cell<Option<(u16, bool, bool)>>,
+
+    pub scheduler_suspended: bool,
 }
 
 impl Dsp {
@@ -158,6 +118,7 @@ impl Dsp {
             #[cfg(feature = "jit")]
             instr_count: 0,
             poll_cache: std::cell::Cell::new(None),
+            scheduler_suspended: false,
         }
     }
 
@@ -171,6 +132,11 @@ impl Dsp {
     pub fn is_waiting_for_dsp_mail(&self) -> bool {
         let (_cpu, dsp) = self.poll_cache_for_pc(self.registers.pc);
         dsp
+    }
+
+    #[inline]
+    pub fn mailbox_wait_state(&self) -> (bool, bool) {
+        self.poll_cache_for_pc(self.registers.pc)
     }
 
     fn poll_cache_for_pc(&self, pc: u16) -> (bool, bool) {
@@ -588,6 +554,35 @@ pub fn refresh_interrupts<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     } else {
         sys.pi.clear_interrupt(InterruptFlag::Dsp);
     }
+
+    if sys.dsp.csr.pi_interrupt() && sys.dsp.registers.status.external_interrupt_enable() {
+        self::wake_dsp_scheduler::<SYSTEM>(sys);
+    }
+}
+
+#[cfg(feature = "jit-stats")]
+pub static DSP_SUSPEND_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(feature = "jit-stats")]
+pub static DSP_WAKE_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[inline]
+pub fn wake_dsp_scheduler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    if !sys.dsp.scheduler_suspended {
+        return;
+    }
+
+    if sys.dsp.csr.halt() || sys.dsp.csr.reset() {
+        return;
+    }
+
+    sys.dsp.scheduler_suspended = false;
+    sys.scheduler.schedule_in(
+        crate::scheduler::dsp_batch_interval(SYSTEM),
+        crate::scheduler::dsp_batch_handler::<SYSTEM>,
+    );
+
+    #[cfg(feature = "jit-stats")]
+    DSP_WAKE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 #[inline(always)]
@@ -761,5 +756,59 @@ pub fn dispatch_gc_dsp_ext<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, ins
     } else {
         let ctx: &mut crate::wii::Wii = unsafe { ::core::mem::transmute(ctx) };
         self::lut_wii::dispatch_gc_dsp_ext(ctx, instr);
+    }
+}
+
+#[cfg(feature = "jit")]
+pub trait DspJitHandle {
+    fn run_block(&mut self, ctx_ptr: *mut ::core::ffi::c_void, iram: &[u8], irom: &[u8], start_pc: u16) -> u16;
+    fn record_chain_depth(&mut self, depth: u32);
+    fn flush(&mut self);
+    fn dump_hot_blocks(&self, top_k: usize);
+    fn dump_hot_blocks_csv(&self, top_k: usize, path: &std::path::Path) -> std::io::Result<()>;
+    fn dump_top_clif(&mut self, top_k: usize, iram: &[u8], irom: &[u8]);
+}
+
+#[cfg(feature = "jit")]
+impl<const SYSTEM: SystemId> DspJitHandle for jit::JitEngine<SYSTEM> {
+    fn run_block(&mut self, ctx_ptr: *mut ::core::ffi::c_void, iram: &[u8], irom: &[u8], start_pc: u16) -> u16 {
+        let entry = self.lookup_or_compile(iram, irom, start_pc);
+        Self::run_block(self, ctx_ptr, entry)
+    }
+
+    fn record_chain_depth(&mut self, depth: u32) {
+        Self::record_chain_depth(self, depth);
+    }
+
+    fn flush(&mut self) {
+        Self::flush(self);
+    }
+
+    fn dump_hot_blocks(&self, _top_k: usize) {
+        #[cfg(feature = "jit-stats")]
+        Self::dump_hot_blocks(self, _top_k);
+        #[cfg(not(feature = "jit-stats"))]
+        tracing::warn!("feature `jit-stats` is not enabled. Rebuild with `--features jit-stats`.");
+    }
+
+    fn dump_hot_blocks_csv(&self, _top_k: usize, _path: &std::path::Path) -> std::io::Result<()> {
+        #[cfg(feature = "jit-stats")]
+        return Self::dump_hot_blocks_csv(self, _top_k, _path);
+        #[cfg(not(feature = "jit-stats"))]
+        Ok(())
+    }
+
+    fn dump_top_clif(&mut self, _top_k: usize, _iram: &[u8], _irom: &[u8]) {
+        #[cfg(feature = "jit-stats")]
+        {
+            let mut pcs: Vec<(u16, u64)> = self.hits.iter().map(|(&pc, &n)| (pc, n)).collect();
+            pcs.sort_by(|a, b| b.1.cmp(&a.1));
+            for (pc, hits) in pcs.into_iter().take(_top_k) {
+                tracing::info!("hits={hits} pc={pc:04X}");
+                self.dump_block_clif(pc, _iram, _irom);
+            }
+        }
+        #[cfg(not(feature = "jit-stats"))]
+        tracing::warn!("feature `jit-stats` is not enabled. Rebuild with `--features jit-stats`.");
     }
 }

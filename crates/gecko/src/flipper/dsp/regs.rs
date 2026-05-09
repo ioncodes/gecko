@@ -110,11 +110,17 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for ControlStatus {
 
         let now_active = !sys.dsp.csr.halt() && !sys.dsp.csr.reset();
         match (was_active, now_active) {
-            (false, true) => sys.scheduler.schedule_in(
-                scheduler::dsp_batch_interval(SYSTEM),
-                scheduler::dsp_batch_handler::<SYSTEM>,
-            ),
-            (true, false) => sys.scheduler.cancel(scheduler::dsp_batch_handler::<SYSTEM>),
+            (false, true) => {
+                sys.dsp.scheduler_suspended = false;
+                sys.scheduler.schedule_in(
+                    scheduler::dsp_batch_interval(SYSTEM),
+                    scheduler::dsp_batch_handler::<SYSTEM>,
+                );
+            }
+            (true, false) => {
+                sys.dsp.scheduler_suspended = false;
+                sys.scheduler.cancel(scheduler::dsp_batch_handler::<SYSTEM>);
+            }
             _ => {}
         }
 
@@ -177,6 +183,7 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for MailboxToDspLo {
         // start of each render before the new contents land.
         // Based off of FFCC, thanks SpinningCube, zayd, JustinCase
         sys.drain_dsp_synchronous(64 * 1024);
+        crate::flipper::dsp::wake_dsp_scheduler::<SYSTEM>(sys);
     }
 }
 
@@ -216,6 +223,7 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for MailboxToCpuLo {
         let val = sys.dsp.mailbox_to_cpu_lo;
         // Reading DMBL clears DMBH.M (bit 15), signaling the CPU has consumed the mail
         sys.dsp.mailbox_to_cpu_hi.set_busy(false);
+        crate::flipper::dsp::wake_dsp_scheduler::<SYSTEM>(sys);
         val
     }
 

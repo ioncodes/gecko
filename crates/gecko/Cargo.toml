@@ -25,6 +25,7 @@ jit = [
 ]
 jit-stats = ["jit"]
 fps-counter = []
+profile = ["dep:backtrace", "dep:windows-sys"]
 
 [build-dependencies]
 chipi-build = "0.9.1"
@@ -48,3 +49,12 @@ cranelift-frontend = { version = "0.131.1", optional = true }
 cranelift-jit = { version = "0.131.1", optional = true }
 cranelift-module = { version = "0.131.1", optional = true }
 cranelift-native = { version = "0.131.1", optional = true }
+backtrace = { version = "0.3", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Kernel",
+], optional = true }
