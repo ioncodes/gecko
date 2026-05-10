@@ -10,7 +10,6 @@ mod render;
 mod renderdoc_capture;
 pub mod sink;
 
-use encase::ShaderType as _;
 use gecko::common::Address;
 #[cfg(feature = "renderdoc-capture")]
 use gecko::flipper::gx::draw::Primitive;
@@ -22,6 +21,7 @@ use gecko::host::TextureKey;
 use glam::Mat4;
 use pipeline::PipelineKey;
 use rustc_hash::FxHashMap;
+use std::num::NonZeroU64;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -53,51 +53,66 @@ pub(crate) struct BindGroupCacheKey {
     sampler_keys: [Option<SamplerKey>; 8],
 }
 
-#[derive(encase::ShaderType)]
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct FrameUniforms {
-    tev_color_regs: [glam::Vec4; 4],
-    tev_konst_colors: [glam::Vec4; 16],
-    tev_color_env: [glam::UVec4; 4],
-    tev_alpha_env: [glam::UVec4; 4],
-    tev_orders: [glam::UVec4; 4],
-    tev_ksel: [glam::UVec4; 4],
-    num_tev_stages: u32,
-    alpha_ref0: f32,
-    alpha_ref1: f32,
-    alpha_comp0: u32,
-    alpha_comp1: u32,
-    alpha_op: u32,
+    pub tev_color_regs: [glam::Vec4; 4],
+    pub tev_konst_colors: [glam::Vec4; 16],
+    pub tev_color_env: [glam::UVec4; 4],
+    pub tev_alpha_env: [glam::UVec4; 4],
+    pub tev_orders: [glam::UVec4; 4],
+    pub tev_ksel: [glam::UVec4; 4],
+    pub num_tev_stages: u32,
+    pub alpha_ref0: f32,
+    pub alpha_ref1: f32,
+    pub alpha_comp0: u32,
+    pub alpha_comp1: u32,
+    pub alpha_op: u32,
+    pub _pad0: [u32; 2],
     // Indirect texturing state. `indirect_matrices` stores the 6 rows of
     // the three 2x3 matrices.
-    indirect_matrices: [glam::IVec4; 6],
+    pub indirect_matrices: [glam::IVec4; 6],
     // Two packed RAS1_SS registers holding four 4-bit divisor exponents
     // each. Stage i reads from `indirect_scales[i / 2]`.
-    indirect_scales: [glam::UVec4; 2],
+    pub indirect_scales: [glam::UVec4; 2],
     // Packed RAS1_IREF. Four 3+3 bit (texmap, texcoord) pairs.
-    indirect_refs: u32,
-    num_indirect_stages: u32,
-    bump_imask: u32,
+    pub indirect_refs: u32,
+    pub num_indirect_stages: u32,
+    pub bump_imask: u32,
+    pub _pad1: u32,
     // Per-TEV-stage IND_CMD, packed four per UVec4.
-    tev_indirect: [glam::UVec4; 4],
-    light_colors: [glam::Vec4; 8],
-    light_cosatt: [glam::Vec4; 8],
-    light_distatt: [glam::Vec4; 8],
-    light_pos: [glam::Vec4; 8],
-    light_dir: [glam::Vec4; 8],
-    color_ctrl0: u32,
-    alpha_ctrl0: u32,
-    color_ctrl1: u32,
-    alpha_ctrl1: u32,
-    ambient_color0: glam::Vec4,
-    ambient_color1: glam::Vec4,
-    material_color0: glam::Vec4,
-    material_color1: glam::Vec4,
+    pub tev_indirect: [glam::UVec4; 4],
+    pub light_colors: [glam::Vec4; 8],
+    pub light_cosatt: [glam::Vec4; 8],
+    pub light_distatt: [glam::Vec4; 8],
+    pub light_pos: [glam::Vec4; 8],
+    pub light_dir: [glam::Vec4; 8],
+    pub color_ctrl0: u32,
+    pub alpha_ctrl0: u32,
+    pub color_ctrl1: u32,
+    pub alpha_ctrl1: u32,
+    pub ambient_color0: glam::Vec4,
+    pub ambient_color1: glam::Vec4,
+    pub material_color0: glam::Vec4,
+    pub material_color1: glam::Vec4,
 }
 
-#[derive(encase::ShaderType)]
+pub(crate) const FRAME_UNIFORMS_SIZE: NonZeroU64 = match NonZeroU64::new(std::mem::size_of::<FrameUniforms>() as u64) {
+    Some(v) => v,
+    None => panic!("FrameUniforms must be non-zero sized"),
+};
+const _: () = assert!(std::mem::size_of::<FrameUniforms>() == 1536);
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct DrawUniforms {
-    mvp: glam::Mat4,
+    pub mvp: glam::Mat4,
 }
+
+pub(crate) const DRAW_UNIFORMS_SIZE: NonZeroU64 = match NonZeroU64::new(std::mem::size_of::<DrawUniforms>() as u64) {
+    Some(v) => v,
+    None => panic!("DrawUniforms must be non-zero sized"),
+};
 
 const SHADER: &str = wesl::include_wesl!("gx_shader");
 
@@ -152,10 +167,17 @@ pub struct GxRenderer {
     pub(crate) draw_bg_keys: Vec<BindGroupCacheKey>,
     pub(crate) draw_viewports: Vec<Viewport>,
     pub(crate) draw_scissors: Vec<Scissor>,
+    /// Per-draw index into the FrameUniforms array. Multiple consecutive
+    /// draws that share TEV/lighting/alpha/indirect state point at the same
+    /// slot via dynamic offset; only state-changing draws push a fresh slot
+    /// (driven by `DrawData::frame_dirty` from the producer).
+    pub(crate) draw_frame_indices: Vec<u32>,
+    /// Index of the most recently appended FrameUniforms slot, reused when
+    /// `frame_dirty` is false. Reset to `None` at each `flush_pending_draws`.
+    pub(crate) last_frame_uniform_index: Option<u32>,
     #[cfg(feature = "renderdoc-capture")]
     pub(crate) draw_primitives: Vec<Primitive>,
     pub(crate) frame_stride: usize,
-    pub(crate) frame_encase_size: usize,
     // Tracked GX state (updated by state-change actions)
     pub(crate) current_projection: Mat4,
     pub(crate) current_viewport: Viewport,
@@ -192,8 +214,8 @@ pub struct GxRenderer {
 
 impl GxRenderer {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, surface_format: wgpu::TextureFormat) -> Self {
-        let frame_uniform_size = FrameUniforms::min_size().get();
-        let draw_uniform_size = DrawUniforms::min_size().get();
+        let frame_uniform_size = FRAME_UNIFORMS_SIZE.get();
+        let draw_uniform_size = DRAW_UNIFORMS_SIZE.get();
         let draw_uniform_stride = align_up(
             draw_uniform_size,
             device.limits().min_uniform_buffer_offset_alignment as u64,
@@ -220,7 +242,7 @@ impl GxRenderer {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: true,
-                    min_binding_size: Some(FrameUniforms::min_size()),
+                    min_binding_size: Some(FRAME_UNIFORMS_SIZE),
                 },
                 count: None,
             },
@@ -230,7 +252,7 @@ impl GxRenderer {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: true,
-                    min_binding_size: Some(DrawUniforms::min_size()),
+                    min_binding_size: Some(DRAW_UNIFORMS_SIZE),
                 },
                 count: None,
             },
@@ -643,13 +665,14 @@ impl GxRenderer {
             draw_bg_keys: Vec::new(),
             draw_viewports: Vec::new(),
             draw_scissors: Vec::new(),
+            draw_frame_indices: Vec::new(),
+            last_frame_uniform_index: None,
             #[cfg(feature = "renderdoc-capture")]
             draw_primitives: Vec::new(),
             frame_stride: align_up(
-                FrameUniforms::min_size().get(),
+                FRAME_UNIFORMS_SIZE.get(),
                 device.limits().min_uniform_buffer_offset_alignment as u64,
             ) as usize,
-            frame_encase_size: FrameUniforms::min_size().get() as usize,
             current_projection: Mat4::IDENTITY,
             current_viewport: Viewport::default(),
             current_scissor: Scissor::default(),

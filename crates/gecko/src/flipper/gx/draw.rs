@@ -1,9 +1,10 @@
 use super::regs::*;
 use chapa::BitEnum;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum Primitive {
     Quads,
+    #[default]
     Triangles,
     TriangleStrip,
     TriangleFan,

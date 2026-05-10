@@ -5,7 +5,7 @@ edition = "2024"
 
 [features]
 scripting-mut-traps = ["gecko/hooks-mut-traps", "scripting/hooks-mut-traps"]
-efb-writeback = ["backend-wgpu/efb-writeback", "dep:crossbeam-channel"]
+efb-writeback = ["backend-wgpu/efb-writeback"]
 renderdoc-capture = ["backend-wgpu/renderdoc-capture"]
 
 [dependencies]
@@ -14,7 +14,7 @@ scripting = { path = "../scripting" }
 image = { path = "../image", features = ["symbols"] }
 dbglib = { path = "../dbglib" }
 backend-wgpu = { path = "../backend-wgpu" }
-crossbeam-channel = { version = "0.5.15", optional = true }
+crossbeam-channel = "0.5.15"
 wgpu = "28.0.0"
 winit = "0.30.13"
 pollster = "0.4.0"

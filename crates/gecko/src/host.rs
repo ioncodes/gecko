@@ -76,7 +76,7 @@ pub enum GxAction {
     /// Issue a draw call. The renderer uses its tracked state (projection,
     /// viewport, scissor, depth, blend, alpha, textures) plus the per-draw
     /// TEV/lighting snapshot carried here.
-    Draw(DrawData),
+    Draw(Box<DrawData>),
 
     /// Copy the EFB source region to a temporary texture identified by `id`.
     /// The renderer stores this until the next [`PresentXfb`] composites it
@@ -167,7 +167,7 @@ pub struct XfbPart {
 /// Per-draw data: primitive type, decoded vertices, modelview transform,
 /// and TEV/lighting configuration (snapshotted at draw time since TEV is
 /// built up incrementally via BP writes).
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DrawData {
     pub primitive: Primitive,
     pub vertices: Vec<DrawVertex>,
@@ -196,6 +196,7 @@ pub struct DrawData {
     pub ambient_color: [[f32; 4]; 2],
     pub material_color: [[f32; 4]; 2],
     pub lights: [LightData; 8],
+    pub frame_dirty: bool,
 }
 
 /// Per-vertex data after decode, ready for the renderer.
@@ -246,5 +247,8 @@ pub trait RenderSink: Send {
 pub struct EmptyRenderSink;
 
 impl RenderSink for EmptyRenderSink {
-    fn exec(&mut self, _: GxAction) {}
+    fn exec(&mut self, _action: GxAction) {
+        #[cfg(feature = "rendersink-blackbox")]
+        std::hint::black_box(&_action);
+    }
 }

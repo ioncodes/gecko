@@ -154,9 +154,7 @@ fn run_bench(emulator: &mut Wii, args: &Args) {
         }
     }
 
-    let measure_dur = measure_start
-        .map(|s| s.elapsed().as_secs_f64())
-        .unwrap_or(0.0);
+    let measure_dur = measure_start.map(|s| s.elapsed().as_secs_f64()).unwrap_or(0.0);
     let avg_fps = if measure_dur > 0.0 {
         measured_frames as f64 / measure_dur
     } else {

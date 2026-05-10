@@ -19,7 +19,7 @@ use crate::flipper::gx::regs::{
 };
 #[cfg(feature = "efb-writeback")]
 use crate::host::EfbWriteback;
-use crate::host::{DrawVertex, GxAction, LightData, TextureKey, XfbPart};
+use crate::host::{DrawData, DrawVertex, GxAction, LightData, TextureKey, XfbPart};
 use crate::system::{System, SystemId};
 use rustc_hash::FxHashMap;
 
@@ -83,6 +83,7 @@ pub struct GraphicsProcessor {
     pub jit_vtx_validator: jit::validate::VertexJitValidator,
     pub lighting_dirty: bool,
     pub konst_dirty: bool,
+    pub frame_state_dirty: bool,
     pub cached_color_ctrl: [ChanCtrl; 2],
     pub cached_alpha_ctrl: [ChanCtrl; 2],
     pub cached_ambient_color: [[f32; 4]; 2],
@@ -102,6 +103,8 @@ pub struct GraphicsProcessor {
     // sees fresh RAM. Only present when the `efb-writeback` feature is on.
     #[cfg(feature = "efb-writeback")]
     pub efb_writeback_rx: Option<crossbeam_channel::Receiver<EfbWriteback>>,
+    pub draw_box_pool: Vec<Box<DrawData>>,
+    pub draw_box_recycle_rx: Option<crossbeam_channel::Receiver<Box<DrawData>>>,
 }
 
 /// A single EFB-to-XFB copy, stored until `present_xfb` computes the layout.
@@ -174,6 +177,7 @@ impl GraphicsProcessor {
             jit_vtx_validator: jit::validate::VertexJitValidator::new(),
             lighting_dirty: true,
             konst_dirty: true,
+            frame_state_dirty: true,
             cached_color_ctrl: [ChanCtrl::default(); 2],
             cached_alpha_ctrl: [ChanCtrl::default(); 2],
             cached_ambient_color: [[0.0; 4]; 2],
@@ -184,6 +188,8 @@ impl GraphicsProcessor {
             texture_hashes: FxHashMap::default(),
             #[cfg(feature = "efb-writeback")]
             efb_writeback_rx: None,
+            draw_box_pool: Vec::with_capacity(64),
+            draw_box_recycle_rx: None,
         }
     }
 }

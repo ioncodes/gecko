@@ -2,13 +2,16 @@ use crate::GxRenderer;
 use crossbeam_channel::{Receiver, Sender, bounded};
 #[cfg(feature = "efb-writeback")]
 use gecko::host::EfbWriteback;
-use gecko::host::{GxAction, RenderSink};
+use gecko::host::{DrawData, GxAction, RenderSink};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 #[cfg(feature = "renderdoc-capture")]
 use std::time::Duration;
 
 const CHANNEL_CAPACITY: usize = 65536;
+const RECYCLE_CAPACITY: usize = 8192;
+const BATCH_SIZE: usize = 256;
+const BATCH_RECYCLE_CAPACITY: usize = 64;
 
 /// Holds the XFB output texture view that the worker updates and the main
 /// thread reads for blitting.
@@ -26,7 +29,7 @@ pub enum TargetAspect {
 }
 
 enum WorkerMsg {
-    Action(GxAction),
+    ActionBatch(Vec<GxAction>),
     #[cfg(feature = "renderdoc-capture")]
     BeginEmulatedFrame {
         ack: Sender<()>,
@@ -43,13 +46,25 @@ enum WorkerMsg {
     TriggerCapture,
 }
 
-fn worker(mut gx: GxRenderer, device: wgpu::Device, queue: wgpu::Queue, shared: Arc<Shared>, rx: Receiver<WorkerMsg>) {
+struct Recyclers {
+    boxes: Sender<Box<DrawData>>,
+    batches: Sender<Vec<GxAction>>,
+}
+
+fn worker(
+    mut gx: GxRenderer,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    shared: Arc<Shared>,
+    rx: Receiver<WorkerMsg>,
+    recyclers: Recyclers,
+) {
     #[cfg(feature = "renderdoc-capture")]
     let mut renderdoc = crate::renderdoc_capture::RenderDocCapture::new();
 
     while let Ok(msg) = rx.recv() {
-        let action = match msg {
-            WorkerMsg::Action(action) => action,
+        let mut batch = match msg {
+            WorkerMsg::ActionBatch(batch) => batch,
             #[cfg(feature = "renderdoc-capture")]
             WorkerMsg::BeginEmulatedFrame { ack } => {
                 renderdoc.begin_emulated_frame();
@@ -85,14 +100,26 @@ fn worker(mut gx: GxRenderer, device: wgpu::Device, queue: wgpu::Queue, shared: 
             }
         };
 
-        gx.process_action(&device, &queue, &action);
+        for action in batch.drain(..) {
+            gx.process_action(&device, &queue, &action);
 
-        // After a PresentXfb, update the shared output so the main thread
-        // picks up the latest composited frame on its next blit.
-        if matches!(action, GxAction::PresentXfb { .. }) {
-            let mut output = shared.output.lock().unwrap();
-            *output = gx.xfb_view.clone();
+            match action {
+                GxAction::PresentXfb { .. } => {
+                    let mut output = shared.output.lock().unwrap();
+                    *output = gx.xfb_view.clone();
+                }
+                GxAction::Draw(mut boxed) => {
+                    boxed.vertices.clear();
+                    let _ = recyclers.boxes.try_send(boxed);
+                }
+                _ => {}
+            }
         }
+
+        // Hand the drained Vec back to the producer for capacity reuse.
+        // On full or closed channel, drop and the producer will allocate
+        // a fresh batch on its next flush.
+        let _ = recyclers.batches.try_send(batch);
     }
 }
 
@@ -122,6 +149,8 @@ pub struct Renderer {
     /// `efb-writeback` is enabled.
     #[cfg(feature = "efb-writeback")]
     writeback_rx: Arc<Mutex<Option<Receiver<EfbWriteback>>>>,
+    recycle_rx: Arc<Mutex<Option<Receiver<Box<DrawData>>>>>,
+    batch_recycle_rx: Arc<Mutex<Option<Receiver<Vec<GxAction>>>>>,
 }
 
 impl Renderer {
@@ -220,6 +249,12 @@ impl Renderer {
         });
 
         let (tx, rx) = bounded(CHANNEL_CAPACITY);
+        let (boxes_tx, recycle_rx) = bounded::<Box<DrawData>>(RECYCLE_CAPACITY);
+        let (batches_tx, batch_recycle_rx) = bounded::<Vec<GxAction>>(BATCH_RECYCLE_CAPACITY);
+        let recyclers = Recyclers {
+            boxes: boxes_tx,
+            batches: batches_tx,
+        };
 
         // Spawn the worker.
         let worker_shared = shared.clone();
@@ -227,7 +262,7 @@ impl Renderer {
         let worker_queue = queue.clone();
         std::thread::Builder::new()
             .name("gx-renderer".into())
-            .spawn(move || worker(gx, worker_device, worker_queue, worker_shared, rx))
+            .spawn(move || worker(gx, worker_device, worker_queue, worker_shared, rx, recyclers))
             .expect("failed to spawn renderer worker");
 
         Renderer {
@@ -241,6 +276,8 @@ impl Renderer {
             actions_sent: Arc::new(AtomicU64::new(0)),
             #[cfg(feature = "efb-writeback")]
             writeback_rx: Arc::new(Mutex::new(Some(writeback_rx))),
+            recycle_rx: Arc::new(Mutex::new(Some(recycle_rx))),
+            batch_recycle_rx: Arc::new(Mutex::new(Some(batch_recycle_rx))),
         }
     }
 
@@ -251,6 +288,10 @@ impl Renderer {
     #[cfg(feature = "efb-writeback")]
     pub fn take_writeback_rx(&self) -> Option<Receiver<EfbWriteback>> {
         self.writeback_rx.lock().ok()?.take()
+    }
+
+    pub fn take_recycle_rx(&self) -> Option<Receiver<Box<DrawData>>> {
+        self.recycle_rx.lock().ok()?.take()
     }
 
     pub fn target_aspect(&self) -> TargetAspect {
@@ -349,10 +390,68 @@ impl Renderer {
     }
 }
 
-impl RenderSink for Renderer {
+impl Renderer {
+    /// Build a producer-side sink that batches `GxAction`s before sending
+    /// them to the worker. The first call returns a sink with the
+    /// recycler receiver installed; subsequent calls return a sink that
+    /// allocates a fresh `Vec` on each flush. Mirrors the `take_*_rx`
+    /// pattern so the renderer handle remains usable for blitting and
+    /// renderdoc markers afterward.
+    pub fn take_batching_sink(&self) -> BatchingSink {
+        let batch_recycle_rx = self.batch_recycle_rx.lock().ok().and_then(|mut g| g.take());
+        BatchingSink {
+            tx: self.tx.clone(),
+            actions_sent: self.actions_sent.clone(),
+            channel_capacity: CHANNEL_CAPACITY,
+            batch: Vec::with_capacity(BATCH_SIZE),
+            batch_recycle_rx,
+        }
+    }
+}
+
+pub struct BatchingSink {
+    tx: Sender<WorkerMsg>,
+    actions_sent: Arc<AtomicU64>,
+    channel_capacity: usize,
+    batch: Vec<GxAction>,
+    batch_recycle_rx: Option<Receiver<Vec<GxAction>>>,
+}
+
+impl BatchingSink {
+    fn flush(&mut self) {
+        if self.batch.is_empty() {
+            return;
+        }
+
+        let next = self
+            .batch_recycle_rx
+            .as_ref()
+            .and_then(|rx| rx.try_recv().ok())
+            .unwrap_or_else(|| Vec::with_capacity(BATCH_SIZE));
+        let to_send = std::mem::replace(&mut self.batch, next);
+        let len = to_send.len() as u64;
+
+        if self.tx.send(WorkerMsg::ActionBatch(to_send)).is_ok() {
+            self.actions_sent.fetch_add(len, Ordering::Relaxed);
+        }
+    }
+}
+
+impl Drop for BatchingSink {
+    fn drop(&mut self) {
+        self.flush();
+    }
+}
+
+impl RenderSink for BatchingSink {
     fn exec(&mut self, action: GxAction) {
-        self.actions_sent.fetch_add(1, Ordering::Relaxed);
-        let _ = self.tx.send(WorkerMsg::Action(action));
+        let force_flush = matches!(action, GxAction::PresentXfb { .. } | GxAction::CopyEfbToTexture { .. });
+
+        self.batch.push(action);
+
+        if force_flush || self.batch.len() >= BATCH_SIZE {
+            self.flush();
+        }
     }
 
     fn actions_sent_total(&self) -> u64 {
@@ -364,7 +463,7 @@ impl RenderSink for Renderer {
     }
 
     fn channel_capacity(&self) -> Option<usize> {
-        self.tx.capacity()
+        Some(self.channel_capacity)
     }
 }
 

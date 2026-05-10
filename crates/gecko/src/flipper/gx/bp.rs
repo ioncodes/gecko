@@ -82,6 +82,7 @@ impl GraphicsProcessor {
             }
             BP_PE_ALPHA_COMPARE => {
                 self.cur_alpha_compare = AlphaCompare::from_raw(val);
+                self.frame_state_dirty = true;
                 renderer.exec(GxAction::SetAlphaCompare(self.cur_alpha_compare));
             }
             _ => {}
@@ -91,16 +92,19 @@ impl GraphicsProcessor {
         // Even addresses = color env, odd = alpha env
         if idx >= BP_TEV_COLOR_ENV_0 && idx < BP_TEV_COLOR_ENV_0 + 32 {
             self.load_tev_env(idx, val);
+            self.frame_state_dirty = true;
         }
 
         // TEV rasterizer order registers (RAS1_TREF0-7, 0x28-0x2F)
         if idx >= BP_RAS1_TREF0 && idx < BP_RAS1_TREF0 + BP_RAS1_TREF_COUNT {
             self.cur_tev_orders[idx - BP_RAS1_TREF0] = TevOrder::from_raw(val);
+            self.frame_state_dirty = true;
         }
 
         // TEV color registers (0xE0-0xE7): pairs of lo/hi writes
         if idx >= BP_TEV_REGISTERL_0 && idx <= BP_TEV_REGISTERL_0 + 7 {
             self.load_tev_register(idx, val);
+            self.frame_state_dirty = true;
         }
 
         // GEN_MODE, extract num TEV stages + cull mode + num indirect stages
@@ -116,55 +120,60 @@ impl GraphicsProcessor {
             self.cur_num_tev_stages = stages;
             self.cur_num_indirect_stages = indirect_stages;
             self.konst_dirty = true;
+            self.frame_state_dirty = true;
             renderer.exec(GxAction::SetCullMode(gen_mode.cull_mode()));
         }
 
-        // Indirect-matrix rows at 0x06..=0x0E. Each write lands in one
-        // of the A, B, or C rows of one of three matrices.
-        match idx {
-            BP_IND_MTX_A0 => self.cur_indirect_matrices[0].a = val,
-            BP_IND_MTX_B0 => self.cur_indirect_matrices[0].b = val,
-            BP_IND_MTX_C0 => self.cur_indirect_matrices[0].c = val,
-            BP_IND_MTX_A1 => self.cur_indirect_matrices[1].a = val,
-            BP_IND_MTX_B1 => self.cur_indirect_matrices[1].b = val,
-            BP_IND_MTX_C1 => self.cur_indirect_matrices[1].c = val,
-            BP_IND_MTX_A2 => self.cur_indirect_matrices[2].a = val,
-            BP_IND_MTX_B2 => self.cur_indirect_matrices[2].b = val,
-            BP_IND_MTX_C2 => self.cur_indirect_matrices[2].c = val,
-            _ => {}
+        // Indirect-matrix rows at 0x06..=0x0E
+        if (BP_IND_MTX_A0..=BP_IND_MTX_C2).contains(&idx) {
+            let off = idx - BP_IND_MTX_A0;
+            let mtx = &mut self.cur_indirect_matrices[off / 3];
+            match off % 3 {
+                0 => mtx.a = val,
+                1 => mtx.b = val,
+                _ => mtx.c = val,
+            }
+            self.frame_state_dirty = true;
         }
 
         // TODO: BumpIMask is captured for measure but never read on the
         // GPU side. AFAICT it's unused. Dolphin agrees.
         if idx == BP_BUMP_IMASK {
             self.cur_bump_imask = val;
+            self.frame_state_dirty = true;
         }
 
         // Per TEV stage indirect commands at 0x10..=0x1F.
         if idx >= BP_IND_CMD_0 && idx < BP_IND_CMD_0 + BP_IND_CMD_COUNT {
             self.cur_tev_indirect[idx - BP_IND_CMD_0] = TevIndirect::from_raw(val);
+            self.frame_state_dirty = true;
         }
 
         // Indirect texcoord scale pair. SS0 covers indirect stages 0-1,
         // SS1 covers 2-3.
         if idx == BP_RAS1_SS0 {
             self.cur_indirect_scales[0] = Ras1Ss::from_raw(val);
+            self.frame_state_dirty = true;
         } else if idx == BP_RAS1_SS1 {
             self.cur_indirect_scales[1] = Ras1Ss::from_raw(val);
+            self.frame_state_dirty = true;
         }
 
         if idx == BP_RAS1_IREF {
             self.cur_indirect_refs = Ras1IRef::from_raw(val);
+            self.frame_state_dirty = true;
         }
 
         // TEV KSEL (constant color selection) registers: recalculate konst colors
         if idx >= BP_TEV_KSEL_0 && idx <= BP_TEV_KSEL_0 + 7 {
             self.konst_dirty = true;
+            self.frame_state_dirty = true;
         }
 
         // TEV color register writes also affect konst colors
         if idx >= BP_TEV_REGISTERL_0 && idx <= BP_TEV_REGISTERL_0 + 7 {
             self.konst_dirty = true;
+            self.frame_state_dirty = true;
         }
 
         // PE finish

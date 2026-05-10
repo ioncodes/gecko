@@ -302,7 +302,8 @@ fn run<const SYSTEM: SystemId>(
 
     let renderer = backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect);
 
-    emulator.render_sink = Box::new(renderer.clone());
+    emulator.gx.draw_box_recycle_rx = renderer.take_recycle_rx();
+    emulator.render_sink = Box::new(renderer.take_batching_sink());
 
     #[cfg(feature = "efb-writeback")]
     {

@@ -2,7 +2,7 @@ use super::constants::*;
 use super::math::{Vec3, unpack_rgba};
 use super::regs::{self, *};
 use super::{GraphicsProcessor, draw};
-use crate::host::{DrawData, DrawVertex, GxAction, RenderSink};
+use crate::host::{DrawVertex, GxAction, RenderSink};
 use crate::mmio::{Mmio, RamView};
 use crate::system::SystemId;
 use std::io::{Cursor, Read};
@@ -76,6 +76,14 @@ impl GraphicsProcessor {
             self.stats.draws_by_primitive[(primitive as usize) & 0x7] += 1;
         }
 
+        if let Some(rx) = &self.draw_box_recycle_rx {
+            while let Ok(b) = rx.try_recv() {
+                self.draw_box_pool.push(b);
+            }
+        }
+        let mut boxed = self.draw_box_pool.pop().unwrap_or_default();
+        std::mem::swap(&mut boxed.vertices, &mut self.draw_vertices_scratch);
+
         self.draw_vertices_scratch.clear();
         self.draw_vertices_scratch.reserve(vertex_count);
 
@@ -124,29 +132,30 @@ impl GraphicsProcessor {
             ],
         ];
 
-        renderer.exec(GxAction::Draw(DrawData {
-            primitive,
-            vertices: draw_vertices,
-            modelview: modelview.0,
-            tev_color_env: std::array::from_fn(|i| self.cur_tev_color_env[i].raw()),
-            tev_alpha_env: std::array::from_fn(|i| self.cur_tev_alpha_env[i].raw()),
-            tev_orders: std::array::from_fn(|i| tev_orders[i].raw()),
-            tev_ksel: std::array::from_fn(|i| self.bp_regs[BP_TEV_KSEL_0 + i]),
-            tev_color_regs,
-            tev_konst_colors: self.cur_tev_konst_colors,
-            num_tev_stages: self.cur_num_tev_stages,
-            indirect_matrices,
-            indirect_scales,
-            indirect_refs: self.cur_indirect_refs.raw(),
-            num_indirect_stages: self.cur_num_indirect_stages,
-            bump_imask: self.cur_bump_imask,
-            tev_indirect: std::array::from_fn(|i| self.cur_tev_indirect[i].raw()),
-            color_ctrl: self.cached_color_ctrl,
-            alpha_ctrl: self.cached_alpha_ctrl,
-            ambient_color: self.cached_ambient_color,
-            material_color: self.cached_material_color,
-            lights: self.cached_lights,
-        }));
+        boxed.primitive = primitive;
+        boxed.vertices = draw_vertices;
+        boxed.modelview = modelview.0;
+        boxed.tev_color_env = std::array::from_fn(|i| self.cur_tev_color_env[i].raw());
+        boxed.tev_alpha_env = std::array::from_fn(|i| self.cur_tev_alpha_env[i].raw());
+        boxed.tev_orders = std::array::from_fn(|i| tev_orders[i].raw());
+        boxed.tev_ksel = std::array::from_fn(|i| self.bp_regs[BP_TEV_KSEL_0 + i]);
+        boxed.tev_color_regs = tev_color_regs;
+        boxed.tev_konst_colors = self.cur_tev_konst_colors;
+        boxed.num_tev_stages = self.cur_num_tev_stages;
+        boxed.indirect_matrices = indirect_matrices;
+        boxed.indirect_scales = indirect_scales;
+        boxed.indirect_refs = self.cur_indirect_refs.raw();
+        boxed.num_indirect_stages = self.cur_num_indirect_stages;
+        boxed.bump_imask = self.cur_bump_imask;
+        boxed.tev_indirect = std::array::from_fn(|i| self.cur_tev_indirect[i].raw());
+        boxed.color_ctrl = self.cached_color_ctrl;
+        boxed.alpha_ctrl = self.cached_alpha_ctrl;
+        boxed.ambient_color = self.cached_ambient_color;
+        boxed.material_color = self.cached_material_color;
+        boxed.lights = self.cached_lights;
+        boxed.frame_dirty = self.frame_state_dirty;
+        self.frame_state_dirty = false;
+        renderer.exec(GxAction::Draw(boxed));
 
         #[cfg(feature = "gx-stats")]
         {

@@ -1,6 +1,8 @@
 use crate::pipeline::PipelineKey;
-use crate::{BindGroupCacheKey, DrawUniforms, FrameUniforms, GpuVertex, GxRenderer, SamplerKey, helpers};
-use encase::{ShaderType as _, UniformBuffer};
+use crate::{
+    BindGroupCacheKey, DRAW_UNIFORMS_SIZE, DrawUniforms, FRAME_UNIFORMS_SIZE, FrameUniforms, GpuVertex, GxRenderer,
+    SamplerKey, helpers,
+};
 use gecko::flipper::gx::regs::{MagFilter, MinFilter, WrapMode};
 use gecko::host::{DrawData, GxAction};
 use glam::{Mat4, UVec4, Vec4};
@@ -46,9 +48,9 @@ impl GxRenderer {
     /// lazily when a non-draw action arrives.
     pub fn process_action(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, action: &GxAction) {
         let draw_stride = self.draw_uniform_stride as usize;
-        let draw_encase_size = DrawUniforms::min_size().get() as usize;
+        let draw_struct_size = DRAW_UNIFORMS_SIZE.get() as usize;
         let frame_stride = self.frame_stride;
-        let frame_encase_size = self.frame_encase_size;
+        let frame_struct_size = FRAME_UNIFORMS_SIZE.get() as usize;
 
         match action {
             GxAction::SetProjection { matrix, .. } => {
@@ -183,57 +185,67 @@ impl GxRenderer {
 
                 let start = self.scratch_draws.len() * draw_stride;
                 self.scratch_uniform_bytes.resize(start + draw_stride, 0);
-                let mut draw_buf = UniformBuffer::new(&mut self.scratch_uniform_bytes[start..start + draw_encase_size]);
-                draw_buf.write(&draw_uniform).unwrap();
+                self.scratch_uniform_bytes[start..start + draw_struct_size]
+                    .copy_from_slice(bytemuck::bytes_of(&draw_uniform));
 
-                // Build per-draw frame uniform (TEV + lighting from DrawData,
-                // alpha compare from tracked state).
-                let alpha_cmp = self.current_alpha_compare;
-                let frame_uniform = FrameUniforms {
-                    tev_color_regs: draw.tev_color_regs.map(Vec4::from),
-                    tev_konst_colors: draw.tev_konst_colors.map(Vec4::from),
-                    tev_color_env: pack_u32_slice_to_uvec4x4(&draw.tev_color_env),
-                    tev_alpha_env: pack_u32_slice_to_uvec4x4(&draw.tev_alpha_env),
-                    tev_orders: pack_u32_slice_to_uvec4x4(&draw.tev_orders),
-                    tev_ksel: pack_u32_slice_to_uvec4x4(&draw.tev_ksel),
-                    num_tev_stages: draw.num_tev_stages as u32,
-                    alpha_ref0: alpha_cmp.ref0() as f32 / 255.0,
-                    alpha_ref1: alpha_cmp.ref1() as f32 / 255.0,
-                    alpha_comp0: alpha_cmp.comp0() as u32,
-                    alpha_comp1: alpha_cmp.comp1() as u32,
-                    alpha_op: alpha_cmp.op() as u32,
-                    indirect_matrices: draw.indirect_matrices.map(glam::IVec4::from),
-                    indirect_scales: draw.indirect_scales.map(glam::UVec4::from),
-                    indirect_refs: draw.indirect_refs,
-                    num_indirect_stages: draw.num_indirect_stages as u32,
-                    bump_imask: draw.bump_imask,
-                    tev_indirect: pack_u32_slice_to_uvec4x4(&draw.tev_indirect),
-                    light_colors: draw.lights.each_ref().map(|l| Vec4::from(l.color)),
-                    light_cosatt: draw.lights.each_ref().map(|l| Vec4::from(l.cosatt)),
-                    light_distatt: draw.lights.each_ref().map(|l| Vec4::from(l.distatt)),
-                    light_pos: draw.lights.each_ref().map(|l| Vec4::from(l.position)),
-                    light_dir: draw.lights.each_ref().map(|l| Vec4::from(l.direction)),
-                    color_ctrl0: draw.color_ctrl[0].raw(),
-                    alpha_ctrl0: draw.alpha_ctrl[0].raw(),
-                    color_ctrl1: draw.color_ctrl[1].raw(),
-                    alpha_ctrl1: draw.alpha_ctrl[1].raw(),
-                    ambient_color0: Vec4::from(draw.ambient_color[0]),
-                    ambient_color1: Vec4::from(draw.ambient_color[1]),
-                    material_color0: Vec4::from(draw.material_color[0]),
-                    material_color1: Vec4::from(draw.material_color[1]),
+                // Build a fresh FrameUniforms slot only when the producer
+                // signaled state changed since the last draw or this is the
+                // first draw of the flush.
+                let frame_idx = if draw.frame_dirty || self.last_frame_uniform_index.is_none() {
+                    let alpha_cmp = self.current_alpha_compare;
+                    let frame_uniform = FrameUniforms {
+                        tev_color_regs: draw.tev_color_regs.map(Vec4::from),
+                        tev_konst_colors: draw.tev_konst_colors.map(Vec4::from),
+                        tev_color_env: pack_u32_slice_to_uvec4x4(&draw.tev_color_env),
+                        tev_alpha_env: pack_u32_slice_to_uvec4x4(&draw.tev_alpha_env),
+                        tev_orders: pack_u32_slice_to_uvec4x4(&draw.tev_orders),
+                        tev_ksel: pack_u32_slice_to_uvec4x4(&draw.tev_ksel),
+                        num_tev_stages: draw.num_tev_stages as u32,
+                        alpha_ref0: alpha_cmp.ref0() as f32 / 255.0,
+                        alpha_ref1: alpha_cmp.ref1() as f32 / 255.0,
+                        alpha_comp0: alpha_cmp.comp0() as u32,
+                        alpha_comp1: alpha_cmp.comp1() as u32,
+                        alpha_op: alpha_cmp.op() as u32,
+                        _pad0: [0; 2],
+                        indirect_matrices: draw.indirect_matrices.map(glam::IVec4::from),
+                        indirect_scales: draw.indirect_scales.map(glam::UVec4::from),
+                        indirect_refs: draw.indirect_refs,
+                        num_indirect_stages: draw.num_indirect_stages as u32,
+                        bump_imask: draw.bump_imask,
+                        _pad1: 0,
+                        tev_indirect: pack_u32_slice_to_uvec4x4(&draw.tev_indirect),
+                        light_colors: draw.lights.each_ref().map(|l| Vec4::from(l.color)),
+                        light_cosatt: draw.lights.each_ref().map(|l| Vec4::from(l.cosatt)),
+                        light_distatt: draw.lights.each_ref().map(|l| Vec4::from(l.distatt)),
+                        light_pos: draw.lights.each_ref().map(|l| Vec4::from(l.position)),
+                        light_dir: draw.lights.each_ref().map(|l| Vec4::from(l.direction)),
+                        color_ctrl0: draw.color_ctrl[0].raw(),
+                        alpha_ctrl0: draw.alpha_ctrl[0].raw(),
+                        color_ctrl1: draw.color_ctrl[1].raw(),
+                        alpha_ctrl1: draw.alpha_ctrl[1].raw(),
+                        ambient_color0: Vec4::from(draw.ambient_color[0]),
+                        ambient_color1: Vec4::from(draw.ambient_color[1]),
+                        material_color0: Vec4::from(draw.material_color[0]),
+                        material_color1: Vec4::from(draw.material_color[1]),
+                    };
+
+                    let fstart = self.frame_uniform_bytes.len();
+                    self.frame_uniform_bytes.resize(fstart + frame_stride, 0);
+                    self.frame_uniform_bytes[fstart..fstart + frame_struct_size]
+                        .copy_from_slice(bytemuck::bytes_of(&frame_uniform));
+                    let idx = (fstart / frame_stride) as u32;
+                    self.last_frame_uniform_index = Some(idx);
+                    idx
+                } else {
+                    self.last_frame_uniform_index.unwrap()
                 };
-
-                let fstart = self.scratch_draws.len() * frame_stride;
-                self.frame_uniform_bytes.resize(fstart + frame_stride, 0);
-                let mut frame_buf =
-                    UniformBuffer::new(&mut self.frame_uniform_bytes[fstart..fstart + frame_encase_size]);
-                frame_buf.write(&frame_uniform).unwrap();
 
                 // Snapshot tracked state for this draw.
                 self.draw_pipeline_keys.push(pipeline_key);
                 self.draw_bg_keys.push(self.current_bind_group_key());
                 self.draw_viewports.push(self.current_viewport);
                 self.draw_scissors.push(self.current_scissor);
+                self.draw_frame_indices.push(frame_idx);
                 #[cfg(feature = "renderdoc-capture")]
                 self.draw_primitives.push(draw.primitive);
 
@@ -377,6 +389,8 @@ impl GxRenderer {
         self.draw_bg_keys.clear();
         self.draw_viewports.clear();
         self.draw_scissors.clear();
+        self.draw_frame_indices.clear();
+        self.last_frame_uniform_index = None;
         #[cfg(feature = "renderdoc-capture")]
         self.draw_primitives.clear();
     }
@@ -420,7 +434,7 @@ impl GxRenderer {
                         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                             buffer: &self.frame_uniform_buffer,
                             offset: 0,
-                            size: Some(FrameUniforms::min_size()),
+                            size: Some(FRAME_UNIFORMS_SIZE),
                         }),
                     },
                     1 => wgpu::BindGroupEntry {
@@ -428,7 +442,7 @@ impl GxRenderer {
                         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                             buffer: &self.draw_uniform_buffer,
                             offset: 0,
-                            size: Some(DrawUniforms::min_size()),
+                            size: Some(DRAW_UNIFORMS_SIZE),
                         }),
                     },
                     2..=9 => wgpu::BindGroupEntry {
@@ -548,7 +562,7 @@ impl GxRenderer {
                 let bg_key = &self.draw_bg_keys[index];
                 let bind_group = &self.bind_group_cache[bg_key];
 
-                let frame_offset = (index * frame_stride) as u32;
+                let frame_offset = self.draw_frame_indices[index] * frame_stride as u32;
                 let draw_offset = (index as u64 * self.draw_uniform_stride) as u32;
                 rpass.set_bind_group(0, bind_group, &[frame_offset, draw_offset]);
                 #[cfg(feature = "renderdoc-capture")]

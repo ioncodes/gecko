@@ -1,5 +1,6 @@
-use crate::{FrameUniforms, GpuVertex, GxRenderer, align_up};
-use encase::ShaderType as _;
+#[cfg(feature = "efb-writeback")]
+use crate::align_up;
+use crate::{GpuVertex, GxRenderer};
 use gecko::common::Address;
 #[cfg(feature = "efb-writeback")]
 use gecko::flipper::gx::texture;
@@ -14,6 +15,19 @@ pub(crate) struct XfbCopyUniforms {
     dst_size: [f32; 2],
     gamma: f32,
     filter_mode: u32,
+}
+
+/// Upload `bytes` into `buffer` at offset 0 via `write_buffer_with`, which
+/// hands us a writable view into wgpu's staging memory and skips the extra
+/// copy `write_buffer` would do. No-op when `bytes` is empty.
+fn write_buffer(queue: &wgpu::Queue, buffer: &wgpu::Buffer, bytes: &[u8]) {
+    let Some(size) = std::num::NonZeroU64::new(bytes.len() as u64) else {
+        return;
+    };
+    let mut view = queue
+        .write_buffer_with(buffer, 0, size)
+        .expect("buffer too small for write_buffer_with");
+    view.copy_from_slice(bytes);
 }
 
 impl GxRenderer {
@@ -31,11 +45,7 @@ impl GxRenderer {
             });
         }
 
-        let frame_stride = align_up(
-            FrameUniforms::min_size().get(),
-            device.limits().min_uniform_buffer_offset_alignment as u64,
-        ) as usize;
-        let needed_frame_size = (num_draws * frame_stride) as u64;
+        let needed_frame_size = frame_uniform_bytes.len() as u64;
         if needed_frame_size > self.frame_uniform_buffer.size() {
             self.frame_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("gx_frame_uniforms"),
@@ -46,9 +56,9 @@ impl GxRenderer {
             self.bind_group_cache.clear();
         }
 
-        queue.write_buffer(&self.frame_uniform_buffer, 0, frame_uniform_bytes);
-        queue.write_buffer(&self.draw_uniform_buffer, 0, &self.scratch_uniform_bytes);
-        queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.scratch_vertices));
+        write_buffer(queue, &self.frame_uniform_buffer, frame_uniform_bytes);
+        write_buffer(queue, &self.draw_uniform_buffer, &self.scratch_uniform_bytes);
+        write_buffer(queue, &self.vertex_buffer, bytemuck::cast_slice(&self.scratch_vertices));
     }
 
     pub(crate) fn execute_copy_xfb(

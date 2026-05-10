@@ -143,6 +143,7 @@ impl GraphicsProcessor {
             || self::ranges_overlap(addr, end, XF_CHAN_CFG_BEGIN, XF_CHAN_CFG_END)
         {
             self.lighting_dirty = true;
+            self.frame_state_dirty = true;
         }
     }
 
@@ -198,6 +199,7 @@ impl GraphicsProcessor {
             || self::ranges_overlap(dst_addr, end, XF_CHAN_CFG_BEGIN, XF_CHAN_CFG_END)
         {
             self.lighting_dirty = true;
+            self.frame_state_dirty = true;
         }
     }
 }

@@ -12,7 +12,7 @@ hooks-mut-traps = ["hooks"]
 # it in the GX copy format, and ships the bytes over a channel to the emu
 # thread which copies them into `Mmio::ram` synchronously. Expensive (GPU
 # stall, encode, RAM copy).
-efb-writeback = ["dep:crossbeam-channel"]
+efb-writeback = []
 # Enable the WAV file audio sink
 audio-wav-dump = ["dep:hound"]
 # Cranelift JIT for Gekko
@@ -29,6 +29,8 @@ vtx-jit-validate = ["jit", "gx-stats"]
 fps-counter = []
 gx-stats = []
 profile = ["dep:backtrace", "dep:windows-sys"]
+# Enables std::hint::black_box inside `EmptyRenderSink::exec`
+rendersink-blackbox = []
 
 [build-dependencies]
 chipi-build = "0.9.1"
@@ -41,7 +43,7 @@ disasm = { path = "../disasm" }
 glam = { version = "0.32.1", features = ["bytemuck"] }
 bytemuck = { version = "1.25.0", features = ["derive"] }
 twox-hash = "2.1.2"
-crossbeam-channel = { version = "0.5.15", optional = true }
+crossbeam-channel = "0.5.15"
 hound = { version = "3.5.1", optional = true }
 multiversion = "0.8.0"
 rustc-hash = "2.1.2"

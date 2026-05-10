@@ -4,8 +4,8 @@ use cranelift_frontend::FunctionBuilder;
 
 use crate::gekko::instruction::Instruction;
 use crate::gekko::jit::translator::{
-    self, AddmeSubfmeKind, AddzeSubfzeKind, CYCLES_PER_INSTR, ImmLogical, JitTranslator, LocalFuncs, LogicalFullOp,
-    LogicalOp, MemSize, ShiftKind, TermEmit, vmctx_flags,
+    self, AddmeSubfmeKind, AddzeSubfzeKind, ImmLogical, JitTranslator, LocalFuncs, LogicalFullOp, LogicalOp, MemSize,
+    ShiftKind, TermEmit, vmctx_flags,
 };
 use crate::gekko::jit::{abi, lut};
 use crate::system::SystemId;
