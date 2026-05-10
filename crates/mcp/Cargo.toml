@@ -1,0 +1,34 @@
+[package]
+name = "mcp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gecko = { path = "../gecko" }
+image = { path = "../image" }
+backend-wgpu = { path = "../backend-wgpu" }
+disasm = { path = "../disasm" }
+wgpu = "28.0.0"
+pollster = "0.4.0"
+png = "0.18.1"
+rmcp = { version = "1.6.0", features = [
+    "server",
+    "macros",
+    "transport-io",
+    "schemars",
+] }
+tokio = { version = "1.52.3", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "io-std",
+    "signal",
+] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+schemars = "1.2.1"
+clap = { version = "4.6.1", features = ["derive"] }
+anyhow = "1.0.102"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+base64 = "0.22.1"
