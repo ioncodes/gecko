@@ -123,11 +123,9 @@ pub fn classify_terminator(instr: Instruction) -> Option<TermKind> {
         19 => match instr.xo10() {
             16 | 528 => Some(TermKind::BranchToReg),
             50 => Some(TermKind::Rfi),
-            150 => Some(TermKind::Isync),
             _ => None,
         },
         31 => match instr.xo10() {
-            146 => Some(TermKind::Mtmsr),
             467 => {
                 let spr_num = instr.spr_swapped() as u16;
                 if mtspr_is_block_safe(spr_num) {

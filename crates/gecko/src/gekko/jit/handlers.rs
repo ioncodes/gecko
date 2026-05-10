@@ -1,11 +1,11 @@
 use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_codegen::ir::{InstBuilder, MemFlags, types};
+use cranelift_codegen::ir::{InstBuilder, types};
 use cranelift_frontend::FunctionBuilder;
 
 use crate::gekko::instruction::Instruction;
 use crate::gekko::jit::translator::{
     self, AddmeSubfmeKind, AddzeSubfzeKind, CYCLES_PER_INSTR, ImmLogical, JitTranslator, LocalFuncs, LogicalFullOp,
-    LogicalOp, MemSize, ShiftKind, TermEmit,
+    LogicalOp, MemSize, ShiftKind, TermEmit, vmctx_flags,
 };
 use crate::gekko::jit::{abi, lut};
 use crate::system::SystemId;
@@ -383,13 +383,13 @@ pub fn segment<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, ins
     match OP {
         lut::OP_MFSR => {
             let off = (abi::sr_base_offset::<SYSTEM>() + instr.sr() as usize * 4) as i32;
-            let val = builder.ins().load(types::I32, MemFlags::trusted(), t.ctx_ptr, off);
+            let val = builder.ins().load(types::I32, vmctx_flags(), t.ctx_ptr, off);
             translator::gpr_store::<SYSTEM>(builder, t.ctx_ptr, instr.rd(), val);
         }
         lut::OP_MTSR => {
             let off = (abi::sr_base_offset::<SYSTEM>() + instr.sr() as usize * 4) as i32;
             let val = translator::gpr_load::<SYSTEM>(builder, t.ctx_ptr, instr.rs());
-            builder.ins().store(MemFlags::trusted(), val, t.ctx_ptr, off);
+            builder.ins().store(vmctx_flags(), val, t.ctx_ptr, off);
         }
         _ => return,
     }
@@ -403,23 +403,26 @@ pub fn msr<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: 
 
     match OP {
         lut::OP_MFMSR => {
-            let msr = builder.ins().load(
-                types::I32,
-                MemFlags::trusted(),
-                t.ctx_ptr,
-                abi::msr_offset::<SYSTEM>() as i32,
-            );
+            let msr = builder
+                .ins()
+                .load(types::I32, vmctx_flags(), t.ctx_ptr, abi::msr_offset::<SYSTEM>() as i32);
             translator::gpr_store::<SYSTEM>(builder, t.ctx_ptr, instr.rd(), msr);
 
             t.handled_natively = true;
         }
-        lut::OP_MTMSR if t.is_terminator => {
+        lut::OP_MTMSR => {
             let val = translator::gpr_load::<SYSTEM>(builder, t.ctx_ptr, instr.rs());
             builder
                 .ins()
-                .store(MemFlags::trusted(), val, t.ctx_ptr, abi::msr_offset::<SYSTEM>() as i32);
+                .store(vmctx_flags(), val, t.ctx_ptr, abi::msr_offset::<SYSTEM>() as i32);
 
-            t.last_terminator_nia = Some(builder.ins().iconst(types::I32, t.pc.wrapping_add(4) as i64));
+            unsafe {
+                (&*(t.local_ptr as *const LocalFuncs)).fp_guard_emitted.set(false);
+            }
+
+            if t.is_terminator {
+                t.last_terminator_nia = Some(builder.ins().iconst(types::I32, t.pc.wrapping_add(4) as i64));
+            }
             t.handled_natively = true;
         }
         lut::OP_RFI if t.is_terminator => {
@@ -430,19 +433,17 @@ pub fn msr<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: 
             let srr1_off = abi::spr_field_offset::<SYSTEM>(27).unwrap() as i32;
             let nia_off = abi::nia_offset::<SYSTEM>() as i32;
 
-            let msr_v = builder.ins().load(types::I32, MemFlags::trusted(), t.ctx_ptr, msr_off);
-            let srr1 = builder.ins().load(types::I32, MemFlags::trusted(), t.ctx_ptr, srr1_off);
+            let msr_v = builder.ins().load(types::I32, vmctx_flags(), t.ctx_ptr, msr_off);
+            let srr1 = builder.ins().load(types::I32, vmctx_flags(), t.ctx_ptr, srr1_off);
             let msr_keep = builder.ins().band_imm(msr_v, !RFI_MSR_MASK & 0xFFFF_FFFFi64);
             let srr1_take = builder.ins().band_imm(srr1, RFI_MSR_MASK);
             let new_msr = builder.ins().bor(msr_keep, srr1_take);
             let new_msr_clr = builder.ins().band_imm(new_msr, !0x0004_0000i64 & 0xFFFF_FFFFi64);
-            builder
-                .ins()
-                .store(MemFlags::trusted(), new_msr_clr, t.ctx_ptr, msr_off);
+            builder.ins().store(vmctx_flags(), new_msr_clr, t.ctx_ptr, msr_off);
 
-            let srr0_raw = builder.ins().load(types::I32, MemFlags::trusted(), t.ctx_ptr, srr0_off);
+            let srr0_raw = builder.ins().load(types::I32, vmctx_flags(), t.ctx_ptr, srr0_off);
             let nia = builder.ins().band_imm(srr0_raw, 0xFFFF_FFFCi64);
-            builder.ins().store(MemFlags::trusted(), nia, t.ctx_ptr, nia_off);
+            builder.ins().store(vmctx_flags(), nia, t.ctx_ptr, nia_off);
 
             t.last_terminator_nia = Some(nia);
             t.handled_natively = true;
@@ -632,11 +633,8 @@ pub fn nop<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: 
     let (builder, _) = unsafe { parts(t.builder_ptr, t.local_ptr) };
 
     match OP {
-        lut::OP_ISYNC if t.is_terminator => {
-            t.last_terminator_nia = Some(builder.ins().iconst(types::I32, t.pc.wrapping_add(4) as i64));
-            t.handled_natively = true;
-        }
-        lut::OP_SYNC
+        lut::OP_ISYNC
+        | lut::OP_SYNC
         | lut::OP_EIEIO
         | lut::OP_DCBF
         | lut::OP_DCBI
@@ -656,6 +654,7 @@ pub fn nop<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: 
         }
         _ => {}
     }
+    let _ = builder;
 }
 
 #[inline(always)]
@@ -679,8 +678,6 @@ pub fn branch<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, inst
                     let lr_val = builder.ins().iconst(types::I32, t.pc.wrapping_add(4) as i64);
                     translator::lr_store::<SYSTEM>(builder, t.ctx_ptr, lr_val);
                 }
-
-                translator::emit_cycles_add::<SYSTEM>(builder, t.ctx_ptr, CYCLES_PER_INSTR);
 
                 let target_v = builder.ins().iconst(types::I32, target as i64);
                 if instr.lk() {
@@ -822,7 +819,7 @@ pub fn sc<const SYSTEM: SystemId>(t: &mut JitTranslator, _instr: Instruction) {
 
     let cia_off = abi::cia_offset::<SYSTEM>() as i32;
     let pc_const = builder.ins().iconst(types::I32, t.pc as i64);
-    builder.ins().store(MemFlags::trusted(), pc_const, t.ctx_ptr, cia_off);
+    builder.ins().store(vmctx_flags(), pc_const, t.ctx_ptr, cia_off);
 
     let srr0_value = builder.ins().iconst(types::I32, t.pc.wrapping_add(4) as i64);
     t.last_terminator_nia = Some(translator::emit_exception_dispatch::<SYSTEM>(
@@ -954,7 +951,7 @@ pub fn mfsrin<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction)
         .iadd_imm(t.ctx_ptr, abi::sr_base_offset::<SYSTEM>() as i64);
     let addr = builder.ins().iadd(base, byte_off64);
 
-    let val = builder.ins().load(types::I32, MemFlags::trusted(), addr, 0);
+    let val = builder.ins().load(types::I32, vmctx_flags(), addr, 0);
     translator::gpr_store::<SYSTEM>(builder, t.ctx_ptr, instr.rd(), val);
 
     t.handled_natively = true;
@@ -976,7 +973,7 @@ pub fn mtsrin<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction)
     let addr = builder.ins().iadd(base, byte_off64);
 
     let val = translator::gpr_load::<SYSTEM>(builder, t.ctx_ptr, instr.rs());
-    builder.ins().store(MemFlags::trusted(), val, addr, 0);
+    builder.ins().store(vmctx_flags(), val, addr, 0);
 
     t.handled_natively = true;
 }
@@ -990,14 +987,14 @@ pub fn mftb<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     if tbr == 268 || tbr == 269 {
         let cycles = builder.ins().load(
             types::I64,
-            MemFlags::trusted(),
+            vmctx_flags(),
             t.ctx_ptr,
             abi::cycles_offset::<SYSTEM>() as i32,
         );
         let cycles_div = builder.ins().udiv_imm(cycles, 12);
         let tb_off = builder.ins().load(
             types::I64,
-            MemFlags::trusted(),
+            vmctx_flags(),
             t.ctx_ptr,
             abi::timebase_offset_offset::<SYSTEM>() as i32,
         );

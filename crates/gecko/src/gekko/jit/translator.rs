@@ -1,6 +1,7 @@
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_codegen::ir::{Block, FuncRef, InstBuilder, MemFlags, Value, types};
+use cranelift_codegen::ir::{AliasRegion, Block, FuncRef, InstBuilder, MemFlags, Value, types};
+
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Module};
@@ -11,6 +12,23 @@ use crate::gekko::jit::block::{BlockSpec, TermKind};
 use crate::gekko::jit::idle::{self, IdleClass};
 use crate::gekko::jit::{ExternFuncs, abi};
 use crate::system::SystemId;
+
+#[inline(always)]
+pub(crate) fn vmctx_flags() -> MemFlags {
+    MemFlags::trusted().with_alias_region(Some(AliasRegion::Vmctx))
+}
+
+#[inline(always)]
+pub(crate) fn vmctx_readonly_flags() -> MemFlags {
+    MemFlags::trusted()
+        .with_alias_region(Some(AliasRegion::Vmctx))
+        .with_readonly()
+}
+
+#[inline(always)]
+pub(crate) fn heap_flags() -> MemFlags {
+    MemFlags::new().with_alias_region(Some(AliasRegion::Heap))
+}
 
 pub struct ChainContext<'a> {
     pub self_pc: u32,
@@ -160,9 +178,9 @@ pub fn translate<const SYSTEM: SystemId>(
 
     if let Some(addr) = entry_counter_addr {
         let slot_v = builder.ins().iconst(types::I64, addr as i64);
-        let cur = builder.ins().load(types::I64, MemFlags::trusted(), slot_v, 0);
+        let cur = builder.ins().load(types::I64, vmctx_flags(), slot_v, 0);
         let next = builder.ins().iadd_imm(cur, 1);
-        builder.ins().store(MemFlags::trusted(), next, slot_v, 0);
+        builder.ins().store(vmctx_flags(), next, slot_v, 0);
     }
 
     let exit_block = builder.create_block();
@@ -173,23 +191,23 @@ pub fn translate<const SYSTEM: SystemId>(
         let ctr_off = abi::ctr_offset::<SYSTEM>() as i32;
         let cyc_off = abi::cycles_offset::<SYSTEM>() as i32;
 
-        let rb_val = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, rb_off);
-        let ctr_val = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, ctr_off);
+        let rb_val = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, rb_off);
+        let ctr_val = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, ctr_off);
 
         let stride_v = builder.ins().iconst(types::I32, stride as i64);
         let delta = builder.ins().imul(ctr_val, stride_v);
         let new_rb = builder.ins().iadd(rb_val, delta);
-        builder.ins().store(MemFlags::trusted(), new_rb, ctx_ptr, rb_off);
+        builder.ins().store(vmctx_flags(), new_rb, ctx_ptr, rb_off);
 
         let zero_v = builder.ins().iconst(types::I32, 0);
-        builder.ins().store(MemFlags::trusted(), zero_v, ctx_ptr, ctr_off);
+        builder.ins().store(vmctx_flags(), zero_v, ctx_ptr, ctr_off);
 
-        let cyc_val = builder.ins().load(types::I64, MemFlags::trusted(), ctx_ptr, cyc_off);
+        let cyc_val = builder.ins().load(types::I64, vmctx_flags(), ctx_ptr, cyc_off);
         let ctr_64 = builder.ins().uextend(types::I64, ctr_val);
         let per_iter = builder.ins().iconst(types::I64, 3 * CYCLES_PER_INSTR);
         let cyc_delta = builder.ins().imul(ctr_64, per_iter);
         let new_cyc = builder.ins().iadd(cyc_val, cyc_delta);
-        builder.ins().store(MemFlags::trusted(), new_cyc, ctx_ptr, cyc_off);
+        builder.ins().store(vmctx_flags(), new_cyc, ctx_ptr, cyc_off);
 
         let final_nia = builder.ins().iconst(types::I32, spec.start_pc.wrapping_add(12) as i64);
 
@@ -237,15 +255,16 @@ pub fn translate<const SYSTEM: SystemId>(
         t.handled_natively = false;
         let chained_before = t.chained;
 
-        if is_terminator && pending_cycles > 0 {
-            emit_cycles_add::<SYSTEM>(&mut builder, ctx_ptr, pending_cycles);
+        if is_terminator {
+            let total = pending_cycles + CYCLES_PER_INSTR;
+            emit_cycles_add::<SYSTEM>(&mut builder, ctx_ptr, total);
             pending_cycles = 0;
         }
 
         super::dispatch::<SYSTEM>(&mut t, instr);
 
         if t.handled_natively {
-            if !t.chained || chained_before {
+            if !is_terminator && (!t.chained || chained_before) {
                 pending_cycles += CYCLES_PER_INSTR;
             }
 
@@ -300,7 +319,7 @@ pub fn translate<const SYSTEM: SystemId>(
             _ => last_terminator_nia.unwrap_or_else(|| {
                 let nia_off = abi::nia_offset::<SYSTEM>() as i64;
                 let nia_addr = builder.ins().iadd_imm(ctx_ptr, nia_off);
-                builder.ins().load(types::I32, MemFlags::trusted(), nia_addr, 0)
+                builder.ins().load(types::I32, vmctx_flags(), nia_addr, 0)
             }),
         };
         if let Some(slot_addr) = chain_slot_addr {
@@ -507,7 +526,7 @@ pub(crate) fn write_xer_carry<const SYSTEM: SystemId>(builder: &mut FunctionBuil
     let positioned = builder.ins().ishl_imm(carry, 29);
     let merged = builder.ins().bor(cleared, positioned);
     let off = abi::xer_offset::<SYSTEM>() as i32;
-    builder.ins().store(MemFlags::trusted(), merged, ctx_ptr, off);
+    builder.ins().store(vmctx_flags(), merged, ctx_ptr, off);
 }
 
 pub(crate) fn write_xer_ov_so<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, ov: Value) {
@@ -520,7 +539,7 @@ pub(crate) fn write_xer_ov_so<const SYSTEM: SystemId>(builder: &mut FunctionBuil
     let so_pos = builder.ins().ishl_imm(ov, 31);
     let merged = builder.ins().bor(with_ov, so_pos);
     let off = abi::xer_offset::<SYSTEM>() as i32;
-    builder.ins().store(MemFlags::trusted(), merged, ctx_ptr, off);
+    builder.ins().store(vmctx_flags(), merged, ctx_ptr, off);
 }
 
 pub(crate) fn compute_add_overflow(builder: &mut FunctionBuilder, a: Value, b: Value, r: Value) -> Value {
@@ -671,7 +690,7 @@ pub(crate) fn emit_mcrxr<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, 
 
     let new_xer = builder.ins().band_imm(xer, !(0xE000_0000u32 as i64));
     let off = abi::xer_offset::<SYSTEM>() as i32;
-    builder.ins().store(MemFlags::trusted(), new_xer, ctx_ptr, off);
+    builder.ins().store(vmctx_flags(), new_xer, ctx_ptr, off);
 }
 
 fn read_xer_carry<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value) -> Value {
@@ -808,7 +827,7 @@ pub(crate) fn emit_srawi<const SYSTEM: SystemId>(
     let positioned = builder.ins().ishl_imm(ca, 29);
     let merged = builder.ins().bor(cleared, positioned);
     let off = abi::xer_offset::<SYSTEM>() as i32;
-    builder.ins().store(MemFlags::trusted(), merged, ctx_ptr, off);
+    builder.ins().store(vmctx_flags(), merged, ctx_ptr, off);
 
     result
 }
@@ -848,7 +867,7 @@ pub(crate) fn emit_sraw<const SYSTEM: SystemId>(
     let positioned = builder.ins().ishl_imm(ca, 29);
     let merged = builder.ins().bor(cleared, positioned);
     let off = abi::xer_offset::<SYSTEM>() as i32;
-    builder.ins().store(MemFlags::trusted(), merged, ctx_ptr, off);
+    builder.ins().store(vmctx_flags(), merged, ctx_ptr, off);
 
     result
 }
@@ -883,7 +902,7 @@ pub(crate) fn emit_mfspr<const SYSTEM: SystemId>(
 ) -> bool {
     let spr_num = instr.spr_swapped() as u16;
     if let Some(off) = abi::spr_field_offset::<SYSTEM>(spr_num).map(|off| off as i32) {
-        let val = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, off);
+        let val = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, off);
         gpr_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), val);
     } else {
         let num_v = builder.ins().iconst(types::I32, spr_num as i64);
@@ -903,7 +922,7 @@ pub(crate) fn emit_mtspr<const SYSTEM: SystemId>(
     let spr_num = instr.spr_swapped() as u16;
     let val = gpr_load::<SYSTEM>(builder, ctx_ptr, instr.rs());
     if let Some(off) = abi::spr_field_offset::<SYSTEM>(spr_num).map(|off| off as i32) {
-        builder.ins().store(MemFlags::trusted(), val, ctx_ptr, off);
+        builder.ins().store(vmctx_flags(), val, ctx_ptr, off);
     } else {
         let num_v = builder.ins().iconst(types::I32, spr_num as i64);
         builder.ins().call(local.write_spr, &[ctx_ptr, num_v, val]);
@@ -998,17 +1017,17 @@ fn cr_bit_load<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: V
 
 pub(crate) fn ctr_load<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value) -> Value {
     let off = abi::ctr_offset::<SYSTEM>() as i32;
-    builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, off)
+    builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, off)
 }
 
 pub(crate) fn ctr_store<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, val: Value) {
     let off = abi::ctr_offset::<SYSTEM>() as i32;
-    builder.ins().store(MemFlags::trusted(), val, ctx_ptr, off);
+    builder.ins().store(vmctx_flags(), val, ctx_ptr, off);
 }
 
 pub(crate) fn lr_store<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, val: Value) {
     let off = abi::lr_offset::<SYSTEM>() as i32;
-    builder.ins().store(MemFlags::trusted(), val, ctx_ptr, off);
+    builder.ins().store(vmctx_flags(), val, ctx_ptr, off);
 }
 
 pub(crate) fn emit_b<const SYSTEM: SystemId>(
@@ -1092,7 +1111,6 @@ pub(crate) fn emit_bc_with_chain<const SYSTEM: SystemId>(
 
     builder.switch_to_block(taken_block);
     builder.seal_block(taken_block);
-    emit_cycles_add::<SYSTEM>(builder, ctx_ptr, CYCLES_PER_INSTR);
     if instr.lk() {
         let lr_val = builder.ins().iconst(types::I32, pc.wrapping_add(4) as i64);
         lr_store::<SYSTEM>(builder, ctx_ptr, lr_val);
@@ -1106,7 +1124,6 @@ pub(crate) fn emit_bc_with_chain<const SYSTEM: SystemId>(
 
     builder.switch_to_block(fall_block);
     builder.seal_block(fall_block);
-    emit_cycles_add::<SYSTEM>(builder, ctx_ptr, CYCLES_PER_INSTR);
 
     let fall_v = builder.ins().iconst(types::I32, fall_target as i64);
     if let Some(slot_addr) = fall_slot {
@@ -1188,7 +1205,7 @@ pub(crate) fn emit_bc<const SYSTEM: SystemId>(
 
 pub(crate) fn lr_load<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value) -> Value {
     let off = abi::lr_offset::<SYSTEM>() as i32;
-    builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, off)
+    builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, off)
 }
 
 pub(crate) fn emit_bclr_dispatch<const SYSTEM: SystemId>(
@@ -1397,8 +1414,6 @@ pub(crate) fn emit_blr_with_ic<const SYSTEM: SystemId>(
     block_sig_ref: cranelift_codegen::ir::SigRef,
     lookup_table_addr: i64,
 ) -> TermEmit {
-    emit_cycles_add::<SYSTEM>(builder, ctx_ptr, CYCLES_PER_INSTR);
-
     let lr = lr_load::<SYSTEM>(builder, ctx_ptr);
     let target_pc = builder.ins().band_imm(lr, !3i64);
     emit_inline_cache_dispatch::<SYSTEM>(
@@ -1420,7 +1435,6 @@ pub(crate) fn emit_bctr_with_ic<const SYSTEM: SystemId>(
     block_sig_ref: cranelift_codegen::ir::SigRef,
     lookup_table_addr: i64,
 ) -> TermEmit {
-    emit_cycles_add::<SYSTEM>(builder, ctx_ptr, CYCLES_PER_INSTR);
     let ctr = ctr_load::<SYSTEM>(builder, ctx_ptr);
     let target_pc = builder.ins().band_imm(ctr, !3i64);
     emit_inline_cache_dispatch::<SYSTEM>(
@@ -1451,14 +1465,14 @@ pub(crate) fn emit_inline_cache_dispatch<const SYSTEM: SystemId>(
     let table_base = builder.ins().iconst(types::I64, lookup_table_addr);
     let slot_addr = builder.ins().iadd(table_base, off64);
 
-    let slot_pc = builder.ins().load(types::I32, MemFlags::trusted(), slot_addr, 0);
-    let slot_entry = builder.ins().load(types::I64, MemFlags::trusted(), slot_addr, 8);
+    let slot_pc = builder.ins().load(types::I32, vmctx_flags(), slot_addr, 0);
+    let slot_entry = builder.ins().load(types::I64, vmctx_flags(), slot_addr, 8);
     let pc_eq = builder.ins().icmp(IntCC::Equal, slot_pc, target_pc);
 
     let cyc_off = abi::cycles_offset::<SYSTEM>() as i32;
     let dl_off = abi::next_deadline_offset::<SYSTEM>() as i32;
-    let cycles = builder.ins().load(types::I64, MemFlags::trusted(), ctx_ptr, cyc_off);
-    let deadline = builder.ins().load(types::I64, MemFlags::trusted(), ctx_ptr, dl_off);
+    let cycles = builder.ins().load(types::I64, vmctx_flags(), ctx_ptr, cyc_off);
+    let deadline = builder.ins().load(types::I64, vmctx_flags(), ctx_ptr, dl_off);
     let in_budget = builder.ins().icmp(IntCC::UnsignedLessThan, cycles, deadline);
 
     let pc_eq_i8 = pc_eq;
@@ -1585,9 +1599,9 @@ pub(crate) fn emit_bcctr<const SYSTEM: SystemId>(
 pub(crate) fn emit_cycles_add<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, n: i64) {
     let off = abi::cycles_offset::<SYSTEM>() as i64;
     let addr = builder.ins().iadd_imm(ctx_ptr, off);
-    let now = builder.ins().load(types::I64, MemFlags::trusted(), addr, 0);
+    let now = builder.ins().load(types::I64, vmctx_flags(), addr, 0);
     let next = builder.ins().iadd_imm(now, n);
-    builder.ins().store(MemFlags::trusted(), next, addr, 0);
+    builder.ins().store(vmctx_flags(), next, addr, 0);
 }
 
 pub(crate) fn emit_mcrf<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, instr: Instruction) {
@@ -1724,8 +1738,8 @@ pub(crate) fn emit_chain_or_exit<const SYSTEM: SystemId>(
 ) {
     let cyc_off = abi::cycles_offset::<SYSTEM>() as i32;
     let dl_off = abi::next_deadline_offset::<SYSTEM>() as i32;
-    let cycles = builder.ins().load(types::I64, MemFlags::trusted(), ctx_ptr, cyc_off);
-    let deadline = builder.ins().load(types::I64, MemFlags::trusted(), ctx_ptr, dl_off);
+    let cycles = builder.ins().load(types::I64, vmctx_flags(), ctx_ptr, cyc_off);
+    let deadline = builder.ins().load(types::I64, vmctx_flags(), ctx_ptr, dl_off);
     let exhausted = builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, cycles, deadline);
 
     let chain_block = builder.create_block();
@@ -1737,7 +1751,7 @@ pub(crate) fn emit_chain_or_exit<const SYSTEM: SystemId>(
     builder.seal_block(chain_block);
 
     let slot_const = builder.ins().iconst(types::I64, slot_addr);
-    let target_ptr = builder.ins().load(types::I64, MemFlags::trusted(), slot_const, 0);
+    let target_ptr = builder.ins().load(types::I64, vmctx_flags(), slot_const, 0);
     let is_null = builder.ins().icmp_imm(IntCC::Equal, target_ptr, 0);
     let dispatch_block = builder.create_block();
     builder.set_cold_block(dispatch_block);
@@ -1765,8 +1779,8 @@ pub(crate) fn emit_call_or_exit<const SYSTEM: SystemId>(
 ) {
     let cyc_off = abi::cycles_offset::<SYSTEM>() as i32;
     let dl_off = abi::next_deadline_offset::<SYSTEM>() as i32;
-    let cycles = builder.ins().load(types::I64, MemFlags::trusted(), ctx_ptr, cyc_off);
-    let deadline = builder.ins().load(types::I64, MemFlags::trusted(), ctx_ptr, dl_off);
+    let cycles = builder.ins().load(types::I64, vmctx_flags(), ctx_ptr, cyc_off);
+    let deadline = builder.ins().load(types::I64, vmctx_flags(), ctx_ptr, dl_off);
     let exhausted = builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, cycles, deadline);
 
     let chain_block = builder.create_block();
@@ -1777,7 +1791,7 @@ pub(crate) fn emit_call_or_exit<const SYSTEM: SystemId>(
     builder.switch_to_block(chain_block);
     builder.seal_block(chain_block);
     let slot_const = builder.ins().iconst(types::I64, slot_addr);
-    let target_ptr = builder.ins().load(types::I64, MemFlags::trusted(), slot_const, 0);
+    let target_ptr = builder.ins().load(types::I64, vmctx_flags(), slot_const, 0);
     let is_null = builder.ins().icmp_imm(IntCC::Equal, target_ptr, 0);
 
     let dispatch_block = builder.create_block();
@@ -1805,7 +1819,7 @@ fn gpr_offset<const SYSTEM: SystemId>(i: u8) -> i32 {
 
 pub(crate) fn gpr_load<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, i: u8) -> Value {
     let off = gpr_offset::<SYSTEM>(i);
-    builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, off)
+    builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, off)
 }
 
 pub(crate) fn gpr_load_or_zero<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, i: u8) -> Value {
@@ -1818,7 +1832,7 @@ pub(crate) fn gpr_load_or_zero<const SYSTEM: SystemId>(builder: &mut FunctionBui
 
 pub(crate) fn gpr_store<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, i: u8, val: Value) {
     let off = gpr_offset::<SYSTEM>(i);
-    builder.ins().store(MemFlags::trusted(), val, ctx_ptr, off);
+    builder.ins().store(vmctx_flags(), val, ctx_ptr, off);
 }
 
 fn fpr_offset<const SYSTEM: SystemId>(i: u8) -> i32 {
@@ -1828,12 +1842,12 @@ fn fpr_offset<const SYSTEM: SystemId>(i: u8) -> i32 {
 
 pub(crate) fn fpr_load<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, i: u8) -> Value {
     let off = fpr_offset::<SYSTEM>(i);
-    builder.ins().load(types::F64, MemFlags::trusted(), ctx_ptr, off)
+    builder.ins().load(types::F64, vmctx_flags(), ctx_ptr, off)
 }
 
 pub(crate) fn fpr_store<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, i: u8, val: Value) {
     let off = fpr_offset::<SYSTEM>(i);
-    builder.ins().store(MemFlags::trusted(), val, ctx_ptr, off);
+    builder.ins().store(vmctx_flags(), val, ctx_ptr, off);
 }
 
 fn ps1_offset<const SYSTEM: SystemId>(i: u8) -> i32 {
@@ -1843,12 +1857,12 @@ fn ps1_offset<const SYSTEM: SystemId>(i: u8) -> i32 {
 
 pub(crate) fn ps1_load<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, i: u8) -> Value {
     let off = ps1_offset::<SYSTEM>(i);
-    builder.ins().load(types::F64, MemFlags::trusted(), ctx_ptr, off)
+    builder.ins().load(types::F64, vmctx_flags(), ctx_ptr, off)
 }
 
 pub(crate) fn ps1_store<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, i: u8, val: Value) {
     let off = ps1_offset::<SYSTEM>(i);
-    builder.ins().store(MemFlags::trusted(), val, ctx_ptr, off);
+    builder.ins().store(vmctx_flags(), val, ctx_ptr, off);
 }
 
 pub(crate) fn round_to_single(builder: &mut FunctionBuilder, val: Value) -> Value {
@@ -1874,7 +1888,7 @@ pub(crate) fn f32_rsqrte(builder: &mut FunctionBuilder, b_f64: Value) -> Value {
 pub(crate) fn emit_recompute_fpscr_summary<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value) {
     const VX_MASK: u32 = 0x01F8_0700;
     let off = abi::fpscr_offset::<SYSTEM>() as i32;
-    let fpscr = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, off);
+    let fpscr = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, off);
 
     let vx_in = builder.ins().band_imm(fpscr, VX_MASK as i64);
     let vx_b = builder.ins().icmp_imm(IntCC::NotEqual, vx_in, 0);
@@ -1893,7 +1907,7 @@ pub(crate) fn emit_recompute_fpscr_summary<const SYSTEM: SystemId>(builder: &mut
     let cleared_fex = builder.ins().band_imm(with_vx, !(1i64 << 30));
     let new_fpscr = builder.ins().bor(cleared_fex, fex_pos);
 
-    builder.ins().store(MemFlags::trusted(), new_fpscr, ctx_ptr, off);
+    builder.ins().store(vmctx_flags(), new_fpscr, ctx_ptr, off);
 }
 
 pub(crate) fn fpr_store_paired<const SYSTEM: SystemId>(
@@ -1908,21 +1922,18 @@ pub(crate) fn fpr_store_paired<const SYSTEM: SystemId>(
 
 pub(crate) fn cr_load<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value) -> Value {
     let off = abi::cr_offset::<SYSTEM>() as i32;
-    builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, off)
+    builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, off)
 }
 
 pub(crate) fn cr_store<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, val: Value) {
     let off = abi::cr_offset::<SYSTEM>() as i32;
-    builder.ins().store(MemFlags::trusted(), val, ctx_ptr, off);
+    builder.ins().store(vmctx_flags(), val, ctx_ptr, off);
 }
 
 pub(crate) fn emit_update_cr1_from_fpscr<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value) {
-    let fpscr = builder.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        ctx_ptr,
-        abi::fpscr_offset::<SYSTEM>() as i32,
-    );
+    let fpscr = builder
+        .ins()
+        .load(types::I32, vmctx_flags(), ctx_ptr, abi::fpscr_offset::<SYSTEM>() as i32);
 
     let top4 = builder.ins().ushr_imm(fpscr, 28);
     let positioned = builder.ins().ishl_imm(top4, 24);
@@ -1934,7 +1945,7 @@ pub(crate) fn emit_update_cr1_from_fpscr<const SYSTEM: SystemId>(builder: &mut F
 
 pub(crate) fn xer_load<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value) -> Value {
     let off = abi::xer_offset::<SYSTEM>() as i32;
-    builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, off)
+    builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, off)
 }
 
 fn xer_so_bit<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value) -> Value {
@@ -2022,16 +2033,14 @@ pub(crate) fn emit_fastmem_lookup<const SYSTEM: SystemId>(
 ) -> (Value, Value) {
     let lut_base = {
         let off = abi::fastmem_lut_ptr_offset::<SYSTEM>() as i32;
-        builder
-            .ins()
-            .load(types::I64, MemFlags::trusted().with_readonly(), ctx_ptr, off)
+        builder.ins().load(types::I64, vmctx_readonly_flags(), ctx_ptr, off)
     };
 
     let idx_u32 = builder.ins().ushr_imm(ea, crate::mmio::FASTMEM_PAGE_SHIFT as i64);
     let idx = builder.ins().uextend(types::I64, idx_u32);
     let entry_off = builder.ins().ishl_imm(idx, 3);
     let entry_addr = builder.ins().iadd(lut_base, entry_off);
-    let host_ptr = builder.ins().load(types::I64, MemFlags::trusted(), entry_addr, 0);
+    let host_ptr = builder.ins().load(types::I64, vmctx_flags(), entry_addr, 0);
 
     let page_off_u32 = builder.ins().band_imm(ea, crate::mmio::FASTMEM_PAGE_MASK as i64);
     let page_off = builder.ins().uextend(types::I64, page_off_u32);
@@ -2076,7 +2085,7 @@ pub(crate) fn emit_lha_d_form<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
     let addr = builder.block_params(fast_block)[0];
-    let raw_val = builder.ins().load(types::I16, MemFlags::new(), addr, 0);
+    let raw_val = builder.ins().load(types::I16, heap_flags(), addr, 0);
     let swapped = builder.ins().bswap(raw_val);
 
     let val32 = builder.ins().sextend(types::I32, swapped);
@@ -2171,7 +2180,7 @@ pub(crate) fn emit_u32_store_at_ea<const SYSTEM: SystemId>(
     builder.seal_block(fast_block);
     let addr = builder.block_params(fast_block)[0];
     let bswapped = builder.ins().bswap(val);
-    builder.ins().store(MemFlags::new(), bswapped, addr, 0);
+    builder.ins().store(heap_flags(), bswapped, addr, 0);
     builder.ins().jump(merge, &[]);
 
     builder.switch_to_block(slow_block);
@@ -2277,7 +2286,7 @@ pub(crate) fn emit_lwarx<const SYSTEM: SystemId>(
         false,
     );
     let reserve_off = abi::reserve_addr_offset::<SYSTEM>() as i32;
-    builder.ins().store(MemFlags::trusted(), ea, ctx_ptr, reserve_off);
+    builder.ins().store(vmctx_flags(), ea, ctx_ptr, reserve_off);
 }
 
 pub(crate) fn emit_stwcx_dot<const SYSTEM: SystemId>(
@@ -2289,9 +2298,7 @@ pub(crate) fn emit_stwcx_dot<const SYSTEM: SystemId>(
     let ea = emit_x_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
 
     let reserve_off = abi::reserve_addr_offset::<SYSTEM>() as i32;
-    let reserved = builder
-        .ins()
-        .load(types::I32, MemFlags::trusted(), ctx_ptr, reserve_off);
+    let reserved = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, reserve_off);
     let matched_b = builder.ins().icmp(IntCC::Equal, reserved, ea);
     let matched = builder.ins().uextend(types::I32, matched_b);
 
@@ -2308,9 +2315,7 @@ pub(crate) fn emit_stwcx_dot<const SYSTEM: SystemId>(
     let no_reservation = builder
         .ins()
         .iconst(types::I32, crate::gekko::Gekko::NO_RESERVATION as i64);
-    builder
-        .ins()
-        .store(MemFlags::trusted(), no_reservation, ctx_ptr, reserve_off);
+    builder.ins().store(vmctx_flags(), no_reservation, ctx_ptr, reserve_off);
     emit_store_at_ea::<SYSTEM>(
         builder,
         ctx_ptr,
@@ -2387,7 +2392,7 @@ pub(crate) fn emit_lha_xform<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
     let addr = builder.block_params(fast_block)[0];
-    let raw_val = builder.ins().load(types::I16, MemFlags::new(), addr, 0);
+    let raw_val = builder.ins().load(types::I16, heap_flags(), addr, 0);
     let swapped = builder.ins().bswap(raw_val);
     let val32 = builder.ins().sextend(types::I32, swapped);
     builder.ins().jump(merge, &[val32.into()]);
@@ -2434,7 +2439,7 @@ pub(crate) fn emit_load_xform_brx<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
     let addr = builder.block_params(fast_block)[0];
-    let raw_val = builder.ins().load(size.ir_type(), MemFlags::new(), addr, 0);
+    let raw_val = builder.ins().load(size.ir_type(), heap_flags(), addr, 0);
     let val32 = match size {
         MemSize::U32 => raw_val,
         MemSize::U16 | MemSize::U8 => builder.ins().uextend(types::I32, raw_val),
@@ -2494,7 +2499,7 @@ pub(crate) fn emit_store_xform_brx<const SYSTEM: SystemId>(
         MemSize::U16 => builder.ins().ireduce(types::I16, val32),
         MemSize::U8 => builder.ins().ireduce(types::I8, val32),
     };
-    builder.ins().store(MemFlags::new(), truncated, addr, 0);
+    builder.ins().store(heap_flags(), truncated, addr, 0);
     builder.ins().jump(merge, &[]);
 
     builder.switch_to_block(slow_block);
@@ -2532,9 +2537,9 @@ pub(crate) fn emit_exception_dispatch<const SYSTEM: SystemId>(
     let srr1_off = abi::spr_field_offset::<SYSTEM>(27).unwrap() as i32;
     let nia_off = abi::nia_offset::<SYSTEM>() as i32;
 
-    let msr = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, msr_off);
+    let msr = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, msr_off);
 
-    builder.ins().store(MemFlags::trusted(), srr0_value, ctx_ptr, srr0_off);
+    builder.ins().store(vmctx_flags(), srr0_value, ctx_ptr, srr0_off);
 
     let preserved = builder.ins().band_imm(msr, MSR_PRESERVE_MASK);
     let srr1 = if srr1_extra_bits != 0 {
@@ -2542,7 +2547,7 @@ pub(crate) fn emit_exception_dispatch<const SYSTEM: SystemId>(
     } else {
         preserved
     };
-    builder.ins().store(MemFlags::trusted(), srr1, ctx_ptr, srr1_off);
+    builder.ins().store(vmctx_flags(), srr1, ctx_ptr, srr1_off);
 
     let ip_bit = builder.ins().band_imm(msr, 0x40);
     let want_high = builder.ins().icmp_imm(IntCC::NotEqual, ip_bit, 0);
@@ -2550,13 +2555,13 @@ pub(crate) fn emit_exception_dispatch<const SYSTEM: SystemId>(
     let zero = builder.ins().iconst(types::I32, 0);
     let base = builder.ins().select(want_high, high_base, zero);
     let nia = builder.ins().bor_imm(base, vector_offset as i64);
-    builder.ins().store(MemFlags::trusted(), nia, ctx_ptr, nia_off);
+    builder.ins().store(vmctx_flags(), nia, ctx_ptr, nia_off);
 
     let msr_cleared = builder.ins().band_imm(msr, !MSR_CLEAR_MASK & 0xFFFF_FFFFi64);
     let ile_shifted = builder.ins().ushr_imm(msr, 16);
     let ile_bit = builder.ins().band_imm(ile_shifted, 1);
     let new_msr = builder.ins().bor(msr_cleared, ile_bit);
-    builder.ins().store(MemFlags::trusted(), new_msr, ctx_ptr, msr_off);
+    builder.ins().store(vmctx_flags(), new_msr, ctx_ptr, msr_off);
 
     nia
 }
@@ -2575,7 +2580,7 @@ pub(crate) fn emit_msr_fp_guard<const SYSTEM: SystemId>(
     local.fp_guard_emitted.set(true);
 
     let msr_off = abi::msr_offset::<SYSTEM>() as i32;
-    let msr = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, msr_off);
+    let msr = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, msr_off);
     let fp_bit = builder.ins().band_imm(msr, 0x2000);
     let fp_disabled = builder.ins().icmp_imm(IntCC::Equal, fp_bit, 0);
     let trap_block = builder.create_block();
@@ -2589,10 +2594,10 @@ pub(crate) fn emit_msr_fp_guard<const SYSTEM: SystemId>(
     let _ = local;
     let cia_off = abi::cia_offset::<SYSTEM>() as i32;
     let pc_const = builder.ins().iconst(types::I32, pc as i64);
-    builder.ins().store(MemFlags::trusted(), pc_const, ctx_ptr, cia_off);
+    builder.ins().store(vmctx_flags(), pc_const, ctx_ptr, cia_off);
     let nia_off = abi::nia_offset::<SYSTEM>() as i32;
     let pc_plus4 = builder.ins().iconst(types::I32, pc.wrapping_add(4) as i64);
-    builder.ins().store(MemFlags::trusted(), pc_plus4, ctx_ptr, nia_off);
+    builder.ins().store(vmctx_flags(), pc_plus4, ctx_ptr, nia_off);
     let nia = emit_exception_dispatch::<SYSTEM>(builder, ctx_ptr, pc_const, 0, 0x0000_0800);
     emit_cycles_add::<SYSTEM>(builder, ctx_ptr, CYCLES_PER_INSTR);
     builder.ins().jump(exit_block, &[nia.into()]);
@@ -2658,7 +2663,7 @@ pub(crate) fn emit_lfs<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
     let addr = builder.block_params(fast_block)[0];
-    let raw_u32 = builder.ins().load(types::I32, MemFlags::new(), addr, 0);
+    let raw_u32 = builder.ins().load(types::I32, heap_flags(), addr, 0);
     let be_u32 = builder.ins().bswap(raw_u32);
     let f32v = builder.ins().bitcast(types::F32, MemFlags::new(), be_u32);
     let f64v = builder.ins().fpromote(types::F64, f32v);
@@ -2701,7 +2706,7 @@ pub(crate) fn emit_lfd<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
     let addr = builder.block_params(fast_block)[0];
-    let raw_u64 = builder.ins().load(types::I64, MemFlags::new(), addr, 0);
+    let raw_u64 = builder.ins().load(types::I64, heap_flags(), addr, 0);
     let be_u64 = builder.ins().bswap(raw_u64);
     let f64v = builder.ins().bitcast(types::F64, MemFlags::new(), be_u64);
     builder.ins().jump(merge, &[f64v.into()]);
@@ -2746,7 +2751,7 @@ pub(crate) fn emit_stfs<const SYSTEM: SystemId>(
     let f32v = builder.ins().fdemote(types::F32, f64v);
     let bits = builder.ins().bitcast(types::I32, MemFlags::new(), f32v);
     let swapped = builder.ins().bswap(bits);
-    builder.ins().store(MemFlags::new(), swapped, addr, 0);
+    builder.ins().store(heap_flags(), swapped, addr, 0);
     builder.ins().jump(merge, &[]);
 
     builder.switch_to_block(slow_block);
@@ -2784,7 +2789,7 @@ pub(crate) fn emit_stfd<const SYSTEM: SystemId>(
     let addr = builder.block_params(fast_block)[0];
     let bits = builder.ins().bitcast(types::I64, MemFlags::new(), f64v);
     let swapped = builder.ins().bswap(bits);
-    builder.ins().store(MemFlags::new(), swapped, addr, 0);
+    builder.ins().store(heap_flags(), swapped, addr, 0);
     builder.ins().jump(merge, &[]);
 
     builder.switch_to_block(slow_block);
@@ -2859,7 +2864,7 @@ pub(crate) fn emit_lfs_at_ea<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
     let addr = builder.block_params(fast_block)[0];
-    let raw_u32 = builder.ins().load(types::I32, MemFlags::new(), addr, 0);
+    let raw_u32 = builder.ins().load(types::I32, heap_flags(), addr, 0);
     let be_u32 = builder.ins().bswap(raw_u32);
     let f32v = builder.ins().bitcast(types::F32, MemFlags::new(), be_u32);
     let f64v = builder.ins().fpromote(types::F64, f32v);
@@ -2900,7 +2905,7 @@ pub(crate) fn emit_lfd_at_ea<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
     let addr = builder.block_params(fast_block)[0];
-    let raw_u64 = builder.ins().load(types::I64, MemFlags::new(), addr, 0);
+    let raw_u64 = builder.ins().load(types::I64, heap_flags(), addr, 0);
     let be_u64 = builder.ins().bswap(raw_u64);
     let f64v = builder.ins().bitcast(types::F64, MemFlags::new(), be_u64);
     builder.ins().jump(merge, &[f64v.into()]);
@@ -2944,7 +2949,7 @@ pub(crate) fn emit_stfs_at_ea<const SYSTEM: SystemId>(
     let f32v = builder.ins().fdemote(types::F32, f64v);
     let bits = builder.ins().bitcast(types::I32, MemFlags::new(), f32v);
     let swapped = builder.ins().bswap(bits);
-    builder.ins().store(MemFlags::new(), swapped, addr, 0);
+    builder.ins().store(heap_flags(), swapped, addr, 0);
     builder.ins().jump(merge, &[]);
 
     builder.switch_to_block(slow_block);
@@ -2982,7 +2987,7 @@ pub(crate) fn emit_stfd_at_ea<const SYSTEM: SystemId>(
     let addr = builder.block_params(fast_block)[0];
     let bits = builder.ins().bitcast(types::I64, MemFlags::new(), f64v);
     let swapped = builder.ins().bswap(bits);
-    builder.ins().store(MemFlags::new(), swapped, addr, 0);
+    builder.ins().store(heap_flags(), swapped, addr, 0);
     builder.ins().jump(merge, &[]);
 
     builder.switch_to_block(slow_block);
@@ -3111,7 +3116,7 @@ pub(crate) fn emit_gqr_type_zero_check<const SYSTEM: SystemId>(
     store: bool,
 ) -> Value {
     let off = abi::gqr_offset::<SYSTEM>(gqr_idx) as i32;
-    let gqr = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, off);
+    let gqr = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, off);
     let mask = if store { 0x7 } else { 0x70000 };
     let bits = builder.ins().band_imm(gqr, mask);
     builder.ins().icmp_imm(IntCC::Equal, bits, 0)
@@ -3246,7 +3251,7 @@ pub(crate) fn emit_psq_load_quantized<const SYSTEM: SystemId>(
     local: &LocalFuncs,
 ) {
     let gqr_off = abi::gqr_offset::<SYSTEM>(gqr_idx) as i32;
-    let gqr_v = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, gqr_off);
+    let gqr_v = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, gqr_off);
     let type_shifted = builder.ins().ushr_imm(gqr_v, 16);
     let type_v = builder.ins().band_imm(type_shifted, 0x7);
 
@@ -3266,7 +3271,7 @@ pub(crate) fn emit_psq_load_quantized<const SYSTEM: SystemId>(
         .ins()
         .iconst(types::I64, crate::gekko::jit::runtime::DEQUANT_TABLE.as_ptr() as i64);
     let scale_addr = builder.ins().iadd(table_addr, scale_offset);
-    let scale_f32 = builder.ins().load(types::F32, MemFlags::trusted(), scale_addr, 0);
+    let scale_f32 = builder.ins().load(types::F32, vmctx_flags(), scale_addr, 0);
 
     let ps0 = emit_psq_dequant_element(builder, ctx_ptr, ea, type_v, scale_f32, local.read_u8, local.read_u16);
     let ps1 = if w {
@@ -3294,7 +3299,7 @@ pub(crate) fn emit_psq_load_quantized<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_f32_block);
     builder.seal_block(fast_f32_block);
     let addr = builder.block_params(fast_f32_block)[0];
-    let raw0 = builder.ins().load(types::I32, MemFlags::new(), addr, 0);
+    let raw0 = builder.ins().load(types::I32, heap_flags(), addr, 0);
     let be0 = builder.ins().bswap(raw0);
     let f32_0 = builder.ins().bitcast(types::F32, MemFlags::new(), be0);
     let f64_0 = builder.ins().fpromote(types::F64, f32_0);
@@ -3302,7 +3307,7 @@ pub(crate) fn emit_psq_load_quantized<const SYSTEM: SystemId>(
     let f64_1 = if w {
         builder.ins().f64const(1.0)
     } else {
-        let raw1 = builder.ins().load(types::I32, MemFlags::new(), addr, 4);
+        let raw1 = builder.ins().load(types::I32, heap_flags(), addr, 4);
         let be1 = builder.ins().bswap(raw1);
         let f32_1 = builder.ins().bitcast(types::F32, MemFlags::new(), be1);
         builder.ins().fpromote(types::F64, f32_1)
@@ -3332,7 +3337,7 @@ pub(crate) fn emit_psq_store_quantized<const SYSTEM: SystemId>(
     local: &LocalFuncs,
 ) {
     let gqr_off = abi::gqr_offset::<SYSTEM>(gqr_idx) as i32;
-    let gqr_v = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, gqr_off);
+    let gqr_v = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, gqr_off);
     let type_v = builder.ins().band_imm(gqr_v, 0x7);
 
     let q_bit = builder.ins().band_imm(type_v, 0x4);
@@ -3351,7 +3356,7 @@ pub(crate) fn emit_psq_store_quantized<const SYSTEM: SystemId>(
         .ins()
         .iconst(types::I64, crate::gekko::jit::runtime::QUANT_TABLE.as_ptr() as i64);
     let scale_addr = builder.ins().iadd(table_addr, scale_offset);
-    let scale_f32 = builder.ins().load(types::F32, MemFlags::trusted(), scale_addr, 0);
+    let scale_f32 = builder.ins().load(types::F32, vmctx_flags(), scale_addr, 0);
 
     let ps0 = fpr_load::<SYSTEM>(builder, ctx_ptr, fs);
     emit_psq_quant_element(
@@ -3400,14 +3405,14 @@ pub(crate) fn emit_psq_store_quantized<const SYSTEM: SystemId>(
     let ps0_f32 = builder.ins().fdemote(types::F32, ps0_f64);
     let ps0_bits = builder.ins().bitcast(types::I32, MemFlags::new(), ps0_f32);
     let ps0_be = builder.ins().bswap(ps0_bits);
-    builder.ins().store(MemFlags::new(), ps0_be, addr, 0);
+    builder.ins().store(heap_flags(), ps0_be, addr, 0);
 
     if !w {
         let ps1_f64 = ps1_load::<SYSTEM>(builder, ctx_ptr, fs);
         let ps1_f32 = builder.ins().fdemote(types::F32, ps1_f64);
         let ps1_bits = builder.ins().bitcast(types::I32, MemFlags::new(), ps1_f32);
         let ps1_be = builder.ins().bswap(ps1_bits);
-        builder.ins().store(MemFlags::new(), ps1_be, addr, 4);
+        builder.ins().store(heap_flags(), ps1_be, addr, 4);
     }
 
     builder.ins().jump(merge, &[]);
@@ -3447,7 +3452,7 @@ pub(crate) fn emit_read_f32<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
     let addr = builder.block_params(fast_block)[0];
-    let raw_u32 = builder.ins().load(types::I32, MemFlags::new(), addr, 0);
+    let raw_u32 = builder.ins().load(types::I32, heap_flags(), addr, 0);
     let be_u32 = builder.ins().bswap(raw_u32);
     let f32v = builder.ins().bitcast(types::F32, MemFlags::new(), be_u32);
     let f64v = builder.ins().fpromote(types::F64, f32v);
@@ -3489,7 +3494,7 @@ pub(crate) fn emit_write_f32<const SYSTEM: SystemId>(
     let f32v = builder.ins().fdemote(types::F32, f64v);
     let bits = builder.ins().bitcast(types::I32, MemFlags::new(), f32v);
     let swapped = builder.ins().bswap(bits);
-    builder.ins().store(MemFlags::new(), swapped, addr, 0);
+    builder.ins().store(heap_flags(), swapped, addr, 0);
     builder.ins().jump(merge, &[]);
 
     builder.switch_to_block(slow_block);
@@ -4051,7 +4056,7 @@ pub(crate) fn emit_fp_arith<const OP: u32, const SYSTEM: SystemId>(
             let bit_pos = 31 - (instr.crbd() as u32);
             let bit_value = 1u32 << bit_pos;
             let off = abi::fpscr_offset::<SYSTEM>() as i32;
-            let cur = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, off);
+            let cur = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, off);
             let mut new_v = builder.ins().bor_imm(cur, bit_value as i64);
             if (bit_value & FPSCR_ANY_X) != 0 {
                 let was_set = builder.ins().band_imm(cur, bit_value as i64);
@@ -4060,7 +4065,7 @@ pub(crate) fn emit_fp_arith<const OP: u32, const SYSTEM: SystemId>(
                 let fx_bit = builder.ins().ishl_imm(was_unset_v, 31);
                 new_v = builder.ins().bor(new_v, fx_bit);
             }
-            builder.ins().store(MemFlags::trusted(), new_v, ctx_ptr, off);
+            builder.ins().store(vmctx_flags(), new_v, ctx_ptr, off);
             emit_recompute_fpscr_summary::<SYSTEM>(builder, ctx_ptr);
             if instr.rc() {
                 emit_update_cr1_from_fpscr::<SYSTEM>(builder, ctx_ptr);
@@ -4070,9 +4075,9 @@ pub(crate) fn emit_fp_arith<const OP: u32, const SYSTEM: SystemId>(
         lut::OP_MTFSB0X => {
             let bit_pos = 31 - (instr.crbd() as u32);
             let off = abi::fpscr_offset::<SYSTEM>() as i32;
-            let cur = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, off);
+            let cur = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, off);
             let new_v = builder.ins().band_imm(cur, !(1i64 << bit_pos));
-            builder.ins().store(MemFlags::trusted(), new_v, ctx_ptr, off);
+            builder.ins().store(vmctx_flags(), new_v, ctx_ptr, off);
             emit_recompute_fpscr_summary::<SYSTEM>(builder, ctx_ptr);
             if instr.rc() {
                 emit_update_cr1_from_fpscr::<SYSTEM>(builder, ctx_ptr);
@@ -4082,10 +4087,10 @@ pub(crate) fn emit_fp_arith<const OP: u32, const SYSTEM: SystemId>(
         lut::OP_MTFSFIX => {
             let dst_shift = 28 - 4 * (instr.crfd() as u32);
             let off = abi::fpscr_offset::<SYSTEM>() as i32;
-            let cur = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, off);
+            let cur = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, off);
             let cleared = builder.ins().band_imm(cur, !(0xFi64 << dst_shift));
             let new_v = builder.ins().bor_imm(cleared, (instr.imm() as i64) << dst_shift);
-            builder.ins().store(MemFlags::trusted(), new_v, ctx_ptr, off);
+            builder.ins().store(vmctx_flags(), new_v, ctx_ptr, off);
             emit_recompute_fpscr_summary::<SYSTEM>(builder, ctx_ptr);
             if instr.rc() {
                 emit_update_cr1_from_fpscr::<SYSTEM>(builder, ctx_ptr);
@@ -4094,7 +4099,7 @@ pub(crate) fn emit_fp_arith<const OP: u32, const SYSTEM: SystemId>(
         }
         lut::OP_MFFSX => {
             let off = abi::fpscr_offset::<SYSTEM>() as i32;
-            let cur = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, off);
+            let cur = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, off);
             let cur_64 = builder.ins().uextend(types::I64, cur);
             let with_nan_hi = builder.ins().bor_imm(cur_64, 0xFFF8_0000_0000_0000u64 as i64);
             let f = builder.ins().bitcast(types::F64, MemFlags::new(), with_nan_hi);
@@ -4115,11 +4120,11 @@ pub(crate) fn emit_fp_arith<const OP: u32, const SYSTEM: SystemId>(
             let frb_v = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
             let frb_bits = builder.ins().bitcast(types::I64, MemFlags::new(), frb_v);
             let frb_low = builder.ins().ireduce(types::I32, frb_bits);
-            let cur = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, off);
+            let cur = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, off);
             let cleared = builder.ins().band_imm(cur, !(mask as i64) & 0xFFFF_FFFF);
             let from_src = builder.ins().band_imm(frb_low, mask as i64);
             let new_v = builder.ins().bor(cleared, from_src);
-            builder.ins().store(MemFlags::trusted(), new_v, ctx_ptr, off);
+            builder.ins().store(vmctx_flags(), new_v, ctx_ptr, off);
             emit_recompute_fpscr_summary::<SYSTEM>(builder, ctx_ptr);
             if instr.rc() {
                 emit_update_cr1_from_fpscr::<SYSTEM>(builder, ctx_ptr);
@@ -4138,22 +4143,22 @@ pub(crate) fn emit_fp_arith<const OP: u32, const SYSTEM: SystemId>(
 
             const FX_ANY_X: u32 = 0x9FF8_0700;
             let fpscr_off = abi::fpscr_offset::<SYSTEM>() as i32;
-            let fpscr = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, fpscr_off);
+            let fpscr = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, fpscr_off);
 
             let nibble = builder.ins().ushr_imm(fpscr, src_shift as i64);
             let nibble = builder.ins().band_imm(nibble, 0xF);
 
             let cr_off = abi::cr_offset::<SYSTEM>() as i32;
-            let cr = builder.ins().load(types::I32, MemFlags::trusted(), ctx_ptr, cr_off);
+            let cr = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, cr_off);
             let cr_cleared = builder.ins().band_imm(cr, !(0xFi64 << dst_shift));
             let positioned = builder.ins().ishl_imm(nibble, dst_shift as i64);
             let cr_new = builder.ins().bor(cr_cleared, positioned);
-            builder.ins().store(MemFlags::trusted(), cr_new, ctx_ptr, cr_off);
+            builder.ins().store(vmctx_flags(), cr_new, ctx_ptr, cr_off);
 
             let clear_mask = (0xFu32 << src_shift) & FX_ANY_X;
             if clear_mask != 0 {
                 let fpscr_new = builder.ins().band_imm(fpscr, !(clear_mask as i64) & 0xFFFF_FFFF);
-                builder.ins().store(MemFlags::trusted(), fpscr_new, ctx_ptr, fpscr_off);
+                builder.ins().store(vmctx_flags(), fpscr_new, ctx_ptr, fpscr_off);
             }
             emit_recompute_fpscr_summary::<SYSTEM>(builder, ctx_ptr);
             true
@@ -4239,7 +4244,7 @@ pub(crate) fn emit_load_at_ea<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
     let addr = builder.block_params(fast_block)[0];
-    let flags = MemFlags::new();
+    let flags = heap_flags();
     let raw_val = builder.ins().load(size.ir_type(), flags, addr, 0);
     let val_swapped = match size {
         MemSize::U8 => raw_val,
@@ -4318,7 +4323,7 @@ pub(crate) fn emit_store_at_ea<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
     let addr = builder.block_params(fast_block)[0];
-    let flags = MemFlags::new();
+    let flags = heap_flags();
     let truncated = match size {
         MemSize::U32 => val32,
         MemSize::U16 => builder.ins().ireduce(types::I16, val32),
