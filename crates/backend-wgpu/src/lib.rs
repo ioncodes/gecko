@@ -8,6 +8,7 @@ mod pipeline;
 mod render;
 #[cfg(feature = "renderdoc-capture")]
 mod renderdoc_capture;
+mod shader_specialization;
 pub mod sink;
 
 use gecko::common::Address;
@@ -19,8 +20,9 @@ use gecko::flipper::gx::regs::{AlphaCompare, BlendMode, CompareFunc, CullMode, M
 use gecko::host::EfbWriteback;
 use gecko::host::TextureKey;
 use glam::Mat4;
-use pipeline::PipelineKey;
+use pipeline::FullPipelineKey;
 use rustc_hash::FxHashMap;
+use shader_specialization::ShaderKey;
 use std::num::NonZeroU64;
 
 #[repr(C)]
@@ -114,15 +116,13 @@ pub(crate) const DRAW_UNIFORMS_SIZE: NonZeroU64 = match NonZeroU64::new(std::mem
     None => panic!("DrawUniforms must be non-zero sized"),
 };
 
-const SHADER: &str = wesl::include_wesl!("gx_shader");
-
 pub const EFB_WIDTH: u32 = 640;
 pub const EFB_HEIGHT: u32 = 528;
 pub const EFB_SAMPLE_COUNT: u32 = 4;
 
 pub struct GxRenderer {
-    pub(crate) pipeline_cache: FxHashMap<PipelineKey, wgpu::RenderPipeline>,
-    pub(crate) shader: wgpu::ShaderModule,
+    pub(crate) pipeline_cache: FxHashMap<FullPipelineKey, wgpu::RenderPipeline>,
+    pub(crate) shader_cache: FxHashMap<ShaderKey, wgpu::ShaderModule>,
     pub(crate) pipeline_layout: wgpu::PipelineLayout,
     pub(crate) surface_format: wgpu::TextureFormat,
     pub(crate) bind_group_layout: wgpu::BindGroupLayout,
@@ -163,7 +163,7 @@ pub struct GxRenderer {
     // Per-frame draw accumulation (persists across process_action calls,
     // flushed by flush_pending_draws).
     pub(crate) frame_uniform_bytes: Vec<u8>,
-    pub(crate) draw_pipeline_keys: Vec<PipelineKey>,
+    pub(crate) draw_pipeline_keys: Vec<FullPipelineKey>,
     pub(crate) draw_bg_keys: Vec<BindGroupCacheKey>,
     pub(crate) draw_viewports: Vec<Viewport>,
     pub(crate) draw_scissors: Vec<Scissor>,
@@ -221,10 +221,6 @@ impl GxRenderer {
             device.limits().min_uniform_buffer_offset_alignment as u64,
         );
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("gx_shader"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
-        });
         let xfb_copy_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("xfb_copy_shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/xfb_copy.wgsl").into()),
@@ -623,7 +619,7 @@ impl GxRenderer {
 
         GxRenderer {
             pipeline_cache: FxHashMap::default(),
-            shader,
+            shader_cache: FxHashMap::default(),
             pipeline_layout,
             surface_format,
             bind_group_layout,

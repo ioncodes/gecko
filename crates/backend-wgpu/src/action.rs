@@ -1,4 +1,5 @@
-use crate::pipeline::PipelineKey;
+use crate::pipeline::{FullPipelineKey, PipelineKey};
+use crate::shader_specialization::{self, ShaderKey};
 use crate::{
     BindGroupCacheKey, DRAW_UNIFORMS_SIZE, DrawUniforms, FRAME_UNIFORMS_SIZE, FrameUniforms, GpuVertex, GxRenderer,
     SamplerKey, helpers,
@@ -163,11 +164,22 @@ impl GxRenderer {
             }
 
             GxAction::Draw(draw) => {
-                // Ensure pipeline for current tracked blend/depth state.
+                let shader_key = ShaderKey::from_draw(draw, self.current_alpha_compare);
+                if !self.shader_cache.contains_key(&shader_key) {
+                    let wgsl = shader_specialization::compile_variant(shader_key);
+                    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some(&format!("gx_shader_{shader_key:?}")),
+                        source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+                    });
+                    self.shader_cache.insert(shader_key, module);
+                    tracing::info!(?shader_key, "compiled specialized shader variant");
+                }
                 let pipeline_key = self.current_pipeline_key();
-                if !self.pipeline_cache.contains_key(&pipeline_key) {
-                    let pipeline = self.create_pipeline(device, &pipeline_key);
-                    self.pipeline_cache.insert(pipeline_key, pipeline);
+                let full_key = FullPipelineKey { shader: shader_key, fixed: pipeline_key };
+                if !self.pipeline_cache.contains_key(&full_key) {
+                    let module = &self.shader_cache[&shader_key];
+                    let pipeline = self.create_pipeline(device, module, &pipeline_key);
+                    self.pipeline_cache.insert(full_key, pipeline);
                 }
 
                 // Triangulate.
@@ -241,7 +253,7 @@ impl GxRenderer {
                 };
 
                 // Snapshot tracked state for this draw.
-                self.draw_pipeline_keys.push(pipeline_key);
+                self.draw_pipeline_keys.push(full_key);
                 self.draw_bg_keys.push(self.current_bind_group_key());
                 self.draw_viewports.push(self.current_viewport);
                 self.draw_scissors.push(self.current_scissor);
@@ -543,18 +555,19 @@ impl GxRenderer {
                     );
                     rpass.push_debug_group(&draw_label);
                 }
-                let pipeline_key = &self.draw_pipeline_keys[index];
-                let pipeline = &self.pipeline_cache[pipeline_key];
+                let full_key = &self.draw_pipeline_keys[index];
+                let pipeline = &self.pipeline_cache[full_key];
                 rpass.set_pipeline(pipeline);
                 #[cfg(feature = "renderdoc-capture")]
                 {
                     let pipeline_marker = format!(
-                        "Pipeline: blend={} z={} z_write={} color_update={} alpha_update={}",
-                        pipeline_key.blend_enable,
-                        pipeline_key.z_enable,
-                        pipeline_key.z_write,
-                        pipeline_key.color_update,
-                        pipeline_key.alpha_update
+                        "Pipeline: blend={} z={} z_write={} color_update={} alpha_update={} shader={:?}",
+                        full_key.fixed.blend_enable,
+                        full_key.fixed.z_enable,
+                        full_key.fixed.z_write,
+                        full_key.fixed.color_update,
+                        full_key.fixed.alpha_update,
+                        full_key.shader,
                     );
                     rpass.insert_debug_marker(&pipeline_marker);
                 }

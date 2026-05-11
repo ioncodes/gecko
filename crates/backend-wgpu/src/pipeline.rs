@@ -1,3 +1,4 @@
+use crate::shader_specialization::ShaderKey;
 use crate::{GpuVertex, GxRenderer, helpers};
 use gecko::flipper::gx::regs::{BlendFactor, CompareFunc, CullMode};
 
@@ -15,8 +16,19 @@ pub(crate) struct PipelineKey {
     pub cull_mode: CullMode,
 }
 
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+pub(crate) struct FullPipelineKey {
+    pub shader: ShaderKey,
+    pub fixed: PipelineKey,
+}
+
 impl GxRenderer {
-    pub(crate) fn create_pipeline(&self, device: &wgpu::Device, key: &PipelineKey) -> wgpu::RenderPipeline {
+    pub(crate) fn create_pipeline(
+        &self,
+        device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
+        key: &PipelineKey,
+    ) -> wgpu::RenderPipeline {
         let vertex_layout = wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<GpuVertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -147,13 +159,13 @@ impl GxRenderer {
             label: Some("gx_pipeline"),
             layout: Some(&self.pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &self.shader,
+                module: shader,
                 entry_point: Some("vs_main"),
                 buffers: &[vertex_layout],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: &self.shader,
+                module: shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: self.surface_format,

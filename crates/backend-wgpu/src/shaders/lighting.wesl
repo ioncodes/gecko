@@ -106,51 +106,54 @@ fn compute_channel_lighting(
         amb_a = ambient.a;
     }
 
-    let color_lit_off = extract_bits(color_ctrl, 1u, 1u) == 0u;
-    let alpha_lit_off = extract_bits(alpha_ctrl, 1u, 1u) == 0u;
-
-    // When lighting disabled, return material directly
-    if color_lit_off && alpha_lit_off {
+    @if(!HAS_LIGHTING) {
         return vec4(mat_rgb, mat_a);
     }
 
-    // RGB lighting accumulator
-    var rgb_out = mat_rgb;
-    if !color_lit_off {
-        let mask_lo = extract_bits(color_ctrl, 2u, 4u);
-        let mask_hi = extract_bits(color_ctrl, 11u, 4u);
-        let light_mask = mask_lo | (mask_hi << 4u);
+    @if(HAS_LIGHTING) {
+        let color_lit_off = extract_bits(color_ctrl, 1u, 1u) == 0u;
+        let alpha_lit_off = extract_bits(alpha_ctrl, 1u, 1u) == 0u;
 
-        var acc = amb_rgb;
-        for (var i = 0u; i < 8u; i++) {
-            if ((light_mask >> i) & 1u) == 0u {
-                continue;
-            }
-            let lc = frame.light_colors[i];
-            let factor = compute_light_factor(color_ctrl, i, normal, pos);
-            acc += lc.rgb * factor;
+        if color_lit_off && alpha_lit_off {
+            return vec4(mat_rgb, mat_a);
         }
-        rgb_out = mat_rgb * clamp(acc, vec3(0.0), vec3(1.0));
-    }
 
-    // Alpha lighting accumulator
-    var a_out = mat_a;
-    if !alpha_lit_off {
-        let mask_lo = extract_bits(alpha_ctrl, 2u, 4u);
-        let mask_hi = extract_bits(alpha_ctrl, 11u, 4u);
-        let light_mask = mask_lo | (mask_hi << 4u);
+        var rgb_out = mat_rgb;
+        if !color_lit_off {
+            let mask_lo = extract_bits(color_ctrl, 2u, 4u);
+            let mask_hi = extract_bits(color_ctrl, 11u, 4u);
+            let light_mask = mask_lo | (mask_hi << 4u);
 
-        var acc_a = amb_a;
-        for (var i = 0u; i < 8u; i++) {
-            if ((light_mask >> i) & 1u) == 0u {
-                continue;
+            var acc = amb_rgb;
+            for (var i = 0u; i < 8u; i++) {
+                if ((light_mask >> i) & 1u) == 0u {
+                    continue;
+                }
+                let lc = frame.light_colors[i];
+                let factor = compute_light_factor(color_ctrl, i, normal, pos);
+                acc += lc.rgb * factor;
             }
-            let lc = frame.light_colors[i];
-            let factor = compute_light_factor(alpha_ctrl, i, normal, pos);
-            acc_a += lc.a * factor;
+            rgb_out = mat_rgb * clamp(acc, vec3(0.0), vec3(1.0));
         }
-        a_out = mat_a * clamp(acc_a, 0.0, 1.0);
-    }
 
-    return vec4(rgb_out, a_out);
+        var a_out = mat_a;
+        if !alpha_lit_off {
+            let mask_lo = extract_bits(alpha_ctrl, 2u, 4u);
+            let mask_hi = extract_bits(alpha_ctrl, 11u, 4u);
+            let light_mask = mask_lo | (mask_hi << 4u);
+
+            var acc_a = amb_a;
+            for (var i = 0u; i < 8u; i++) {
+                if ((light_mask >> i) & 1u) == 0u {
+                    continue;
+                }
+                let lc = frame.light_colors[i];
+                let factor = compute_light_factor(alpha_ctrl, i, normal, pos);
+                acc_a += lc.a * factor;
+            }
+            a_out = mat_a * clamp(acc_a, 0.0, 1.0);
+        }
+
+        return vec4(rgb_out, a_out);
+    }
 }

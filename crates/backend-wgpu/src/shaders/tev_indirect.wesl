@@ -72,6 +72,24 @@ struct IndirectSamples {
     samples: array<vec3<f32>, 4>,
 }
 
+fn sample_indirect_one(i: u32, in: VsOut, result: ptr<function, IndirectSamples>) {
+    let shift = i * 6u;
+    let texmap = (frame.indirect_refs >> shift) & 7u;
+    let texcoord = (frame.indirect_refs >> (shift + 3u)) & 7u;
+    let scale_pair = frame.indirect_scales[i / 2u];
+    let scale_s: u32 = select(scale_pair.x, scale_pair.z, (i & 1u) == 1u);
+    let scale_t: u32 = select(scale_pair.y, scale_pair.w, (i & 1u) == 1u);
+
+    let stq = select_texcoord(in, texcoord);
+    let direct_uv = stq_to_uv(stq);
+    let sample_uv = vec2<f32>(
+        direct_uv.x * exp2(-f32(scale_s)),
+        direct_uv.y * exp2(-f32(scale_t)),
+    );
+    let sample = sample_texmap(texmap, sample_uv);
+    (*result).samples[i] = sample.abg;
+}
+
 fn sample_indirect_textures(in: VsOut) -> IndirectSamples {
     var result: IndirectSamples;
     result.samples[0] = vec3<f32>(0.0);
@@ -79,29 +97,10 @@ fn sample_indirect_textures(in: VsOut) -> IndirectSamples {
     result.samples[2] = vec3<f32>(0.0);
     result.samples[3] = vec3<f32>(0.0);
 
-    let num_stages = frame.num_indirect_stages;
-    for (var i = 0u; i < 4u; i = i + 1u) {
-        if i >= num_stages {
-            break;
-        }
-
-        let shift = i * 6u;
-        let texmap = (frame.indirect_refs >> shift) & 7u;
-        let texcoord = (frame.indirect_refs >> (shift + 3u)) & 7u;
-        let scale_pair = frame.indirect_scales[i / 2u];
-        let scale_s: u32 = select(scale_pair.x, scale_pair.z, (i & 1u) == 1u);
-        let scale_t: u32 = select(scale_pair.y, scale_pair.w, (i & 1u) == 1u);
-
-        let stq = select_texcoord(in, texcoord);
-        let direct_uv = stq_to_uv(stq);
-        let sample_uv = vec2<f32>(
-            direct_uv.x * exp2(-f32(scale_s)),
-            direct_uv.y * exp2(-f32(scale_t)),
-        );
-        let sample = sample_texmap(texmap, sample_uv);
-
-        result.samples[i] = sample.abg;
-    }
+    @if(IND_STAGE_0_ENABLED) { sample_indirect_one(0u, in, &result); }
+    @if(IND_STAGE_1_ENABLED) { sample_indirect_one(1u, in, &result); }
+    @if(IND_STAGE_2_ENABLED) { sample_indirect_one(2u, in, &result); }
+    @if(IND_STAGE_3_ENABLED) { sample_indirect_one(3u, in, &result); }
     return result;
 }
 
