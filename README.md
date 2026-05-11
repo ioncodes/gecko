@@ -13,17 +13,20 @@ A cross-platform GameCube/Wii emulator and debugger written in Rust.
 
 ## Status
 
-Gecko is still in development. Support may vary, while many games work perfectly (to my estimation at least), most will likely have varying degrees of visual glitches or be outright broken. Refer to the [screenshot database](https://emu.layle.dev/gecko/) to gauge compatiblity. Gecko is developed with homebrew development and reverse engineering in mind.
+Gecko is still in development. Support may vary, while many games work very well, most will likely either have varying degrees of visual glitches or are outright broken. Refer to the [screenshot database](https://emu.layle.dev/gecko/) to gauge compatiblity. Gecko is developed with homebrew development and reverse engineering in mind.
 
-- PowerPC interpreter
-- DSP LLE interpreter
+- PowerPC JIT (Cranelift)
+- DSP JIT (Cranelift)
+- GX vertex decode JIT (Cranelift)
 - Starlet HLE
 - IPL skip patches for NTSC and PAL
 - `wgpu` based renderer backend
-- `wesl` based shader compiler
+- `wesl` based specialized shader compiler
 - Modular audio backend, defaults to `cpal`
+  - Core speed synced to the audio rate
   - Supports mixing audio sinks
   - Supports dumping to .wav files
+- MCP server
 - Lua scripting system for runtime introspection
 - A beautiful yet advanced egui-based debugging UI
 - Symbol parsing from ELFs and IDA Pro databases
@@ -33,19 +36,20 @@ Gecko is still in development. Support may vary, while many games work perfectly
   - IPL decode/encode
   - DVD filesystem extraction
   - Disassembler for PPC and DSP
+- Various built-in diagnostics for JIT and GX
 - [Support for web browser](https://gecko.layle.dev)
   - [incl. debugging capabilities](https://gecko.layle.dev/dbg)
 
 WIP features:
 - IPL HLE backed by [solstice](https://codeberg.org/hazelwiss/solstice)
-- Idle skipping
+- Basic Wiimote controls work, but are still flaky and not fully implemented
 
 ## Projects
 This is a table of the main projects. Refer to `crates/` to find out about all available projects.
 
 | Crate       | Description                                                                                                                     |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `tinyapp`   | Lightweight emulator application with an egui/wgpu GUI, optional Lua scripting and idle-skip optimization                       |
+| `tinyapp`   | Lightweight emulator application with an egui/wgpu GUI, optional Lua scripting                                                  |
 | `debugger`  | Interactive GUI debugger built on egui with rendering support, hooks and scripting capabilities                                 |
 | `web`       | WebAssembly build of the emulator for browser deployment via wasm-bindgen, with optional debug UI                               |
 | `multitool` | CLI utility for analyzing, disassembling and extracting GC/Wii binaries/images (DOL, IPL, ISO/RVZ) with support for PPC and DSP |
@@ -65,19 +69,20 @@ wasm-pack build crates/web --target web --out-dir pkg --release  # web version
 
 ### Features
 
-| Flag                  | Crates                                                    | Description                                             |
-| --------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
-| `scripting`           | `tinyapp` (off); `debugger` (on)                          | Lua scripting support and the `--script` option         |
-| `scripting-mut-traps` | `tinyapp` (off), `debugger` (off)                         | Let scripting hooks re-register themselves at runtime   |
-| `gecko/idle-skip`     | (gecko, off)                                              | Skip idle PPC polling loops                             |
-| `efb-writeback`       | `tinyapp` (off), `debugger` (off)                         | EFB-to-texture writeback (needed by some games)         |
-| `audio-wav-dump`      | `tinyapp` (off)                                           | Write all emulated audio to `dump.wav` while running    |
-| `renderdoc-capture`   | `debugger` (off)                                          | RenderDoc captures with debug markers, triggered by F10 |
-| `debug`               | `web` (off, on for [`/dbg`](https://gecko.layle.dev/dbg)) | Bundle the in-browser debugger UI                       |
+| Flag                  | Crates                                                    | Description                                                          |
+| --------------------- | --------------------------------------------------------- | -------------------------------------------------------------------- |
+| `scripting`           | `tinyapp` (off); always on in `debugger`                  | Lua scripting support and the `--script` option                      |
+| `scripting-mut-traps` | `tinyapp` (off), `debugger` (off)                         | Let scripting hooks re-register themselves at runtime                |
+| `efb-writeback`       | `tinyapp` (off), `debugger` (off)                         | EFB-to-texture writeback (needed by some games)                      |
+| `audio-wav-dump`      | `tinyapp` (off)                                           | Write all emulated audio to `dump.wav` while running                 |
+| `renderdoc-capture`   | `debugger` (off)                                          | RenderDoc captures with debug markers, triggered by F10              |
+| `fps-counter`         | `tinyapp` (on)                                            | Enables emulator core driven FPS counter                             |
+| `jit-stats`           | `tinyapp` (off), `tinybench` (off)                        | Per-block JIT stats and block-frequency CSV dumps                    |
+| `gx-stats`            | `tinyapp` (off)                                           | GX submission and draw-call stats                                    |
+| `profile`             | `tinyapp` (off)                                           | In-process profiler: per-block PPC/DSP heatmaps + Windows IP sampler |
+| `debug`               | `web` (off, on for [`/dbg`](https://gecko.layle.dev/dbg)) | Bundle the in-browser debugger UI                                    |
 
-`idle-skip` lives on the `gecko` crate; enable it from any binary with `--features gecko/idle-skip` (e.g. `cargo run -p tinyapp --features gecko/idle-skip`).
-
-For exact build invocations refer to the GitHub CI actions file. PGO optimized compilation is supported, refer to the `Justfile`.
+For exact build invocations refer to the GitHub CI actions file.
 
 ## Required files
 
@@ -85,8 +90,8 @@ Gecko does not ship any system files.
 
 ### GameCube
 - IPL (NTSC and PAL tested)
-- DSP IROM (may not be required if running homebrew DOLs)
-- DSP coefficient ROM (required for any title that produces audio)
+- DSP IROM
+- DSP coefficient ROM
 
 If you only have an encoded IPL, decode it first with multitool:
 
