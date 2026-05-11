@@ -69,7 +69,7 @@ pub struct Dsp {
     #[cfg(feature = "jit")]
     pub instr_count: u32,
 
-    pub poll_cache: std::cell::Cell<Option<(u16, bool, bool)>>,
+    pub wait_table: Box<[u8; 0x10000]>,
 
     pub scheduler_suspended: bool,
 }
@@ -117,46 +117,40 @@ impl Dsp {
             chain_budget: 0,
             #[cfg(feature = "jit")]
             instr_count: 0,
-            poll_cache: std::cell::Cell::new(None),
+            wait_table: unsafe { Box::<[u8; 0x10000]>::new_zeroed().assume_init() },
             scheduler_suspended: false,
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn is_waiting_for_cpu_mail(&self) -> bool {
-        let (cpu, _dsp) = self.poll_cache_for_pc(self.registers.pc);
-        cpu
+        self.wait_table[self.registers.pc as usize] & 1 != 0
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn is_waiting_for_dsp_mail(&self) -> bool {
-        let (_cpu, dsp) = self.poll_cache_for_pc(self.registers.pc);
-        dsp
+        self.wait_table[self.registers.pc as usize] & 2 != 0
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn mailbox_wait_state(&self) -> (bool, bool) {
-        self.poll_cache_for_pc(self.registers.pc)
+        let b = self.wait_table[self.registers.pc as usize];
+        (b & 1 != 0, b & 2 != 0)
     }
 
-    fn poll_cache_for_pc(&self, pc: u16) -> (bool, bool) {
-        if let Some((cached_pc, cpu, dsp)) = self.poll_cache.get() {
-            if cached_pc == pc {
-                return (cpu, dsp);
-            }
-        }
-
+    pub fn rebuild_wait_table(&mut self) {
         const OFFSETS: [i16; 3] = [0, -1, -3];
-        let cpu = OFFSETS.iter().any(|&o| self.matches_cpu_mail_wait(o));
-        let dsp = OFFSETS.iter().any(|&o| self.matches_dsp_mail_wait(o));
-        self.poll_cache.set(Some((pc, cpu, dsp)));
-        (cpu, dsp)
+        for pc in 0u32..0x10000 {
+            let pc = pc as u16;
+            let cpu = OFFSETS.iter().any(|&o| self.matches_cpu_mail_wait_at(pc, o));
+            let dsp = OFFSETS.iter().any(|&o| self.matches_dsp_mail_wait_at(pc, o));
+            self.wait_table[pc as usize] = (cpu as u8) | ((dsp as u8) << 1);
+        }
     }
 
-    fn matches_cpu_mail_wait(&self, offset: i16) -> bool {
-        let start = self.registers.pc.wrapping_add_signed(offset);
+    fn matches_cpu_mail_wait_at(&self, pc: u16, offset: i16) -> bool {
+        let start = pc.wrapping_add_signed(offset);
         let words = self.read_imem_window::<5>(start);
-
         let pattern_a = [0x26FE, 0x02C0, 0x8000, 0x029C, start];
         let pattern_b = [0x27FE, 0x03C0, 0x8000, 0x029C, start];
         let pattern_c = [0x26FE, 0x02A0, 0x8000, 0x029D, start];
@@ -164,10 +158,9 @@ impl Dsp {
         words == pattern_a || words == pattern_b || words == pattern_c || words == pattern_d
     }
 
-    fn matches_dsp_mail_wait(&self, offset: i16) -> bool {
-        let start = self.registers.pc.wrapping_add_signed(offset);
+    fn matches_dsp_mail_wait_at(&self, pc: u16, offset: i16) -> bool {
+        let start = pc.wrapping_add_signed(offset);
         let words = self.read_imem_window::<5>(start);
-
         let pattern_a = [0x26FC, 0x02C0, 0x8000, 0x029D, start];
         let pattern_b = [0x27FC, 0x03C0, 0x8000, 0x029D, start];
         let pattern_c = [0x26FC, 0x02A0, 0x8000, 0x029C, start];
@@ -230,7 +223,7 @@ impl Dsp {
         self.csr.set_dma_status(false);
         self.csr.set_dsp_interrupt(true);
 
-        self.poll_cache.set(None);
+        self.rebuild_wait_table();
 
         #[cfg(feature = "jit")]
         if let Some(jit) = self.jit.as_mut() {
@@ -278,7 +271,7 @@ impl Dsp {
                 core::regs::DspDmaDirection::MainToDsp
             )
         ) {
-            self.poll_cache.set(None);
+            self.rebuild_wait_table();
             #[cfg(feature = "jit")]
             if let Some(jit) = self.jit.as_mut() {
                 jit.flush();
@@ -529,6 +522,7 @@ impl Dsp {
         let len = data.len().min(self.irom.len());
         self.irom[..len].copy_from_slice(&data[..len]);
         tracing::info!(size = len, "loaded DSP IROM");
+        self.rebuild_wait_table();
     }
 
     pub fn load_coef(&mut self, data: &[u8]) {
