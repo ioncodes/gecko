@@ -18,6 +18,3 @@ tracing = "0.1.44"
 rustc-hash = "2.1.2"
 png = "0.18.1"
 renderdoc = { version = "0.12.1", optional = true }
-
-[build-dependencies]
-wesl = "0.3.2"

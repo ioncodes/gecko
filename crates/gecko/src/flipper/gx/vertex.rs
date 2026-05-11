@@ -82,10 +82,11 @@ impl GraphicsProcessor {
             }
         }
         let mut boxed = self.draw_box_pool.pop().unwrap_or_default();
-        std::mem::swap(&mut boxed.vertices, &mut self.draw_vertices_scratch);
 
         self.draw_vertices_scratch.clear();
-        self.draw_vertices_scratch.reserve(vertex_count);
+        if self.draw_vertices_scratch.capacity() < vertex_count {
+            self.draw_vertices_scratch.reserve(vertex_count);
+        }
 
         self::dispatch_decode(self, mmio, cmd, data, vertex_count, &vf);
 
@@ -101,7 +102,8 @@ impl GraphicsProcessor {
             self.konst_dirty = false;
         }
 
-        let draw_vertices = std::mem::take(&mut self.draw_vertices_scratch);
+        boxed.vertices.clear();
+        boxed.vertices.append(&mut self.draw_vertices_scratch);
 
         // Flatten the three indirect matrices to 6 rows. Row 2M is row
         // 0 of matrix M, row 2M+1 is row 1. The .w lane carries the
@@ -133,7 +135,6 @@ impl GraphicsProcessor {
         ];
 
         boxed.primitive = primitive;
-        boxed.vertices = draw_vertices;
         boxed.modelview = modelview.0;
         boxed.tev_color_env = std::array::from_fn(|i| self.cur_tev_color_env[i].raw());
         boxed.tev_alpha_env = std::array::from_fn(|i| self.cur_tev_alpha_env[i].raw());
@@ -725,9 +726,6 @@ fn dispatch_decode<const SYSTEM: SystemId>(
         };
 
         if let Some(parser) = parser {
-            gp.draw_vertices_scratch.clear();
-            gp.draw_vertices_scratch.reserve(vertex_count);
-
             let gp_raw = gp as *mut GraphicsProcessor as *mut std::ffi::c_void;
             let xf_mem_ptr = gp.xf_mem.as_ptr();
             let arrays_ptr = gp.jit_vtx_arrays.0.as_ptr();

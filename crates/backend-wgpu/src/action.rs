@@ -175,7 +175,10 @@ impl GxRenderer {
                     tracing::info!(?shader_key, "compiled specialized shader variant");
                 }
                 let pipeline_key = self.current_pipeline_key();
-                let full_key = FullPipelineKey { shader: shader_key, fixed: pipeline_key };
+                let full_key = FullPipelineKey {
+                    shader: shader_key,
+                    fixed: pipeline_key,
+                };
                 if !self.pipeline_cache.contains_key(&full_key) {
                     let module = &self.shader_cache[&shader_key];
                     let pipeline = self.create_pipeline(device, module, &pipeline_key);

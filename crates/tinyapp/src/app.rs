@@ -90,7 +90,11 @@ impl State {
         let view = frame.texture.create_view(&Default::default());
 
         #[cfg(feature = "fps-counter")]
-        let (fps, native_pct) = if waiting { (0.0, 0.0) } else { fps::read(&self.fps_shared) };
+        let (fps, native_pct) = if waiting {
+            (0.0, 0.0)
+        } else {
+            fps::read(&self.fps_shared)
+        };
         #[cfg(not(feature = "fps-counter"))]
         let fps = if waiting {
             0.0

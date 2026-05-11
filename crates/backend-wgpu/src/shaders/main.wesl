@@ -1,21 +1,23 @@
 import super::common::{FrameUniforms, DrawUniforms, VsIn, VsOut, frame, draw, tex0, tex1, tex2, tex3, tex4, tex5, tex6, tex7, samp0, samp1, samp2, samp3, samp4, samp5, samp6, samp7};
-import super::tev_helpers::{read_packed, extract_bits, select_texcoord, stq_to_uv, sample_texmap, swizzle_tev_color, tev_color_in, tev_alpha_in};
+import super::tev_helpers::{extract_bits, select_texcoord, stq_to_uv, sample_texmap, swizzle_tev_color, tev_color_in, tev_alpha_in};
 import super::tev_indirect::{IndirectSamples, IndirectResult, sample_indirect_textures, apply_indirect, texmap_size};
 import super::tev_combiners::{tev_combine_color, tev_combine_alpha};
 import super::alpha_test::{alpha_compare, alpha_combine};
-import super::lighting::compute_channel_lighting;
+import super::lighting::{compute_lighting_c0, compute_lighting_c1};
+
+// __STAGE_CONSTS__
 
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
     var out: VsOut;
     out.clip_pos = draw.mvp * vec4<f32>(in.pos_view, 1.0);
     out.clip_pos.z = out.clip_pos.z + out.clip_pos.w;
-    out.color = compute_channel_lighting(
+    out.color = compute_lighting_c0(
         frame.color_ctrl0, frame.alpha_ctrl0,
         frame.ambient_color0, frame.material_color0,
         in.color, in.normal, in.pos_view,
     );
-    out.color1 = compute_channel_lighting(
+    out.color1 = compute_lighting_c1(
         frame.color_ctrl1, frame.alpha_ctrl1,
         frame.ambient_color1, frame.material_color1,
         in.color1, in.normal, in.pos_view,
@@ -40,22 +42,24 @@ struct TevState {
 
 fn run_stage(
     stage: u32,
+    order: u32,
+    cenv: u32,
+    aenv: u32,
+    ind_cmd: u32,
     in: VsOut,
     color0: vec4<f32>,
     presampled: IndirectSamples,
     state: ptr<function, TevState>,
 ) {
-    let order = read_packed(frame.tev_orders, stage);
     let texmap_idx = order & 7u;
     let texcoord_idx = (order >> 3u) & 7u;
     let tex_enabled = ((order >> 6u) & 1u) != 0u;
     let ras_channel = (order >> 7u) & 7u;
-    let aenv = read_packed(frame.tev_alpha_env, stage);
 
     let stq = select_texcoord(in, texcoord_idx);
     let direct_uv = stq_to_uv(stq);
     let direct_size = texmap_size(texmap_idx);
-    let indirect = apply_indirect(stage, direct_uv, direct_size, presampled, (*state).running_uv);
+    let indirect = apply_indirect(ind_cmd, direct_uv, direct_size, presampled, (*state).running_uv);
     (*state).running_uv = indirect.uv;
 
     var ras_color: vec4<f32>;
@@ -80,7 +84,6 @@ fn run_stage(
     ras_color = swizzle_tev_color(extract_bits(aenv, 0u, 2u), ras_color);
     tex_color = swizzle_tev_color(extract_bits(aenv, 2u, 2u), tex_color);
 
-    let cenv = read_packed(frame.tev_color_env, stage);
     let c_d = extract_bits(cenv, 0u, 4u);
     let c_c = extract_bits(cenv, 4u, 4u);
     let c_b = extract_bits(cenv, 8u, 4u);
@@ -137,22 +140,22 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let color0 = in.color;
     let presampled = sample_indirect_textures(in);
 
-    @if(TEV_STAGE_1_ENABLED)  { run_stage( 0u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_2_ENABLED)  { run_stage( 1u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_3_ENABLED)  { run_stage( 2u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_4_ENABLED)  { run_stage( 3u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_5_ENABLED)  { run_stage( 4u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_6_ENABLED)  { run_stage( 5u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_7_ENABLED)  { run_stage( 6u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_8_ENABLED)  { run_stage( 7u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_9_ENABLED)  { run_stage( 8u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_10_ENABLED) { run_stage( 9u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_11_ENABLED) { run_stage(10u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_12_ENABLED) { run_stage(11u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_13_ENABLED) { run_stage(12u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_14_ENABLED) { run_stage(13u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_15_ENABLED) { run_stage(14u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_16_ENABLED) { run_stage(15u, in, color0, presampled, &state); }
+    @if(TEV_STAGE_1_ENABLED)  { run_stage( 0u, STAGE_0_ORDER,  STAGE_0_COLOR_ENV,  STAGE_0_ALPHA_ENV,  STAGE_0_IND_CMD,  in, color0, presampled, &state); }
+    @if(TEV_STAGE_2_ENABLED)  { run_stage( 1u, STAGE_1_ORDER,  STAGE_1_COLOR_ENV,  STAGE_1_ALPHA_ENV,  STAGE_1_IND_CMD,  in, color0, presampled, &state); }
+    @if(TEV_STAGE_3_ENABLED)  { run_stage( 2u, STAGE_2_ORDER,  STAGE_2_COLOR_ENV,  STAGE_2_ALPHA_ENV,  STAGE_2_IND_CMD,  in, color0, presampled, &state); }
+    @if(TEV_STAGE_4_ENABLED)  { run_stage( 3u, STAGE_3_ORDER,  STAGE_3_COLOR_ENV,  STAGE_3_ALPHA_ENV,  STAGE_3_IND_CMD,  in, color0, presampled, &state); }
+    @if(TEV_STAGE_5_ENABLED)  { run_stage( 4u, STAGE_4_ORDER,  STAGE_4_COLOR_ENV,  STAGE_4_ALPHA_ENV,  STAGE_4_IND_CMD,  in, color0, presampled, &state); }
+    @if(TEV_STAGE_6_ENABLED)  { run_stage( 5u, STAGE_5_ORDER,  STAGE_5_COLOR_ENV,  STAGE_5_ALPHA_ENV,  STAGE_5_IND_CMD,  in, color0, presampled, &state); }
+    @if(TEV_STAGE_7_ENABLED)  { run_stage( 6u, STAGE_6_ORDER,  STAGE_6_COLOR_ENV,  STAGE_6_ALPHA_ENV,  STAGE_6_IND_CMD,  in, color0, presampled, &state); }
+    @if(TEV_STAGE_8_ENABLED)  { run_stage( 7u, STAGE_7_ORDER,  STAGE_7_COLOR_ENV,  STAGE_7_ALPHA_ENV,  STAGE_7_IND_CMD,  in, color0, presampled, &state); }
+    @if(TEV_STAGE_9_ENABLED)  { run_stage( 8u, STAGE_8_ORDER,  STAGE_8_COLOR_ENV,  STAGE_8_ALPHA_ENV,  STAGE_8_IND_CMD,  in, color0, presampled, &state); }
+    @if(TEV_STAGE_10_ENABLED) { run_stage( 9u, STAGE_9_ORDER,  STAGE_9_COLOR_ENV,  STAGE_9_ALPHA_ENV,  STAGE_9_IND_CMD,  in, color0, presampled, &state); }
+    @if(TEV_STAGE_11_ENABLED) { run_stage(10u, STAGE_10_ORDER, STAGE_10_COLOR_ENV, STAGE_10_ALPHA_ENV, STAGE_10_IND_CMD, in, color0, presampled, &state); }
+    @if(TEV_STAGE_12_ENABLED) { run_stage(11u, STAGE_11_ORDER, STAGE_11_COLOR_ENV, STAGE_11_ALPHA_ENV, STAGE_11_IND_CMD, in, color0, presampled, &state); }
+    @if(TEV_STAGE_13_ENABLED) { run_stage(12u, STAGE_12_ORDER, STAGE_12_COLOR_ENV, STAGE_12_ALPHA_ENV, STAGE_12_IND_CMD, in, color0, presampled, &state); }
+    @if(TEV_STAGE_14_ENABLED) { run_stage(13u, STAGE_13_ORDER, STAGE_13_COLOR_ENV, STAGE_13_ALPHA_ENV, STAGE_13_IND_CMD, in, color0, presampled, &state); }
+    @if(TEV_STAGE_15_ENABLED) { run_stage(14u, STAGE_14_ORDER, STAGE_14_COLOR_ENV, STAGE_14_ALPHA_ENV, STAGE_14_IND_CMD, in, color0, presampled, &state); }
+    @if(TEV_STAGE_16_ENABLED) { run_stage(15u, STAGE_15_ORDER, STAGE_15_COLOR_ENV, STAGE_15_ALPHA_ENV, STAGE_15_IND_CMD, in, color0, presampled, &state); }
 
     let color = vec4<f32>(state.regs[state.last_color_dest].rgb, state.regs[state.last_alpha_dest].a);
 
