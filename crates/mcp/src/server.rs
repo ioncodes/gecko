@@ -114,6 +114,10 @@ pub struct SetWiimoteArgs {
         description = "Wiimote core button bitmask: A=0x0008, B=0x0004, ONE=0x0002, TWO=0x0001, MINUS=0x0010, HOME=0x0080, PLUS=0x1000, LEFT=0x0100, RIGHT=0x0200, DOWN=0x0400, UP=0x0800"
     )]
     pub buttons: Option<u16>,
+    #[schemars(
+        description = "Simulate shaking the Wiimote. While true, the Wiimote core accelerometer reports a 2g, 10 Hz sinusoid on all axes (on top of the +1g Z gravity baseline), which games detect as a shake gesture."
+    )]
+    pub shake: Option<bool>,
     #[schemars(description = "Nunchuk button bitmask: Z=0x01, C=0x02")]
     pub nunchuk_buttons: Option<u8>,
     #[schemars(description = "Nunchuk stick X (0..=255, center=0x80, full-left=0x00, full-right=0xFF)")]
@@ -582,6 +586,7 @@ impl McpServer {
         require_loaded(&self.shared)?;
         let input = gecko::HostInput::Wii {
             wiimote_buttons: args.buttons.unwrap_or(0),
+            wiimote_shake: args.shake.unwrap_or(false),
             nunchuk_buttons: args.nunchuk_buttons.unwrap_or(0),
             nunchuk_stick_x: args
                 .nunchuk_stick_x

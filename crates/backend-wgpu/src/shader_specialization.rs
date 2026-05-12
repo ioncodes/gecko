@@ -18,7 +18,6 @@ const CACHE_MAGIC: [u8; 4] = *b"GSKC";
 pub(crate) const CACHE_VERSION: u32 = 2;
 pub(crate) const SHADER_CACHE_PATH: &str = "cache/shader_keys.bin";
 
-
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
 pub(crate) struct ShaderKey {
     pub num_tev_stages: u8,

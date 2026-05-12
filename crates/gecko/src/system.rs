@@ -559,12 +559,14 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             }
             HostInput::Wii {
                 wiimote_buttons,
+                wiimote_shake,
                 nunchuk_buttons,
                 nunchuk_stick_x,
                 nunchuk_stick_y,
                 ir_pointer,
             } if SYSTEM == WII => {
                 self.starlet.set_wiimote_buttons(*wiimote_buttons);
+                self.starlet.set_wiimote_shake(*wiimote_shake);
                 self.starlet
                     .set_nunchuk(*nunchuk_buttons, *nunchuk_stick_x, *nunchuk_stick_y);
                 self.starlet.set_ir_pointer(*ir_pointer);

@@ -95,6 +95,8 @@ pub trait IosDevice: Send {
         false
     }
 
+    fn set_wiimote_shake(&mut self, _active: bool) {}
+
     fn set_nunchuk(&mut self, _buttons: u8, _stick_x: u8, _stick_y: u8) -> bool {
         false
     }

@@ -7,6 +7,7 @@ pub enum HostInput {
     Gc(pad::PadStatus),
     Wii {
         wiimote_buttons: u16,
+        wiimote_shake: bool,
         nunchuk_buttons: u8,
         nunchuk_stick_x: u8,
         nunchuk_stick_y: u8,
@@ -25,6 +26,7 @@ impl HostInput {
     pub fn wii_neutral() -> Self {
         Self::Wii {
             wiimote_buttons: 0,
+            wiimote_shake: false,
             nunchuk_buttons: 0,
             nunchuk_stick_x: usb::NUNCHUK_STICK_CENTER,
             nunchuk_stick_y: usb::NUNCHUK_STICK_CENTER,

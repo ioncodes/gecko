@@ -525,6 +525,12 @@ pub fn update_wiimote_keys(buttons: &mut u16, key: KeyCode, pressed: bool) {
     self::set_bit(buttons, mask, pressed);
 }
 
+pub fn update_wiimote_motion_keys(shake: &mut bool, key: KeyCode, pressed: bool) {
+    if let KeyCode::ShiftLeft = key {
+        *shake = pressed;
+    }
+}
+
 pub fn update_nunchuk_keys(buttons: &mut u8, stick_x: &mut u8, stick_y: &mut u8, key: KeyCode, pressed: bool) {
     use wiimote::{NUNCHUK_STICK_CENTER as C, NUNCHUK_STICK_MAX as MAX, NUNCHUK_STICK_MIN as MIN};
     match key {

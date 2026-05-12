@@ -6,6 +6,8 @@ use crate::system::SystemId;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 
+const WIIMOTE_DEVICE_PATH: &str = "/dev/usb/oh1/57e/305";
+
 // As per zayd. Tuned at GC clock (486 MHz, ~20 us).
 const FINALIZE_DELAY_US: u64 = 20;
 // Give the CPU breathing room between back-to-back IPC IRQs so other interrupt
@@ -107,19 +109,25 @@ impl Starlet {
 
     pub fn set_wiimote_buttons(&mut self, buttons: u16) -> bool {
         self.devices
-            .get_mut("/dev/usb/oh1/57e/305")
+            .get_mut(WIIMOTE_DEVICE_PATH)
             .is_some_and(|dev| dev.set_wiimote_buttons(buttons))
+    }
+
+    pub fn set_wiimote_shake(&mut self, active: bool) {
+        if let Some(dev) = self.devices.get_mut(WIIMOTE_DEVICE_PATH) {
+            dev.set_wiimote_shake(active);
+        }
     }
 
     pub fn set_nunchuk(&mut self, buttons: u8, stick_x: u8, stick_y: u8) -> bool {
         self.devices
-            .get_mut("/dev/usb/oh1/57e/305")
+            .get_mut(WIIMOTE_DEVICE_PATH)
             .is_some_and(|dev| dev.set_nunchuk(buttons, stick_x, stick_y))
     }
 
     pub fn set_ir_pointer(&mut self, pointer: Option<(u16, u16)>) -> bool {
         self.devices
-            .get_mut("/dev/usb/oh1/57e/305")
+            .get_mut(WIIMOTE_DEVICE_PATH)
             .is_some_and(|dev| dev.set_ir_pointer(pointer))
     }
 
@@ -163,7 +171,7 @@ impl System<{ crate::WII }> {
             .register("/dev/di", Box::new(ipc::di::DiskInterface::new()));
         self.starlet.register("/dev/es", Box::new(ipc::es::ETicketServices));
         self.starlet
-            .register("/dev/usb/oh1/57e/305", Box::new(ipc::usb::Bluetooth::new()));
+            .register(WIIMOTE_DEVICE_PATH, Box::new(ipc::usb::Bluetooth::new()));
         self.starlet.register("/dev/sdio/slot0", Box::new(ipc::sdio::SdCard));
     }
 

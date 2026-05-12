@@ -431,12 +431,14 @@ impl ApplicationHandler<crate::UserEvent> for App {
                         HostInput::Gc(pad) => crate::update_pad(pad, key, pressed),
                         HostInput::Wii {
                             wiimote_buttons,
+                            wiimote_shake,
                             nunchuk_buttons,
                             nunchuk_stick_x,
                             nunchuk_stick_y,
                             ir_pointer: _,
                         } => {
                             crate::update_wiimote_keys(wiimote_buttons, key, pressed);
+                            crate::update_wiimote_motion_keys(wiimote_shake, key, pressed);
                             crate::update_nunchuk_keys(nunchuk_buttons, nunchuk_stick_x, nunchuk_stick_y, key, pressed);
                         }
                     }

@@ -126,6 +126,19 @@ const NUNCHUK_CALIBRATION: [u8; 16] = [
 const NUNCHUK_KEY_REG_BASE: u8 = 0x40;
 const NUNCHUK_KEY_LEN: usize = 16;
 
+const WIIMOTE_ACCEL_ZERO_G: i32 = 0x80;
+const WIIMOTE_ACCEL_LSB_PER_G: f32 = 0x1A as f32;
+const ACCEL_REST: [u8; 3] = [0x80, 0x80, 0xB3];
+
+const SHAKE_FREQ_HZ: f32 = 10.0;
+const SHAKE_AMPLITUDE_G: f32 = 2.0;
+const SHAKE_PHASE_STEP: f32 = 2.0 * std::f32::consts::PI * SHAKE_FREQ_HZ / 60.0;
+
+#[inline]
+fn encode_wiimote_g(g: f32) -> u8 {
+    (WIIMOTE_ACCEL_ZERO_G + (g * WIIMOTE_ACCEL_LSB_PER_G).round() as i32).clamp(0, 255) as u8
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct WiimoteState {
     buttons: u16,
@@ -144,6 +157,8 @@ pub(super) struct WiimoteState {
     nunchuk_key_valid: u16,
     nunchuk_cipher: Cipher,
     ir_pointer: Option<(u16, u16)>,
+    accel: [u8; 3],
+    shake_phase: f32,
 }
 
 impl Default for WiimoteState {
@@ -173,6 +188,8 @@ impl Default for WiimoteState {
             nunchuk_key_valid: 0,
             nunchuk_cipher: Cipher::IDENTITY,
             ir_pointer: None,
+            accel: ACCEL_REST,
+            shake_phase: 0.0,
         }
     }
 }
@@ -193,6 +210,24 @@ impl WiimoteState {
         changed
     }
 
+    pub(super) fn tick_shake(&mut self, active: bool) -> bool {
+        if active {
+            self.shake_phase = (self.shake_phase + SHAKE_PHASE_STEP) % (2.0 * std::f32::consts::PI);
+            let lol = SHAKE_AMPLITUDE_G * self.shake_phase.sin();
+            self.accel = [
+                encode_wiimote_g(lol),
+                encode_wiimote_g(lol),
+                encode_wiimote_g(1.0 + lol),
+            ];
+            true
+        } else {
+            self.shake_phase = 0.0;
+            let was_at_rest = self.accel == ACCEL_REST;
+            self.accel = ACCEL_REST;
+            !was_at_rest
+        }
+    }
+
     pub(super) fn set_ir_pointer(&mut self, pointer: Option<(u16, u16)>) -> bool {
         let changed = self.ir_pointer != pointer;
         self.ir_pointer = pointer;
@@ -205,7 +240,7 @@ impl WiimoteState {
 
     pub(super) fn make_input_report(&self) -> Vec<u8> {
         let [bb0, bb1] = self.button_bytes();
-        let accel = [0x80u8, 0x80, 0xB3]; // X=0G, Y=0G, Z=+1G (gravity)
+        let accel = self.accel;
         let mode = self.report_mode;
 
         let mut r = vec![HID_PREFIX_INPUT, mode as u8, bb0, bb1];

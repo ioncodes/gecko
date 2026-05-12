@@ -63,6 +63,10 @@ impl IosDevice for Bluetooth {
         Bluetooth::set_wiimote_buttons(self, buttons)
     }
 
+    fn set_wiimote_shake(&mut self, active: bool) {
+        Bluetooth::set_wiimote_shake(self, active)
+    }
+
     fn set_nunchuk(&mut self, buttons: u8, stick_x: u8, stick_y: u8) -> bool {
         Bluetooth::set_nunchuk(self, buttons, stick_x, stick_y)
     }
@@ -176,6 +180,16 @@ impl Bluetooth {
         self.queue_hid_input_report(report);
 
         changed
+    }
+
+    fn set_wiimote_shake(&mut self, active: bool) {
+        let report_needed = self.wiimote.tick_shake(active);
+        if !report_needed || self.host_hid_interrupt_cid.is_none() {
+            return;
+        }
+        
+        let report = self.wiimote.make_input_report();
+        self.queue_hid_input_report(report);
     }
 
     fn set_nunchuk(&mut self, buttons: u8, stick_x: u8, stick_y: u8) -> bool {
