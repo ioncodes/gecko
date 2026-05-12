@@ -62,7 +62,7 @@ pub(crate) struct FullPipelineKey {
 
 pub(crate) const FULL_PIPELINE_KEY_BYTES: usize = SHADER_KEY_BYTES + PipelineKey::BYTES;
 const PIPELINE_CACHE_MAGIC: [u8; 4] = *b"GPKC";
-const PIPELINE_CACHE_VERSION: u32 = 1;
+const PIPELINE_CACHE_VERSION: u32 = crate::shader_specialization::CACHE_VERSION;
 pub(crate) const PIPELINE_CACHE_PATH: &str = "cache/pipeline_keys.bin";
 
 impl FullPipelineKey {

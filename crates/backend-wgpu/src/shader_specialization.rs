@@ -1,6 +1,5 @@
 use gecko::flipper::gx::regs::{AlphaCompare, AlphaOp, CompareFunc};
 use gecko::host::DrawData;
-use std::fmt::Write;
 use std::fs::File;
 use std::io::{BufWriter, Read, Write as IoWrite};
 use std::path::Path;
@@ -14,13 +13,11 @@ const ALPHA_TEST_WESL: &str = include_str!("shaders/alpha_test.wesl");
 const LIGHTING_WESL: &str = include_str!("shaders/lighting.wesl");
 const MAIN_WESL: &str = include_str!("shaders/main.wesl");
 
-#[derive(Clone, Copy, Hash, PartialEq, Eq, Debug, Default)]
-pub(crate) struct StageKey {
-    pub order: u32,
-    pub color_env: u32,
-    pub alpha_env: u32,
-    pub ind_cmd: u32,
-}
+pub(crate) const KEY_BYTES: usize = 5;
+const CACHE_MAGIC: [u8; 4] = *b"GSKC";
+pub(crate) const CACHE_VERSION: u32 = 2;
+pub(crate) const SHADER_CACHE_PATH: &str = "cache/shader_keys.bin";
+
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
 pub(crate) struct ShaderKey {
@@ -29,7 +26,6 @@ pub(crate) struct ShaderKey {
     pub has_lighting_c0: bool,
     pub has_lighting_c1: bool,
     pub alpha_test_enabled: bool,
-    pub stages: [StageKey; 16],
 }
 
 impl ShaderKey {
@@ -44,23 +40,12 @@ impl ShaderKey {
         let always_pass =
             comp0 == CompareFunc::Always && comp1 == CompareFunc::Always && matches!(op, AlphaOp::And | AlphaOp::Or);
 
-        let mut stages = [StageKey::default(); 16];
-        for i in 0..num_tev_stages as usize {
-            stages[i] = StageKey {
-                order: draw.tev_orders[i],
-                color_env: draw.tev_color_env[i],
-                alpha_env: draw.tev_alpha_env[i],
-                ind_cmd: draw.tev_indirect[i],
-            };
-        }
-
         Self {
             num_tev_stages,
             num_indirect_stages,
             has_lighting_c0,
             has_lighting_c1,
             alpha_test_enabled: !always_pass,
-            stages,
         }
     }
 }
@@ -73,65 +58,28 @@ fn make_resolver() -> VirtualResolver<'static> {
     r.add_module("package::tev_indirect".parse().unwrap(), TEV_INDIRECT_WESL.into());
     r.add_module("package::alpha_test".parse().unwrap(), ALPHA_TEST_WESL.into());
     r.add_module("package::lighting".parse().unwrap(), LIGHTING_WESL.into());
+    r.add_module("package::main".parse().unwrap(), MAIN_WESL.into());
     r
 }
 
-fn generate_main(key: &ShaderKey) -> String {
-    let mut consts = String::with_capacity(2048);
-    for i in 0..16 {
-        let s = &key.stages[i];
-        let _ = writeln!(consts, "const STAGE_{i}_ORDER: u32 = {}u;", s.order);
-        let _ = writeln!(consts, "const STAGE_{i}_COLOR_ENV: u32 = {}u;", s.color_env);
-        let _ = writeln!(consts, "const STAGE_{i}_ALPHA_ENV: u32 = {}u;", s.alpha_env);
-        let _ = writeln!(consts, "const STAGE_{i}_IND_CMD: u32 = {}u;", s.ind_cmd);
-    }
-    MAIN_WESL.replace("// __STAGE_CONSTS__", &consts)
-}
-
-pub(crate) const KEY_BYTES: usize = 5 + 16 * 16;
-const CACHE_MAGIC: [u8; 4] = *b"GSKC";
-const CACHE_VERSION: u32 = 1;
-pub(crate) const SHADER_CACHE_PATH: &str = "cache/shader_keys.bin";
-
 impl ShaderKey {
     pub(crate) fn to_bytes(&self) -> [u8; KEY_BYTES] {
-        let mut out = [0u8; KEY_BYTES];
-        out[0] = self.num_tev_stages;
-        out[1] = self.num_indirect_stages;
-        out[2] = self.has_lighting_c0 as u8;
-        out[3] = self.has_lighting_c1 as u8;
-        out[4] = self.alpha_test_enabled as u8;
-
-        for (i, s) in self.stages.iter().enumerate() {
-            let off = 5 + i * 16;
-            out[off..off + 4].copy_from_slice(&s.order.to_le_bytes());
-            out[off + 4..off + 8].copy_from_slice(&s.color_env.to_le_bytes());
-            out[off + 8..off + 12].copy_from_slice(&s.alpha_env.to_le_bytes());
-            out[off + 12..off + 16].copy_from_slice(&s.ind_cmd.to_le_bytes());
-        }
-
-        out
+        [
+            self.num_tev_stages,
+            self.num_indirect_stages,
+            self.has_lighting_c0 as u8,
+            self.has_lighting_c1 as u8,
+            self.alpha_test_enabled as u8,
+        ]
     }
 
     pub(crate) fn from_bytes(b: &[u8; KEY_BYTES]) -> Self {
-        let mut stages = [StageKey::default(); 16];
-        for (i, s) in stages.iter_mut().enumerate() {
-            let off = 5 + i * 16;
-            *s = StageKey {
-                order: u32::from_le_bytes(b[off..off + 4].try_into().unwrap()),
-                color_env: u32::from_le_bytes(b[off + 4..off + 8].try_into().unwrap()),
-                alpha_env: u32::from_le_bytes(b[off + 8..off + 12].try_into().unwrap()),
-                ind_cmd: u32::from_le_bytes(b[off + 12..off + 16].try_into().unwrap()),
-            };
-        }
-
         Self {
             num_tev_stages: b[0],
             num_indirect_stages: b[1],
             has_lighting_c0: b[2] != 0,
             has_lighting_c1: b[3] != 0,
             alpha_test_enabled: b[4] != 0,
-            stages,
         }
     }
 }
@@ -181,10 +129,7 @@ pub(crate) fn save_keys(path: &Path, keys: &[ShaderKey]) -> std::io::Result<()> 
 }
 
 pub(crate) fn compile_variant(key: ShaderKey) -> String {
-    let mut resolver = make_resolver();
-    let main_src = generate_main(&key);
-    resolver.add_module("package::main".parse().unwrap(), main_src.into());
-
+    let resolver = make_resolver();
     let mut compiler = Wesl::new("").set_custom_resolver(resolver);
 
     for i in 1..=16u8 {
