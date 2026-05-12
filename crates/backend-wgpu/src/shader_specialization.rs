@@ -43,6 +43,7 @@ impl ShaderKey {
         let op = alpha_cmp.op();
         let always_pass =
             comp0 == CompareFunc::Always && comp1 == CompareFunc::Always && matches!(op, AlphaOp::And | AlphaOp::Or);
+        
         let mut stages = [StageKey::default(); 16];
         for i in 0..num_tev_stages as usize {
             stages[i] = StageKey {
@@ -52,6 +53,7 @@ impl ShaderKey {
                 ind_cmd: draw.tev_indirect[i],
             };
         }
+
         Self {
             num_tev_stages,
             num_indirect_stages,

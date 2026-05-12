@@ -175,7 +175,7 @@ pub struct DrawData {
     // TEV combiner state
     pub tev_color_env: [u32; 16],
     pub tev_alpha_env: [u32; 16],
-    pub tev_orders: [u32; 8],
+    pub tev_orders: [u32; 16],
     pub tev_ksel: [u32; 8],
     pub tev_color_regs: [[f32; 4]; 4],
     pub tev_konst_colors: [[f32; 4]; 16],
