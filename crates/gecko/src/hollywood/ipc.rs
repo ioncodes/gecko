@@ -98,6 +98,10 @@ pub trait IosDevice: Send {
     fn set_nunchuk(&mut self, _buttons: u8, _stick_x: u8, _stick_y: u8) -> bool {
         false
     }
+
+    fn set_ir_pointer(&mut self, _pointer: Option<(u16, u16)>) -> bool {
+        false
+    }
 }
 
 pub struct Ipc {

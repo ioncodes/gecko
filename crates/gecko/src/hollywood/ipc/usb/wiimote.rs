@@ -19,6 +19,9 @@ pub const NUNCHUK_STICK_MIN: u8 = 0x00;
 pub const NUNCHUK_STICK_CENTER: u8 = 0x80;
 pub const NUNCHUK_STICK_MAX: u8 = 0xFF;
 
+pub const IR_CAMERA_WIDTH: u16 = 1024;
+pub const IR_CAMERA_HEIGHT: u16 = 768;
+
 const HID_PREFIX_INPUT: u8 = 0xA1;
 const HID_PREFIX_OUTPUT: u8 = 0xA2;
 
@@ -140,6 +143,7 @@ pub(super) struct WiimoteState {
     nunchuk_key_buf: [u8; NUNCHUK_KEY_LEN],
     nunchuk_key_valid: u16,
     nunchuk_cipher: Cipher,
+    ir_pointer: Option<(u16, u16)>,
 }
 
 impl Default for WiimoteState {
@@ -168,6 +172,7 @@ impl Default for WiimoteState {
             nunchuk_key_buf: [0; NUNCHUK_KEY_LEN],
             nunchuk_key_valid: 0,
             nunchuk_cipher: Cipher::IDENTITY,
+            ir_pointer: None,
         }
     }
 }
@@ -188,6 +193,12 @@ impl WiimoteState {
         changed
     }
 
+    pub(super) fn set_ir_pointer(&mut self, pointer: Option<(u16, u16)>) -> bool {
+        let changed = self.ir_pointer != pointer;
+        self.ir_pointer = pointer;
+        changed
+    }
+
     fn button_bytes(&self) -> [u8; 2] {
         self.buttons.to_be_bytes()
     }
@@ -195,8 +206,6 @@ impl WiimoteState {
     pub(super) fn make_input_report(&self) -> Vec<u8> {
         let [bb0, bb1] = self.button_bytes();
         let accel = [0x80u8, 0x80, 0xB3]; // X=0G, Y=0G, Z=+1G (gravity)
-        let ir_basic = [0xFF; 10];
-        let ir_extended = [0xFF; 12];
         let mode = self.report_mode;
 
         let mut r = vec![HID_PREFIX_INPUT, mode as u8, bb0, bb1];
@@ -206,7 +215,7 @@ impl WiimoteState {
             ReportMode::CoreExt8 => self.append_nunchuk_ext_padded(&mut r, 8),
             ReportMode::CoreAccelIrExt => {
                 r.extend_from_slice(&accel);
-                r.extend_from_slice(&ir_extended);
+                r.extend_from_slice(&self::pack_ir_extended(&self.ir_objects()));
             }
             ReportMode::CoreExt19 => self.append_nunchuk_ext_padded(&mut r, 19),
             ReportMode::CoreAccelExt16 => {
@@ -214,12 +223,12 @@ impl WiimoteState {
                 self.append_nunchuk_ext_padded(&mut r, 16);
             }
             ReportMode::CoreIrBasicExt9 => {
-                r.extend_from_slice(&ir_basic);
+                r.extend_from_slice(&self::pack_ir_basic(&self.ir_objects()));
                 self.append_nunchuk_ext_padded(&mut r, 9);
             }
             ReportMode::CoreAccelIrBasicExt6 => {
                 r.extend_from_slice(&accel);
-                r.extend_from_slice(&ir_basic);
+                r.extend_from_slice(&self::pack_ir_basic(&self.ir_objects()));
                 r.extend_from_slice(&self.nunchuk_extension_bytes());
             }
         }
@@ -253,6 +262,19 @@ impl WiimoteState {
         let target = out.len() + total_len;
         out.extend_from_slice(&self.nunchuk_extension_bytes());
         out.resize(target, 0xFF);
+    }
+
+    fn ir_objects(&self) -> [Option<(u16, u16)>; 4] {
+        const SENSOR_BAR_HALF: u16 = 50;
+
+        let Some((cx, cy)) = self.ir_pointer else {
+            return [None; 4];
+        };
+
+        let left = cx.saturating_sub(SENSOR_BAR_HALF);
+        let right = (cx + SENSOR_BAR_HALF).min(IR_CAMERA_WIDTH - 1);
+
+        [Some((left, cy)), Some((right, cy)), None, None]
     }
 
     pub(super) fn handle_output_report(&mut self, packet: &[u8]) -> Vec<Vec<u8>> {
@@ -502,6 +524,51 @@ fn compute_calibration_checksum(data: &[u8]) -> (u8, u8) {
         sum = sum.wrapping_add(b);
     }
     (sum.wrapping_add(0x55), sum.wrapping_add(0xAA))
+}
+
+fn pack_ir_basic(objects: &[Option<(u16, u16)>; 4]) -> [u8; 10] {
+    let mut out = [0xFF; 10];
+
+    self::pack_ir_basic_pair(&mut out[0..5], objects[0], objects[1]);
+    self::pack_ir_basic_pair(&mut out[5..10], objects[2], objects[3]);
+
+    out
+}
+
+fn split_ir_coords(x: u16, y: u16) -> (u8, u8, u8, u8) {
+    (x as u8, ((x >> 8) & 0x03) as u8, y as u8, ((y >> 8) & 0x03) as u8)
+}
+
+fn pack_ir_basic_pair(out: &mut [u8], p1: Option<(u16, u16)>, p2: Option<(u16, u16)>) {
+    if let Some((x, y)) = p1 {
+        let (x_lo, x_hi, y_lo, y_hi) = self::split_ir_coords(x, y);
+        out[0] = x_lo;
+        out[1] = y_lo;
+        out[2] = (out[2] & 0xF0) | (y_hi << 2) | x_hi;
+    }
+
+    if let Some((x, y)) = p2 {
+        let (x_lo, x_hi, y_lo, y_hi) = self::split_ir_coords(x, y);
+        out[3] = x_lo;
+        out[4] = y_lo;
+        out[2] = (out[2] & 0x0F) | (y_hi << 6) | (x_hi << 4);
+    }
+}
+
+fn pack_ir_extended(objects: &[Option<(u16, u16)>; 4]) -> [u8; 12] {
+    let mut out = [0xFF; 12];
+
+    for (i, slot) in objects.iter().enumerate() {
+        if let Some((x, y)) = *slot {
+            let base = i * 3;
+            let (x_lo, x_hi, y_lo, y_hi) = self::split_ir_coords(x, y);
+            out[base] = x_lo;
+            out[base + 1] = y_lo;
+            out[base + 2] = (3 << 4) | (y_hi << 2) | x_hi;
+        }
+    }
+
+    out
 }
 
 #[inline(always)]

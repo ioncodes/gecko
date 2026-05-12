@@ -10,6 +10,7 @@ pub enum HostInput {
         nunchuk_buttons: u8,
         nunchuk_stick_x: u8,
         nunchuk_stick_y: u8,
+        ir_pointer: Option<(u16, u16)>,
     },
 }
 
@@ -27,6 +28,7 @@ impl HostInput {
             nunchuk_buttons: 0,
             nunchuk_stick_x: usb::NUNCHUK_STICK_CENTER,
             nunchuk_stick_y: usb::NUNCHUK_STICK_CENTER,
+            ir_pointer: None,
         }
     }
 

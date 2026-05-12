@@ -117,6 +117,12 @@ impl Starlet {
             .is_some_and(|dev| dev.set_nunchuk(buttons, stick_x, stick_y))
     }
 
+    pub fn set_ir_pointer(&mut self, pointer: Option<(u16, u16)>) -> bool {
+        self.devices
+            .get_mut("/dev/usb/oh1/57e/305")
+            .is_some_and(|dev| dev.set_ir_pointer(pointer))
+    }
+
     /// Drop an fd. Calls `close` on the underlying device first; for owned
     /// fds the device is dropped after close.
     pub fn close_fd(&mut self, fd: i32, ctx: &mut DeviceContext<'_>) -> i32 {

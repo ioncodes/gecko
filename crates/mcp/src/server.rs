@@ -120,6 +120,12 @@ pub struct SetWiimoteArgs {
     pub nunchuk_stick_x: Option<u8>,
     #[schemars(description = "Nunchuk stick Y (0..=255, center=0x80, full-down=0x00, full-up=0xFF)")]
     pub nunchuk_stick_y: Option<u8>,
+    #[schemars(
+        description = "IR pointer X in camera space (0..=1023). Both ir_x and ir_y must be set to enable the pointer; omitting either reports it as not visible."
+    )]
+    pub ir_x: Option<u16>,
+    #[schemars(description = "IR pointer Y in camera space (0..=767).")]
+    pub ir_y: Option<u16>,
 }
 
 #[derive(Debug, Serialize)]
@@ -583,6 +589,7 @@ impl McpServer {
             nunchuk_stick_y: args
                 .nunchuk_stick_y
                 .unwrap_or(gecko::hollywood::ipc::usb::NUNCHUK_STICK_CENTER),
+            ir_pointer: args.ir_x.zip(args.ir_y),
         };
         let mut s = self.shared.state.lock().unwrap();
         s.backend.as_mut().unwrap().apply_host_input(&input);

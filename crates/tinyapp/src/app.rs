@@ -434,6 +434,7 @@ impl ApplicationHandler<crate::UserEvent> for App {
                             nunchuk_buttons,
                             nunchuk_stick_x,
                             nunchuk_stick_y,
+                            ir_pointer: _,
                         } => {
                             crate::update_wiimote_keys(wiimote_buttons, key, pressed);
                             crate::update_nunchuk_keys(nunchuk_buttons, nunchuk_stick_x, nunchuk_stick_y, key, pressed);
@@ -467,6 +468,42 @@ impl ApplicationHandler<crate::UserEvent> for App {
                             );
                         }
                     }
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                let Some(window) = &self.window else {
+                    return;
+                };
+
+                let size = window.inner_size();
+                if size.width == 0 || size.height == 0 {
+                    return;
+                }
+
+                const POINTER_SCALE_X: f64 = 0.44;
+                const POINTER_SCALE_Y: f64 = 0.66;
+                const POINTER_Y_OFFSET: f64 = 120.0;
+
+                let aim_x = (position.x / size.width as f64).clamp(0.0, 1.0);
+                let aim_y = (position.y / size.height as f64).clamp(0.0, 1.0);
+                let span_x = usb::IR_CAMERA_WIDTH as f64 * POINTER_SCALE_X;
+                let span_y = usb::IR_CAMERA_HEIGHT as f64 * POINTER_SCALE_Y;
+                let base_x = (usb::IR_CAMERA_WIDTH as f64 - span_x) / 2.0;
+                let base_y = (usb::IR_CAMERA_HEIGHT as f64 - span_y) / 2.0 + POINTER_Y_OFFSET;
+                let ir_x = (base_x + (1.0 - aim_x) * span_x) as u16;
+                let ir_y = (base_y + aim_y * span_y) as u16;
+
+                let mut input = self.input.lock().unwrap();
+                if let HostInput::Wii { ir_pointer, .. } = &mut *input
+                    && *ir_pointer != Some((ir_x, ir_y))
+                {
+                    *ir_pointer = Some((ir_x, ir_y));
+                }
+            }
+            WindowEvent::CursorLeft { .. } => {
+                let mut input = self.input.lock().unwrap();
+                if let HostInput::Wii { ir_pointer, .. } = &mut *input {
+                    *ir_pointer = None;
                 }
             }
             WindowEvent::RedrawRequested => {
