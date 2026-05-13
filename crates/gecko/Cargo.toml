@@ -31,6 +31,7 @@ gx-stats = []
 profile = ["dep:backtrace", "dep:windows-sys"]
 # Enables std::hint::black_box inside `EmptyRenderSink::exec`
 rendersink-blackbox = []
+hotpath = ["dep:hotpath", "hotpath/hotpath"]
 
 [build-dependencies]
 chipi-build = "0.9.1"
@@ -55,6 +56,7 @@ cranelift-jit = { version = "0.131.1", optional = true, features = ["selinux-fix
 cranelift-module = { version = "0.131.1", optional = true }
 cranelift-native = { version = "0.131.1", optional = true }
 backtrace = { version = "0.3", optional = true }
+hotpath = { version = "0.16.0", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [

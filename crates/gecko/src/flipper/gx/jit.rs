@@ -277,6 +277,7 @@ impl JitVertexEngine {
         }
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure(label = "vtx_jit_compile"))]
     fn compile(&mut self, key: VtxKey) -> Option<CompiledParser> {
         self.seq = self.seq.wrapping_add(1);
         let name = format!("gecko_vtx_parser_{:016x}", self.seq);
@@ -337,6 +338,7 @@ fn parser_signature(ptr: ir::Type, cc: CallConv) -> Signature {
 ///    `RamView::slice`; the JIT does pure pointer math without bounds
 ///    checks, so an OOB attribute would dereference unmapped memory
 ///    and segfault. (See `vertex.rs::fetch` for the interpreter path.)
+#[cfg_attr(feature = "hotpath", hotpath::measure(label = "vtx_resolve_arrays"))]
 pub fn resolve_arrays_for_draw(
     cp_regs: &[u32],
     key: &VtxKey,

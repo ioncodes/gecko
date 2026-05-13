@@ -86,6 +86,7 @@ impl GraphicsProcessor {
         };
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn load_cp(&mut self, data: &[u8]) {
         let idx = data[0] as usize;
         let val = u32::from_be_bytes([data[1], data[2], data[3], data[4]]);
@@ -98,6 +99,7 @@ impl GraphicsProcessor {
         );
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn load_xf(&mut self, renderer: &mut dyn RenderSink, data: &[u8]) {
         let length = u16::from_be_bytes([data[0], data[1]]) as usize;
         let addr = u16::from_be_bytes([data[2], data[3]]) as usize;
@@ -148,6 +150,7 @@ impl GraphicsProcessor {
     }
 
     #[inline(always)]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn load_indexed_xf(
         &mut self,
         renderer: &mut dyn RenderSink,

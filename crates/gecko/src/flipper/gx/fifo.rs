@@ -6,6 +6,7 @@ use crate::mmio::Mmio;
 use crate::system::SystemId;
 
 impl GraphicsProcessor {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn drain_fifo<const SYSTEM: SystemId>(&mut self, mmio: &mut Mmio<SYSTEM>, renderer: &mut dyn RenderSink) {
         let mut fifo = std::mem::take(&mut self.fifo);
 
@@ -18,6 +19,7 @@ impl GraphicsProcessor {
     }
 }
 
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 fn drain_buf<const SYSTEM: SystemId>(
     gp: &mut GraphicsProcessor,
     mmio: &mut Mmio<SYSTEM>,

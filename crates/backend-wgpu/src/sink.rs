@@ -1,5 +1,19 @@
 use crate::GxRenderer;
 use crossbeam_channel::{Receiver, Sender, bounded};
+
+#[cfg(feature = "hotpath")]
+macro_rules! instrument_channel {
+    ($e:expr, $label:expr) => {
+        hotpath::channel!($e, label = $label)
+    };
+}
+#[cfg(not(feature = "hotpath"))]
+macro_rules! instrument_channel {
+    ($e:expr, $label:expr) => {
+        $e
+    };
+}
+
 #[cfg(feature = "efb-writeback")]
 use gecko::host::EfbWriteback;
 use gecko::host::{DrawData, GxAction, RenderSink};
@@ -192,7 +206,8 @@ impl Renderer {
         // Only created with `efb-writeback`.
         #[cfg(feature = "efb-writeback")]
         let writeback_rx = {
-            let (writeback_tx, writeback_rx) = bounded::<EfbWriteback>(CHANNEL_CAPACITY);
+            let (writeback_tx, writeback_rx) =
+                instrument_channel!(bounded::<EfbWriteback>(CHANNEL_CAPACITY), "efb_writeback");
             gx.set_efb_writeback_tx(writeback_tx);
             writeback_rx
         };
@@ -268,9 +283,11 @@ impl Renderer {
             ..Default::default()
         });
 
-        let (tx, rx) = bounded(CHANNEL_CAPACITY);
-        let (boxes_tx, recycle_rx) = bounded::<Box<DrawData>>(RECYCLE_CAPACITY);
-        let (batches_tx, batch_recycle_rx) = bounded::<Vec<GxAction>>(BATCH_RECYCLE_CAPACITY);
+        let (tx, rx) = instrument_channel!(bounded::<WorkerMsg>(CHANNEL_CAPACITY), "gx_actions");
+        let (boxes_tx, recycle_rx) =
+            instrument_channel!(bounded::<Box<DrawData>>(RECYCLE_CAPACITY), "draw_data_recycle");
+        let (batches_tx, batch_recycle_rx) =
+            instrument_channel!(bounded::<Vec<GxAction>>(BATCH_RECYCLE_CAPACITY), "batch_recycle");
         let recyclers = Recyclers {
             boxes: boxes_tx,
             batches: batches_tx,
@@ -332,7 +349,7 @@ impl Renderer {
 
     #[cfg(feature = "renderdoc-capture")]
     pub fn begin_renderdoc_emulated_frame(&self) {
-        let (ack_tx, ack_rx) = bounded(0);
+        let (ack_tx, ack_rx) = bounded::<()>(0);
         if self.tx.send(WorkerMsg::BeginEmulatedFrame { ack: ack_tx }).is_err() {
             tracing::warn!("failed to send RenderDoc frame-begin marker to renderer worker");
             return;

@@ -44,6 +44,7 @@ struct VertexFormat {
 }
 
 impl GraphicsProcessor {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn create_draw_call<const SYSTEM: SystemId>(
         &mut self,
         mmio: &mut Mmio<SYSTEM>,
@@ -705,6 +706,7 @@ fn decode_color(data: &[u8], fmt: regs::ColorFormat, cnt: regs::ColorCount) -> [
     }
 }
 
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 fn dispatch_decode<const SYSTEM: SystemId>(
     gp: &mut GraphicsProcessor,
     mmio: &mut Mmio<SYSTEM>,
@@ -752,6 +754,7 @@ fn dispatch_decode<const SYSTEM: SystemId>(
     self::run_interpreter(gp, mmio, data, vertex_count, vf);
 }
 
+#[cfg_attr(feature = "hotpath", hotpath::measure(label = "vtx_run_interpreter"))]
 fn run_interpreter<const SYSTEM: SystemId>(
     gp: &mut GraphicsProcessor,
     mmio: &mut Mmio<SYSTEM>,

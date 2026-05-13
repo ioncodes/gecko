@@ -203,11 +203,13 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     }
 
     #[inline(always)]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn prepare_frame(&mut self) {
         self.begin_frame();
         crate::flipper::si::refresh_interrupts(self);
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn run_until_vsync(&mut self) {
         self.prepare_frame();
         while !self.vsync_pending {
@@ -520,6 +522,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     /// `scheduler.cycles >= next_deadline`. Interrupts are checked at block
     /// boundaries.
     #[cfg(feature = "jit")]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn run_until_deadline_jit(&mut self) {
         let mut jit = match self.jit.take() {
             Some(jit) => jit,
@@ -576,12 +579,14 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     }
 
     #[inline(always)]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn begin_frame(&mut self) {
         self.vsync_pending = false;
         self.si.update_polling();
     }
 
     #[inline(always)]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn drain_events(&mut self) {
         while let Some(f) = self.scheduler.poll() {
             f(self);

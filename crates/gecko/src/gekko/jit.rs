@@ -619,6 +619,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         id
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure(label = "ppc_jit_run_block"))]
     pub fn run_block(&mut self, sys: &mut System<SYSTEM>) {
         let pc = sys.gekko.pc;
         let entry = self.lookup_or_compile(sys, pc);
@@ -801,6 +802,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         }
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure(label = "ppc_jit_compile"))]
     fn compile(&mut self, spec: &block::BlockSpec, gprs: &[u32; 32]) -> BlockEntry {
         let func_id = self.func_id_for(spec.start_pc);
 

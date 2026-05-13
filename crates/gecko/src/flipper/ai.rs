@@ -94,6 +94,7 @@ pub fn stop_audio_dma<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
 }
 
 #[inline(always)]
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn audio_dma_block_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     if !sys.dsp.audio_dma_control.play() {
         stop_audio_dma(sys);

@@ -2,8 +2,36 @@ mod app;
 mod audio;
 mod thread;
 
+#[cfg(not(feature = "hotpath-alloc"))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(feature = "hotpath-alloc")]
+#[derive(Default)]
+struct DefaultMiMalloc;
+#[cfg(feature = "hotpath-alloc")]
+unsafe impl std::alloc::GlobalAlloc for DefaultMiMalloc {
+    #[inline]
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+        unsafe { std::alloc::GlobalAlloc::alloc(&mimalloc::MiMalloc, layout) }
+    }
+    #[inline]
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+        unsafe { std::alloc::GlobalAlloc::dealloc(&mimalloc::MiMalloc, ptr, layout) }
+    }
+    #[inline]
+    unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
+        unsafe { std::alloc::GlobalAlloc::alloc_zeroed(&mimalloc::MiMalloc, layout) }
+    }
+    #[inline]
+    unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
+        unsafe { std::alloc::GlobalAlloc::realloc(&mimalloc::MiMalloc, ptr, layout, new_size) }
+    }
+}
+
+#[cfg(feature = "hotpath-alloc")]
+#[global_allocator]
+static GLOBAL: hotpath::CountingAllocator<DefaultMiMalloc> = hotpath::CountingAllocator::new();
 
 use backend_wgpu::sink::TargetAspect;
 use clap::Parser;
@@ -157,6 +185,12 @@ fn resolve_aspect(arg: &str, system: SystemId) -> TargetAspect {
 }
 
 fn main() {
+    #[cfg(feature = "hotpath")]
+    let _hotpath_guard = hotpath::HotpathGuardBuilder::new("main")
+        .percentiles(&[50.0, 95.0, 99.0])
+        .functions_limit(64)
+        .build();
+
     let args = Args::parse();
 
     let present_mode = if args.immediate {

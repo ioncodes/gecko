@@ -6,6 +6,7 @@ edition = "2024"
 [features]
 efb-writeback = ["gecko/efb-writeback"]
 renderdoc-capture = ["dep:renderdoc"]
+hotpath = ["dep:hotpath", "hotpath/hotpath", "hotpath/crossbeam"]
 
 [dependencies]
 wgpu = "28.0.0"
@@ -19,3 +20,4 @@ tracing = "0.1.44"
 rustc-hash = "2.1.2"
 png = "0.18.1"
 renderdoc = { version = "0.12.1", optional = true }
+hotpath = { version = "0.16.0", optional = true }

@@ -7,6 +7,7 @@ use crate::mmio::{RamView, RamViewMut};
 use std::time::Duration;
 
 impl GraphicsProcessor {
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn load_bp(&mut self, renderer: &mut dyn RenderSink, ram: &mut RamViewMut<'_>, data: &[u8]) {
         let idx = data[0] as usize;
         let raw_val = u32::from_be_bytes([0, data[1], data[2], data[3]]);
@@ -419,6 +420,7 @@ impl GraphicsProcessor {
         }
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn efb_copy(&mut self, renderer: &mut dyn RenderSink, ram: &mut RamViewMut<'_>, trigger: u32) {
         let src = EfbCopySrc::from_raw(self.bp_regs[BP_PE_COPY_SRC]);
         let dims = EfbCopyDims::from_raw(self.bp_regs[BP_PE_COPY_DIMS]);

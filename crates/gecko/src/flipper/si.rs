@@ -272,6 +272,7 @@ pub fn si_write<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, phys: u32, siz
 }
 
 #[inline(always)]
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn refresh_interrupts<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     use crate::flipper::pi::InterruptFlag;
 

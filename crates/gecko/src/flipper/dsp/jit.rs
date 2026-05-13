@@ -506,6 +506,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         tracing::info!("{}", self.ctx.func.display());
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure(label = "dsp_jit_compile"))]
     fn compile(&mut self, spec: &block::BlockSpec) -> BlockEntry {
         let func_id = self.func_id_for(spec.start_pc);
 
@@ -546,6 +547,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         self.clear_lookup_table();
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure(label = "dsp_jit_run_block"))]
     pub fn run_block(&mut self, ctx_ptr: *mut core::ffi::c_void, entry: BlockEntry) -> u16 {
         let next_pc_u32 = unsafe { (self.trampoline_fn)(ctx_ptr, entry) };
         next_pc_u32 as u16

@@ -203,6 +203,7 @@ impl GraphicsProcessor {
     }
 }
 
+#[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn present_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     sys.vi_present_seen_this_frame = true;
     sys.vsync_pending = true;
