@@ -511,6 +511,7 @@ impl GraphicsProcessor {
             let alpha_update = self.cur_blend_mode.alpha_update();
             let z_update = self.cur_zmode.update_enable();
 
+            let depth_copy = self.cur_pe_control.pixel_format().is_depth_only();
             renderer.exec(GxAction::CopyEfbToTexture {
                 dest_addr,
                 src_x,
@@ -527,7 +528,8 @@ impl GraphicsProcessor {
                 alpha_update,
                 z_update,
                 alpha_supported: self.cur_pe_control.pixel_format().has_alpha(),
-                depth_copy: self.cur_pe_control.pixel_format().is_depth_only(),
+                depth_copy,
+                is_intensity: cmd.intensity_fmt(),
             });
 
             // Drop cached hashes for this ram_addr (any TLUT variant) so the

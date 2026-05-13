@@ -109,6 +109,13 @@ pub(crate) struct EfbCopyEntry {
     pub(crate) view: wgpu::TextureView,
 }
 
+impl EfbCopyEntry {
+    pub(crate) fn matches(&self, fmt: TextureFormat, w: u32, h: u32) -> bool {
+        let size = self.texture.size();
+        self.format.base_texture_format() == fmt && size.width == w && size.height == h
+    }
+}
+
 pub struct GxRenderer {
     pub(crate) pipeline_cache: FxHashMap<FullPipelineKey, wgpu::RenderPipeline>,
     pub(crate) shader_cache: FxHashMap<ShaderKey, wgpu::ShaderModule>,
@@ -145,6 +152,8 @@ pub struct GxRenderer {
     pub(crate) efb_depth_resolve_uniform_buffer: wgpu::Buffer,
 
     pub(crate) efb_depth_writeback_pipeline: wgpu::RenderPipeline,
+    /// Reusable Rgba8Unorm intermediate the Z24 pack writes into before
+    /// being copied to staging for the deferred RAM writeback.
     pub(crate) efb_depth_writeback_target: Option<(wgpu::Texture, wgpu::TextureView)>,
     pub(crate) fallback_view: wgpu::TextureView,
     pub(crate) scratch_vertices: Vec<GpuVertex>,
@@ -602,12 +611,15 @@ impl GxRenderer {
             |label: &str, entry: &str| make_pack_pipeline(label, entry, &xfb_copy_pipeline_layout, &efb_pack_shader);
         let efb_pack_pipelines = render::EfbPackPipelines {
             rgba8: color_pack("efb_pack_rgba8", "fs_rgba8"),
+            rgba8_intensity: color_pack("efb_pack_rgba8_intensity", "fs_rgba8_intensity"),
             i8: color_pack("efb_pack_i8", "fs_i8"),
             i4: color_pack("efb_pack_i4", "fs_i4"),
             ia8: color_pack("efb_pack_ia8", "fs_ia8"),
             ia4: color_pack("efb_pack_ia4", "fs_ia4"),
             rgb565: color_pack("efb_pack_rgb565", "fs_rgb565"),
+            rgb565_intensity: color_pack("efb_pack_rgb565_intensity", "fs_rgb565_intensity"),
             rgb5a3: color_pack("efb_pack_rgb5a3", "fs_rgb5a3"),
+            rgb5a3_intensity: color_pack("efb_pack_rgb5a3_intensity", "fs_rgb5a3_intensity"),
             a8: color_pack("efb_pack_a8", "fs_a8"),
             r8: color_pack("efb_pack_r8", "fs_r8"),
             rg8: color_pack("efb_pack_rg8", "fs_rg8"),
@@ -618,7 +630,6 @@ impl GxRenderer {
             &efb_depth_resolve_pipeline_layout,
             &efb_depth_shader,
         );
-
         let efb_clear = clear::EfbClear::new(
             device,
             surface_format,

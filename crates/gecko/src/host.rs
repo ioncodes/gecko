@@ -135,6 +135,7 @@ pub enum GxAction {
         z_update: bool,
         alpha_supported: bool,
         depth_copy: bool,
+        is_intensity: bool,
     },
 }
 

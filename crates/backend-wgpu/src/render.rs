@@ -14,31 +14,37 @@ pub(crate) struct XfbCopyUniforms {
 
 pub(crate) struct EfbPackPipelines {
     pub(crate) rgba8: wgpu::RenderPipeline,
+    pub(crate) rgba8_intensity: wgpu::RenderPipeline,
     pub(crate) i8: wgpu::RenderPipeline,
     pub(crate) i4: wgpu::RenderPipeline,
     pub(crate) ia8: wgpu::RenderPipeline,
     pub(crate) ia4: wgpu::RenderPipeline,
     pub(crate) rgb565: wgpu::RenderPipeline,
+    pub(crate) rgb565_intensity: wgpu::RenderPipeline,
     pub(crate) rgb5a3: wgpu::RenderPipeline,
+    pub(crate) rgb5a3_intensity: wgpu::RenderPipeline,
     pub(crate) a8: wgpu::RenderPipeline,
     pub(crate) r8: wgpu::RenderPipeline,
     pub(crate) rg8: wgpu::RenderPipeline,
 }
 
 impl EfbPackPipelines {
-    pub(crate) fn for_color(&self, fmt: CopyFormat) -> Option<&wgpu::RenderPipeline> {
-        Some(match fmt {
-            CopyFormat::RGBA8 => &self.rgba8,
-            CopyFormat::I8 => &self.i8,
-            CopyFormat::I4 => &self.i4,
-            CopyFormat::IA8 => &self.ia8,
-            CopyFormat::IA4 => &self.ia4,
-            CopyFormat::RGB565 => &self.rgb565,
-            CopyFormat::RGB5A3 => &self.rgb5a3,
-            CopyFormat::A8 => &self.a8,
-            CopyFormat::R8 => &self.r8,
-            CopyFormat::RG8 => &self.rg8,
-            CopyFormat::Z24X8 => return None,
+    pub(crate) fn for_color(&self, fmt: CopyFormat, intensity: bool) -> Option<&wgpu::RenderPipeline> {
+        Some(match (fmt, intensity) {
+            (CopyFormat::RGBA8, false) => &self.rgba8,
+            (CopyFormat::RGBA8, true) => &self.rgba8_intensity,
+            (CopyFormat::RGB565, false) => &self.rgb565,
+            (CopyFormat::RGB565, true) => &self.rgb565_intensity,
+            (CopyFormat::RGB5A3, false) => &self.rgb5a3,
+            (CopyFormat::RGB5A3, true) => &self.rgb5a3_intensity,
+            (CopyFormat::I8, _) => &self.i8,
+            (CopyFormat::I4, _) => &self.i4,
+            (CopyFormat::IA8, _) => &self.ia8,
+            (CopyFormat::IA4, _) => &self.ia4,
+            (CopyFormat::A8, _) => &self.a8,
+            (CopyFormat::R8, _) => &self.r8,
+            (CopyFormat::RG8, _) => &self.rg8,
+            (CopyFormat::Z24X8, _) => return None,
         })
     }
 }
@@ -314,9 +320,10 @@ impl GxRenderer {
         src_h: u32,
         half: bool,
         copy_format: CopyFormat,
+        is_intensity: bool,
     ) {
         debug_assert!(
-            self.efb_pack_pipelines.for_color(copy_format).is_some(),
+            self.efb_pack_pipelines.for_color(copy_format, is_intensity).is_some(),
             "cache_efb_copy_color called with depth-only copy format {copy_format:?}",
         );
 
@@ -361,7 +368,8 @@ impl GxRenderer {
                     format: wgpu::TextureFormat::Rgba8Unorm,
                     usage: wgpu::TextureUsages::TEXTURE_BINDING
                         | wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::COPY_DST,
+                        | wgpu::TextureUsages::COPY_DST
+                        | wgpu::TextureUsages::COPY_SRC,
                     view_formats: &[],
                 });
                 let view = tex.create_view(&Default::default());
@@ -423,7 +431,7 @@ impl GxRenderer {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
-            rpass.set_pipeline(self.efb_pack_pipelines.for_color(copy_format).unwrap());
+            rpass.set_pipeline(self.efb_pack_pipelines.for_color(copy_format, is_intensity).unwrap());
             rpass.set_bind_group(0, &bind_group, &[]);
             rpass.insert_debug_marker("EFB copy: per-format pack into cache");
             rpass.draw(0..3, 0..1);
@@ -444,7 +452,6 @@ impl GxRenderer {
 
     pub(crate) fn return_to_pool(&mut self, tex: wgpu::Texture, view: wgpu::TextureView) {
         const PER_BUCKET_CAP: usize = 8;
-
         let size = tex.size();
         let bucket = self.efb_copy_pool.entry((size.width, size.height)).or_default();
         if bucket.len() < PER_BUCKET_CAP {
@@ -584,13 +591,6 @@ impl GxRenderer {
         mipmap: bool,
         stride: u32,
         depth_copy: bool,
-        clear: bool,
-        clear_color: [f32; 4],
-        clear_z: f32,
-        color_update: bool,
-        alpha_update: bool,
-        z_update: bool,
-        alpha_supported: bool,
     ) {
         // Clamp the source to EFB bounds (mirrors execute_copy_xfb).
         let width = src_w.min(crate::EFB_WIDTH.saturating_sub(src_x));
@@ -606,8 +606,6 @@ impl GxRenderer {
             return;
         }
 
-        // Early-out for formats we don't encode: skip the expensive readback
-        // but still honor the clear.
         let copy_format_option = if depth_copy {
             texture::CopyFormat::from_u8_depth(copy_format)
         } else {
@@ -618,21 +616,6 @@ impl GxRenderer {
                 copy_format = format!("{copy_format:#x}"),
                 "efb_to_texture: unsupported copy format, skipping readback"
             );
-            if clear {
-                self.clear_efb_region(
-                    device,
-                    queue,
-                    src_x,
-                    src_y,
-                    src_w,
-                    src_h,
-                    clear_color,
-                    clear_z,
-                    color_update,
-                    alpha_update && alpha_supported,
-                    z_update,
-                );
-            }
             return;
         };
 
@@ -649,22 +632,6 @@ impl GxRenderer {
                 stride,
                 copy_format_enum,
             );
-
-            if clear {
-                self.clear_efb_region(
-                    device,
-                    queue,
-                    src_x,
-                    src_y,
-                    src_w,
-                    src_h,
-                    clear_color,
-                    clear_z,
-                    color_update,
-                    alpha_update && alpha_supported,
-                    z_update,
-                );
-            }
             return;
         }
 
@@ -726,22 +693,6 @@ impl GxRenderer {
             box_filter_downsample: mipmap,
             label: "efb_to_texture",
         });
-
-        if clear {
-            self.clear_efb_region(
-                device,
-                queue,
-                src_x,
-                src_y,
-                src_w,
-                src_h,
-                clear_color,
-                clear_z,
-                color_update,
-                alpha_update && alpha_supported,
-                z_update,
-            );
-        }
     }
 
     fn execute_depth_writeback(
@@ -801,7 +752,7 @@ impl GxRenderer {
         self.efb_depth_resolve_uniform_write_pending = true;
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("efb_depth_writeback_bg"),
+            label: Some("efb_depth_bg"),
             layout: &self.efb_depth_resolve_bg_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -815,25 +766,22 @@ impl GxRenderer {
             ],
         });
 
-        let group_label = format!(
-            "DepthWriteback addr={dest_addr:#010x} src=({src_x},{src_y} {width}x{height}) dst={encode_w}x{encode_h} stride={stride}"
-        );
-
         let bytes_per_row = align_up(encode_w as u64 * 4, 256);
         let staging_size = bytes_per_row * encode_h as u64;
         let (staging, staging_capacity) = self.acquire_readback_staging(device, staging_size);
 
-        let (target_tex, target_view) = self.efb_depth_writeback_target.as_ref().unwrap();
-
+        let (writeback_tex, writeback_view) = self.efb_depth_writeback_target.as_ref().unwrap();
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("efb_depth_writeback_encoder"),
+            label: Some("efb_depth_encoder"),
         });
-        encoder.push_debug_group(&group_label);
+        encoder.push_debug_group(&format!(
+            "EfbDepth addr={dest_addr:#010x} src=({src_x},{src_y} {width}x{height}) dst={encode_w}x{encode_h}"
+        ));
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("efb_depth_writeback_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target_view,
+                    view: writeback_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -850,12 +798,11 @@ impl GxRenderer {
             rpass.set_scissor_rect(0, 0, encode_w, encode_h);
             rpass.set_pipeline(&self.efb_depth_writeback_pipeline);
             rpass.set_bind_group(0, &bind_group, &[]);
-            rpass.insert_debug_marker("EFB depth -> Z24 RGBA8 pack");
             rpass.draw(0..3, 0..1);
         }
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: target_tex,
+                texture: writeback_tex,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::default(),
@@ -877,7 +824,6 @@ impl GxRenderer {
         encoder.pop_debug_group();
         self.pending_command_buffers.push(encoder.finish());
         self.efb_depth_resolve_uniform_write_pending = false;
-        let _ = queue;
 
         self.pending_writebacks.push(PendingWriteback {
             dest_addr,

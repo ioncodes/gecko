@@ -28,108 +28,112 @@ fn fetch(pos: vec2<f32>) -> vec4<f32> {
     return textureLoad(efb_color, coord, 0);
 }
 
+fn luma_u8(s: vec4<f32>) -> u32 {
+    let r = u32(round(s.r * 255.0));
+    let g = u32(round(s.g * 255.0));
+    let b = u32(round(s.b * 255.0));
+    return min((299u * r + 587u * g + 114u * b) / 1000u, 255u);
+}
+
+fn expand3(v: u32) -> u32 { return (v << 5u) | (v << 2u) | (v >> 1u); }
+fn expand4(v: u32) -> u32 { return (v << 4u) | v; }
+fn expand5(v: u32) -> u32 { return (v << 3u) | (v >> 2u); }
+fn expand6(v: u32) -> u32 { return (v << 2u) | (v >> 4u); }
+
 @fragment
 fn fs_rgba8(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     return fetch(p.xy);
 }
 
 @fragment
-fn fs_i8(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+fn fs_rgba8_intensity(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     let s = fetch(p.xy);
-    let r = u32(round(s.r * 255.0));
-    let g = u32(round(s.g * 255.0));
-    let b = u32(round(s.b * 255.0));
-    let y = (299u * r + 587u * g + 114u * b) / 1000u;
-    let yf = f32(min(y, 255u)) / 255.0;
+    let yf = f32(luma_u8(s)) / 255.0;
+    return vec4<f32>(yf, yf, yf, s.a);
+}
+
+@fragment
+fn fs_i8(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+    let yf = f32(luma_u8(fetch(p.xy))) / 255.0;
     return vec4<f32>(yf, yf, yf, yf);
 }
 
 @fragment
 fn fs_i4(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
-    let s = fetch(p.xy);
-    let r = u32(round(s.r * 255.0));
-    let g = u32(round(s.g * 255.0));
-    let b = u32(round(s.b * 255.0));
-    let y = (299u * r + 587u * g + 114u * b) / 1000u;
-    let q = (min(y, 255u) >> 4u) & 0xFu;
-    let v = (q << 4u) | q;
-    let vf = f32(v) / 255.0;
+    let q = (luma_u8(fetch(p.xy)) >> 4u) & 0xFu;
+    let vf = f32(expand4(q)) / 255.0;
     return vec4<f32>(vf, vf, vf, vf);
 }
 
 @fragment
 fn fs_ia8(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     let s = fetch(p.xy);
-    let r = u32(round(s.r * 255.0));
-    let g = u32(round(s.g * 255.0));
-    let b = u32(round(s.b * 255.0));
-    let y = (299u * r + 587u * g + 114u * b) / 1000u;
-    let yf = f32(min(y, 255u)) / 255.0;
+    let yf = f32(luma_u8(s)) / 255.0;
     return vec4<f32>(yf, yf, yf, s.a);
 }
 
 @fragment
 fn fs_ia4(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     let s = fetch(p.xy);
-    let r = u32(round(s.r * 255.0));
-    let g = u32(round(s.g * 255.0));
-    let b = u32(round(s.b * 255.0));
-    let a = u32(round(s.a * 255.0));
-    let y = (299u * r + 587u * g + 114u * b) / 1000u;
-    let iq = (min(y, 255u) >> 4u) & 0xFu;
-    let aq = (a >> 4u) & 0xFu;
-    let iv = (iq << 4u) | iq;
-    let av = (aq << 4u) | aq;
-    let ivf = f32(iv) / 255.0;
-    let avf = f32(av) / 255.0;
+    let iq = (luma_u8(s) >> 4u) & 0xFu;
+    let aq = (u32(round(s.a * 255.0)) >> 4u) & 0xFu;
+    let ivf = f32(expand4(iq)) / 255.0;
+    let avf = f32(expand4(aq)) / 255.0;
     return vec4<f32>(ivf, ivf, ivf, avf);
+}
+
+@fragment
+fn fs_rgb565_intensity(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+    let y = luma_u8(fetch(p.xy));
+    let r5 = (y >> 3u) & 0x1Fu;
+    let g6 = (y >> 2u) & 0x3Fu;
+    let b5 = (y >> 3u) & 0x1Fu;
+    return vec4<f32>(f32(expand5(r5)) / 255.0, f32(expand6(g6)) / 255.0, f32(expand5(b5)) / 255.0, 1.0);
 }
 
 @fragment
 fn fs_rgb565(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     let s = fetch(p.xy);
-
     let r5 = (u32(round(s.r * 255.0)) >> 3u) & 0x1Fu;
     let g6 = (u32(round(s.g * 255.0)) >> 2u) & 0x3Fu;
     let b5 = (u32(round(s.b * 255.0)) >> 3u) & 0x1Fu;
+    return vec4<f32>(f32(expand5(r5)) / 255.0, f32(expand6(g6)) / 255.0, f32(expand5(b5)) / 255.0, 1.0);
+}
 
-    let r8 = (r5 << 3u) | (r5 >> 2u);
-    let g8 = (g6 << 2u) | (g6 >> 4u);
-    let b8 = (b5 << 3u) | (b5 >> 2u);
-    
-    return vec4<f32>(f32(r8) / 255.0, f32(g8) / 255.0, f32(b8) / 255.0, 1.0);
+@fragment
+fn fs_rgb5a3_intensity(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+    let s = fetch(p.xy);
+    let y = luma_u8(s);
+    let a = u32(round(s.a * 255.0));
+
+    if (a == 255u) {
+        let vf = f32(expand5((y >> 3u) & 0x1Fu)) / 255.0;
+        return vec4<f32>(vf, vf, vf, 1.0);
+    } else {
+        let vf = f32(expand4((y >> 4u) & 0xFu)) / 255.0;
+        let af = f32(expand3((a >> 5u) & 0x7u)) / 255.0;
+        return vec4<f32>(vf, vf, vf, af);
+    }
 }
 
 @fragment
 fn fs_rgb5a3(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     let s = fetch(p.xy);
-    
     let r = u32(round(s.r * 255.0));
     let g = u32(round(s.g * 255.0));
     let b = u32(round(s.b * 255.0));
     let a = u32(round(s.a * 255.0));
 
     if (a == 255u) {
-        let r5 = (r >> 3u) & 0x1Fu;
-        let g5 = (g >> 3u) & 0x1Fu;
-        let b5 = (b >> 3u) & 0x1Fu;
-
-        let r8 = (r5 << 3u) | (r5 >> 2u);
-        let g8 = (g5 << 3u) | (g5 >> 2u);
-        let b8 = (b5 << 3u) | (b5 >> 2u);
-        
+        let r8 = expand5((r >> 3u) & 0x1Fu);
+        let g8 = expand5((g >> 3u) & 0x1Fu);
+        let b8 = expand5((b >> 3u) & 0x1Fu);
         return vec4<f32>(f32(r8) / 255.0, f32(g8) / 255.0, f32(b8) / 255.0, 1.0);
     } else {
-        let r4 = (r >> 4u) & 0xFu;
-        let g4 = (g >> 4u) & 0xFu;
-        let b4 = (b >> 4u) & 0xFu;
-        let a3 = (a >> 5u) & 0x7u;
-        
-        let r8 = (r4 << 4u) | r4;
-        let g8 = (g4 << 4u) | g4;
-        let b8 = (b4 << 4u) | b4;
-        let a8 = (a3 << 5u) | (a3 << 2u) | (a3 >> 1u);
-        
+        let r8 = expand4((r >> 4u) & 0xFu);
+        let g8 = expand4((g >> 4u) & 0xFu);
+        let b8 = expand4((b >> 4u) & 0xFu);
+        let a8 = expand3((a >> 5u) & 0x7u);
         return vec4<f32>(f32(r8) / 255.0, f32(g8) / 255.0, f32(b8) / 255.0, f32(a8) / 255.0);
     }
 }

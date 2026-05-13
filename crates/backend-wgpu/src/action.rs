@@ -125,11 +125,10 @@ impl GxRenderer {
                     rows_per_image: None,
                 };
 
-                let keep_cached = self.efb_copy_cache.get(&tid.ram_addr).is_some_and(|e| {
-                    e.format.base_texture_format() == *fmt
-                        && e.texture.size().width == *width
-                        && e.texture.size().height == *height
-                });
+                let keep_cached = self
+                    .efb_copy_cache
+                    .get(&tid.ram_addr)
+                    .is_some_and(|e| e.matches(*fmt, *width, *height));
                 if !keep_cached && let Some(entry) = self.efb_copy_cache.remove(&tid.ram_addr) {
                     self.return_to_pool(entry.texture, entry.view);
                 }
@@ -376,13 +375,9 @@ impl GxRenderer {
                 z_update,
                 alpha_supported,
                 depth_copy,
+                is_intensity,
             } => {
                 self.flush_pending_draws(device, queue);
-
-                // Readback + per-format encode is queued onto
-                // `pending_writebacks` for the next frame-boundary drain.
-                // The bind path samples `efb_copy_cache` (populated below)
-                // for same-frame correctness.
                 self.execute_copy_efb_to_texture(
                     device,
                     queue,
@@ -395,18 +390,23 @@ impl GxRenderer {
                     *mipmap,
                     *stride,
                     *depth_copy,
-                    *clear,
-                    *clear_color,
-                    *clear_z,
-                    *color_update,
-                    *alpha_update,
-                    *z_update,
-                    *alpha_supported,
                 );
 
-                if !*depth_copy && let Some(copy_fmt) = CopyFormat::from_u8_color(*raw_copy_format) {
+                if !*depth_copy
+                    && !*mipmap
+                    && let Some(copy_fmt) = CopyFormat::from_u8_color(*raw_copy_format)
+                {
                     self.cache_efb_copy_color(
-                        device, queue, *dest_addr, *src_x, *src_y, *src_w, *src_h, *mipmap, copy_fmt,
+                        device,
+                        queue,
+                        *dest_addr,
+                        *src_x,
+                        *src_y,
+                        *src_w,
+                        *src_h,
+                        *mipmap,
+                        copy_fmt,
+                        *is_intensity,
                     );
                 }
 
@@ -479,14 +479,15 @@ impl GxRenderer {
 
                 for slot in 0..8 {
                     if let Some(tid) = &bg_key.tex_keys[slot] {
-                        // EFB copies (keyed by bare ram_addr) win over the
-                        // RAM-decoded `texture_cache` (keyed by full TextureKey).
-                        let view = self
-                            .efb_copy_cache
-                            .get(&tid.ram_addr)
-                            .map(|e| &e.view)
-                            .or_else(|| self.texture_cache.get(tid).map(|(_, _, v)| v));
-                        if let Some(view) = view {
+                        let tex_entry = self.texture_cache.get(tid);
+                        let efb_match = tex_entry.and_then(|(tex_fmt, tex_tex, _)| {
+                            let size = tex_tex.size();
+                            self.efb_copy_cache
+                                .get(&tid.ram_addr)
+                                .filter(|e| e.matches(*tex_fmt, size.width, size.height))
+                                .map(|e| &e.view)
+                        });
+                        if let Some(view) = efb_match.or_else(|| tex_entry.map(|(_, _, v)| v)) {
                             tex_views[slot] = view;
                         }
 
