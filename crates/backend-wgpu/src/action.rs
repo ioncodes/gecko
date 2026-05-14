@@ -358,6 +358,11 @@ impl GxRenderer {
                 self.drain_pending_writebacks(device, queue);
             }
 
+            GxAction::FlushEfbWritebacks => {
+                self.flush_pending_draws(device, queue);
+                self.drain_pending_writebacks(device, queue);
+            }
+
             GxAction::CopyEfbToTexture {
                 dest_addr,
                 src_x,

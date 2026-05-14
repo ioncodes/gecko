@@ -98,6 +98,7 @@ pub struct GraphicsProcessor {
     // Receiver for encoded EFB-to-texture bytes coming back from the
     // renderer worker.
     pub efb_writeback_rx: Option<crossbeam_channel::Receiver<EfbWriteback>>,
+    pub pending_efb_writebacks: u32,
     pub draw_box_pool: Vec<Box<DrawData>>,
     pub draw_box_recycle_rx: Option<crossbeam_channel::Receiver<Box<DrawData>>>,
 }
@@ -183,6 +184,7 @@ impl GraphicsProcessor {
             stats: GxStats::default(),
             texture_hashes: FxHashMap::default(),
             efb_writeback_rx: None,
+            pending_efb_writebacks: 0,
             draw_box_pool: {
                 const POOL_PREALLOC: usize = 1024;
                 let mut v: Vec<Box<crate::host::DrawData>> = Vec::with_capacity(POOL_PREALLOC);

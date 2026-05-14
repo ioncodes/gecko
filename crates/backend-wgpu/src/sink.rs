@@ -498,7 +498,10 @@ impl RendererWorker {
 
 impl RenderSink for BatchingSink {
     fn exec(&mut self, action: GxAction) {
-        let force_flush = matches!(action, GxAction::PresentXfb { .. } | GxAction::CopyEfbToTexture { .. });
+        let force_flush = matches!(
+            action,
+            GxAction::PresentXfb { .. } | GxAction::CopyEfbToTexture { .. } | GxAction::FlushEfbWritebacks
+        );
 
         self.batch.push(action);
 

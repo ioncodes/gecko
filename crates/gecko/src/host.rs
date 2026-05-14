@@ -98,6 +98,9 @@ pub enum GxAction {
         alpha_supported: bool,
     },
 
+    /// I onyl really added this cause of fuckass GC games acting up (Wario World).
+    FlushEfbWritebacks,
+
     /// Composite all XFB copies from this frame into the output framebuffer.
     /// Emitted once per vblank by `present_xfb()`. Each [`XfbPart`]
     /// identifies a copy by `id` and places it at `(offset_x, offset_y)`.
