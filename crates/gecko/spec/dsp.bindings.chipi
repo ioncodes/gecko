@@ -1,0 +1,232 @@
+include "../../../submodules/chipi-spec/gamecube/dsp.chipi"
+
+target rust {
+    dispatch GcDsp {
+        output "$OUT_DIR/dsp_lut.rs"
+
+        context crate::gamecube::GameCube
+        handlers crate::flipper::dsp::interpreter
+        handler_const crate::system::GC
+        strategy fn_ptr_lut
+
+        invalid_handler crate::flipper::dsp::interpreter::invalid
+
+        instruction_type crate::flipper::dsp::instruction::Instruction {
+            output "$OUT_DIR/dsp_instr.rs"
+        }
+
+        handler control {
+            nop
+            halt
+            ifcc
+            jcc
+            callcc
+            retcc
+            rticc
+            jrcc
+            callrcc
+        }
+
+        handler loops {
+            loop_reg
+            bloop
+            loopi
+            bloopi
+        }
+
+        handler addr_reg {
+            dar
+            iar
+            subarn
+            addarn
+        }
+
+        handler load_store {
+            lri
+            lr
+            sr
+            mrr
+            si
+            lrr
+            lrrd
+            lrri
+            lrrn
+            srr
+            srrd
+            srri
+            srrn
+            lrs
+            srsh
+            srs
+            ilrr
+            ilrrd
+            ilrri
+            ilrrn
+        }
+
+        handler imm_alu {
+            addi
+            xori
+            andi
+            ori
+            cmpi
+            andf
+            andcf
+            addis
+            cmpis
+            lris
+        }
+
+        handler add_sub {
+            addr
+            addax
+            add
+            addp
+            subr
+            subax
+            sub
+            subp
+            addaxl
+            addpaxz
+        }
+
+        handler move_ops {
+            movr
+            movax
+            mov
+            movp
+            movpz
+            movnp
+        }
+
+        handler inc_dec {
+            incm
+            inc
+            decm
+            dec
+            neg
+            abs_ac
+        }
+
+        handler cmp_test {
+            cmp
+            cmpaxh
+            tst
+            tstprod
+            tstaxh
+            nx_0
+            nx_1
+            clr
+            clrp
+            clrl
+        }
+
+        handler logic {
+            xorr
+            andr
+            orr
+            andc
+            orc
+            xorc
+            not_ac
+        }
+
+        handler shifts {
+            lsl
+            lsr
+            asl
+            asr
+            lsl16
+            lsr16
+            asr16
+            lsrn
+            asrn
+            lsrnrx
+            asrnrx
+            lsrnr
+            asrnr
+        }
+
+        handler status {
+            sbclr
+            sbset
+            m2
+            m0
+            clr15
+            set15
+            set16
+            set40
+        }
+
+        handler mul {
+            mul
+            mulx
+            mulc
+            mulaxh
+            mulmv
+            mulmvz
+            mulac
+            mulxmv
+            mulxmvz
+            mulxac
+            mulcmv
+            mulcmvz
+            mulcac
+            madd
+            msub
+            maddx
+            msubx
+            maddc
+            msubc
+        }
+
+        subdispatch GcDspExt {
+            invalid_handler crate::flipper::dsp::interpreter::invalid_ext
+
+            instruction_type crate::flipper::dsp::instruction::GcDspExt {
+                output "$OUT_DIR/dsp_ext_instr.rs"
+            }
+
+            handler ext_addr {
+                ext_dr
+                ext_ir
+                ext_nr
+            }
+
+            handler ext_load {
+                ext_l
+                ext_ln
+            }
+
+            handler ext_store {
+                ext_s
+                ext_sn
+            }
+
+            handler ext_load_store {
+                ext_ls
+                ext_sl
+                ext_lsn
+                ext_sln
+                ext_lsm
+                ext_slm
+                ext_lsnm
+                ext_slnm
+            }
+
+            handler ext_ld {
+                ext_ld_00
+                ext_ldn_01
+                ext_ldm_10
+                ext_ldnm_11
+            }
+
+            handler ext_ldax {
+                ext_ldax
+                ext_ldaxn
+                ext_ldaxm
+                ext_ldaxnm
+            }
+        }
+    }
+}

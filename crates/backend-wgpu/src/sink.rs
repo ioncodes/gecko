@@ -1,6 +1,6 @@
 use crate::GxRenderer;
 
-use gecko::host::{DrawVertex, GxAction, RenderSink};
+use gecko::host::{DrawData, DrawVertex, GxAction, RenderSink};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
@@ -27,18 +27,25 @@ pub struct InlineSink {
     queue: wgpu::Queue,
     shared: Arc<Shared>,
     frame_ready_cb: Arc<OnceLock<FrameReadyCallback>>,
+    recycled_draw_data: Option<Box<DrawData>>,
 }
 
 impl RenderSink for InlineSink {
     fn exec(&mut self, action: GxAction) {
         self.gx.process_action(&self.device, &self.queue, &action);
 
-        if let GxAction::PresentXfb { .. } = action {
-            let view = self.gx.xfb_view.clone();
-            *self.shared.output.lock().unwrap() = view;
-            if let Some(cb) = self.frame_ready_cb.get() {
-                cb(Instant::now());
+        match action {
+            GxAction::PresentXfb { .. } => {
+                let view = self.gx.xfb_view.clone();
+                *self.shared.output.lock().unwrap() = view;
+                if let Some(cb) = self.frame_ready_cb.get() {
+                    cb(Instant::now());
+                }
             }
+            GxAction::Draw(boxed) => {
+                self.recycled_draw_data = Some(boxed);
+            }
+            _ => {}
         }
     }
 
@@ -48,6 +55,10 @@ impl RenderSink for InlineSink {
 
     fn vertex_scratch(&mut self) -> &mut Vec<DrawVertex> {
         &mut self.gx.scratch_vertices
+    }
+
+    fn take_draw_data(&mut self) -> Box<DrawData> {
+        self.recycled_draw_data.take().unwrap_or_default()
     }
 }
 
@@ -167,6 +178,7 @@ impl Renderer {
             queue,
             shared: shared.clone(),
             frame_ready_cb: frame_ready_cb.clone(),
+            recycled_draw_data: None,
         };
 
         let renderer = Renderer {

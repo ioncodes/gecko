@@ -229,6 +229,15 @@ pub trait RenderSink: Send {
     fn flush_efb_copies(&mut self, ram: &mut crate::mmio::RamViewMut<'_>) {
         let _ = ram;
     }
+
+    /// Acquire a `DrawData` box for the next draw call. The default impl
+    /// allocates fresh. Real renderers override to recycle boxes that come
+    /// back through [`Self::exec`] as `GxAction::Draw(box)`. The caller
+    /// overwrites every field before issuing the action, so pool entries
+    /// don't need to be reset.
+    fn take_draw_data(&mut self) -> Box<DrawData> {
+        Box::default()
+    }
 }
 
 /// Swallows every action. Used by headless runners (tinybench, tinytracer)

@@ -1,0 +1,276 @@
+include "../../../submodules/chipi-spec/gamecube/gekko.chipi"
+
+target rust {
+    dispatch Gekko {
+        output "$OUT_DIR/gekko_lut_wii.rs"
+
+        context crate::wii::Wii
+        handlers crate::gekko::interpreter
+        handler_const crate::system::WII
+        strategy fn_ptr_lut
+
+        invalid_handler crate::gekko::interpreter::invalid
+
+        instruction_type crate::gekko::instruction::Instruction {
+            output "$OUT_DIR/gekko_instr_wii.rs"
+        }
+
+        handler branch {
+            bx
+            bcx
+            bclrx
+            bcctrx
+        }
+
+        handler alu {
+            ori
+            oris
+            addx
+            addi
+            addis
+            xori
+            xoris
+            andi_dot
+            andis_dot
+            subfx
+            negx
+            addcx
+            subfcx
+            addex
+            subfex
+            addzex
+            subfzex
+            addmex
+            subfmex
+            mullwx
+            divwux
+            divwx
+            mulhwux
+            mulhwx
+            subfic
+            addic
+            addic_dot
+            mulli
+        }
+
+        handler rotate {
+            rlwinmx
+            rlwimix
+            rlwnmx
+        }
+
+        handler msr {
+            mtmsr
+            mfmsr
+            rfi
+        }
+
+        handler spr {
+            mtspr
+            mfspr
+        }
+
+        handler segment {
+            mtsr
+            mfsr
+        }
+
+        handler store_load {
+            stw
+            stwu
+            sth
+            sthu
+            lwz
+            lwzu
+            lbz
+            lbzu
+            stb
+            stbu
+            lhz
+            lhzu
+            lha
+            lhau
+            lmw
+            stmw
+            lwzx
+            lbzx
+            lhzx
+            lhax
+            stwx
+            stbx
+            sthx
+            lwzux
+            lbzux
+            lhzux
+            lhaux
+            stwux
+            stbux
+            sthux
+            lwbrx
+            lhbrx
+            stwbrx
+            sthbrx
+        }
+
+        handler store_load_fp {
+            lfd
+            lfdu
+            stfd
+            stfdu
+            lfs
+            lfsu
+            stfs
+            stfsu
+            lfsx
+            lfsux
+            lfdx
+            lfdux
+            stfsx
+            stfsux
+            stfdx
+            stfdux
+            stfiwx
+        }
+
+        handler store_load_psq {
+            psq_l
+            psq_lu
+            psq_st
+            psq_stu
+            psq_lx
+            psq_lux
+            psq_stx
+            psq_stux
+        }
+
+        handler compare {
+            cmp
+            cmpi
+            cmpli
+            cmpl
+        }
+
+        handler nop {
+            isync
+            sync
+            eieio
+            dcbf
+            dcbi
+            dcbst
+            dcbt
+            dcbtst
+            dcba
+            dcbz
+            dcbz_l
+            icbi
+            tlbie
+            tlbia
+            tlbsync
+            tlbld
+            tlbli
+        }
+
+        handler logical {
+            andx
+            orx
+            xorx
+            nandx
+            norx
+            andcx
+            orcx
+            eqvx
+            slwx
+            srwx
+            srawx
+            srawix
+            cntlzwx
+            extshx
+            extsbx
+        }
+
+        handler cr_ops {
+            mtcrf
+            mfcr
+            crxor
+            cror
+            crand
+            creqv
+            crnor
+            crnand
+            crandc
+            crorc
+            mcrf
+        }
+
+        handler fp_ops {
+            mtfsfx
+            mffsx
+            mtfsb0x
+            mtfsb1x
+            mtfsfix
+            mcrfs
+            fmrx
+            fnegx
+            fabsx
+            fnabsx
+            frspx
+            fctiwx
+            fctiwzx
+            fcmpu
+            fcmpo
+            faddx
+            fsubx
+            fmulx
+            fdivx
+            fmaddx
+            fmsubx
+            fnmaddx
+            fnmsubx
+            faddsx
+            fsubsx
+            fmulsx
+            fdivsx
+            fmaddsx
+            fmsubsx
+            fnmaddsx
+            fnmsubsx
+            fsqrtsx
+            fresx
+            fsqrtx
+            fselx
+            frsqrtex
+        }
+
+        handler ps_ops {
+            ps_cmpu0
+            ps_cmpo0
+            ps_cmpu1
+            ps_cmpo1
+            ps_res
+            ps_rsqrte
+            ps_neg
+            ps_mr
+            ps_nabs
+            ps_abs
+            ps_merge00
+            ps_merge01
+            ps_merge10
+            ps_merge11
+            ps_sum0
+            ps_sum1
+            ps_muls0
+            ps_muls1
+            ps_madds0
+            ps_madds1
+            ps_div
+            ps_sub
+            ps_add
+            ps_sel
+            ps_mul
+            ps_msub
+            ps_madd
+            ps_nmsub
+            ps_nmadd
+        }
+    }
+}

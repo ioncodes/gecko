@@ -77,7 +77,7 @@ impl GraphicsProcessor {
             self.stats.draws_by_primitive[(primitive as usize) & 0x7] += 1;
         }
 
-        let mut boxed: Box<DrawData> = Box::default();
+        let mut boxed: Box<DrawData> = renderer.take_draw_data();
 
         self.draw_vertices_scratch.clear();
         if self.draw_vertices_scratch.capacity() < vertex_count {
