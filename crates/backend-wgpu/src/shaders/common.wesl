@@ -70,14 +70,14 @@ struct VsIn {
     @location(2) color1: vec4<f32>,
     @location(3) normal: vec3<f32>,
     @location(4) pos_view: vec3<f32>,
-    @location(5) tex0: vec3<f32>,
-    @location(6) tex1: vec3<f32>,
-    @location(7) tex2: vec3<f32>,
-    @location(8) tex3: vec3<f32>,
-    @location(9) tex4: vec3<f32>,
-    @location(10) tex5: vec3<f32>,
-    @location(11) tex6: vec3<f32>,
-    @location(12) tex7: vec3<f32>,
+    @if(TEXCOORD_0_ENABLED) @location(5) tex0: vec3<f32>,
+    @if(TEXCOORD_1_ENABLED) @location(6) tex1: vec3<f32>,
+    @if(TEXCOORD_2_ENABLED) @location(7) tex2: vec3<f32>,
+    @if(TEXCOORD_3_ENABLED) @location(8) tex3: vec3<f32>,
+    @if(TEXCOORD_4_ENABLED) @location(9) tex4: vec3<f32>,
+    @if(TEXCOORD_5_ENABLED) @location(10) tex5: vec3<f32>,
+    @if(TEXCOORD_6_ENABLED) @location(11) tex6: vec3<f32>,
+    @if(TEXCOORD_7_ENABLED) @location(12) tex7: vec3<f32>,
 };
 
 struct VsOut {

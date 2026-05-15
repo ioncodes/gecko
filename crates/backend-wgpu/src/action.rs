@@ -1,8 +1,8 @@
 use crate::pipeline::{FullPipelineKey, PipelineKey};
 use crate::shader_specialization::{self, ShaderKey};
 use crate::{
-    BindGroupCacheKey, DRAW_UNIFORMS_SIZE, DrawUniforms, FRAME_UNIFORMS_SIZE, FrameUniforms, GpuVertex, GxRenderer,
-    SamplerKey, helpers,
+    BindGroupCacheKey, DRAW_UNIFORMS_SIZE, DrawUniforms, FRAME_UNIFORMS_SIZE, FrameUniforms, GxRenderer, SamplerKey,
+    helpers,
 };
 use gecko::flipper::gx::regs::{MagFilter, MinFilter, WrapMode};
 use gecko::flipper::gx::texture::CopyFormat;
@@ -78,9 +78,48 @@ impl GxRenderer {
         }
     }
 
-    /// Process a single [`GxAction`]. Called by the worker thread for each
-    /// action received from the channel. Draws are accumulated and flushed
-    /// lazily when a non-draw action arrives.
+    /// Replace the renderer's vertex scratch with `new_scratch`, returning the
+    /// previous buffer. For sinks (like web) that decouple vertex appending
+    /// from action processing vertices are collected in a shared `Vec`
+    /// while actions are queued, then both are drained together on the main
+    /// thread, at which point the drained scratch must become the renderer's
+    /// `scratch_vertices` so each `Draw`'s `base_vertex` indexes correctly.
+    pub fn replace_vertex_scratch(
+        &mut self,
+        new_scratch: Vec<gecko::host::DrawVertex>,
+    ) -> Vec<gecko::host::DrawVertex> {
+        std::mem::replace(&mut self.scratch_vertices, new_scratch)
+    }
+
+    /// Wrapper around [`Self::process_action`] for sinks that wrap a
+    /// `GxRenderer` in a `Mutex` (and therefore can't expose this renderer's
+    /// `scratch_vertices` directly to the gecko side via the `RenderSink`
+    /// trait). Maintains the invariant that `external_scratch` and
+    /// `self.scratch_vertices` stay length-synced across `exec` calls: any
+    /// new vertices appended to `external_scratch` since the last sync are
+    /// brought into `self.scratch_vertices` before processing the action,
+    /// and if `process_action` triggers a flush that clears the renderer's
+    /// scratch, `external_scratch` is truncated to match.
+    pub fn process_action_with_external_scratch(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        action: &GxAction,
+        external_scratch: &mut Vec<gecko::host::DrawVertex>,
+    ) {
+        if external_scratch.len() > self.scratch_vertices.len() {
+            let start = self.scratch_vertices.len();
+            self.scratch_vertices.extend_from_slice(&external_scratch[start..]);
+        }
+        self.process_action(device, queue, action);
+        if self.scratch_vertices.len() < external_scratch.len() {
+            external_scratch.truncate(self.scratch_vertices.len());
+        }
+    }
+
+    /// Process a single [`GxAction`]. Called inline on the emu thread by
+    /// [`InlineSink::exec`]. Draws are accumulated and flushed lazily when a
+    /// non-draw action arrives.
     pub fn process_action(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, action: &GxAction) {
         let draw_stride = self.draw_uniform_stride as usize;
         let draw_struct_size = DRAW_UNIFORMS_SIZE.get() as usize;
@@ -227,7 +266,7 @@ impl GxRenderer {
                 };
                 if !self.pipeline_cache.contains_key(&full_key) {
                     let module = &self.shader_cache[&shader_key];
-                    let pipeline = self.create_pipeline(device, module, &pipeline_key);
+                    let pipeline = self.create_pipeline(device, module, &full_key);
                     self.pipeline_cache.insert(full_key, pipeline);
                 }
 
@@ -310,8 +349,24 @@ impl GxRenderer {
                 #[cfg(feature = "renderdoc-capture")]
                 self.draw_primitives.push(draw.primitive);
 
-                self.scratch_draws
-                    .push((first_vertex, vertex_count, first_index, index_count));
+                // Compute packed vertex stride/offset for this draw. Stride
+                // matches the WESL `VsIn` layout gated by
+                // `TEXCOORD_N_ENABLED`: 5 fixed attrs (68b) + N texcoord
+                // attrs (12 byteroos each).
+                let stride = 68 + 12 * shader_key.active_texcoords as u32;
+                let packed_byte_offset = self
+                    .scratch_draws
+                    .last()
+                    .map(|d| d.packed_vertex_byte_offset + d.vertex_count * d.packed_vertex_stride)
+                    .unwrap_or(0);
+                self.scratch_draws.push(crate::DrawRecord {
+                    src_vertex_index: first_vertex,
+                    vertex_count,
+                    first_index,
+                    index_count,
+                    packed_vertex_byte_offset: packed_byte_offset,
+                    packed_vertex_stride: stride,
+                });
             }
 
             GxAction::CopyXfb {
@@ -501,16 +556,16 @@ impl GxRenderer {
                     0 => wgpu::BindGroupEntry {
                         binding: 0,
                         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &self.frame_uniform_buffer,
-                            offset: 0,
+                            buffer: &self.draw_buffer,
+                            offset: self.draw_buffer_layout.frame_offset,
                             size: Some(FRAME_UNIFORMS_SIZE),
                         }),
                     },
                     1 => wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &self.draw_uniform_buffer,
-                            offset: 0,
+                            buffer: &self.draw_buffer,
+                            offset: self.draw_buffer_layout.draw_offset,
                             size: Some(DRAW_UNIFORMS_SIZE),
                         }),
                     },
@@ -589,7 +644,7 @@ impl GxRenderer {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
-            rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            let vertex_section_off = self.draw_buffer_layout.vertex_offset;
             #[cfg(feature = "renderdoc-capture")]
             {
                 if needs_initial_clear {
@@ -604,15 +659,37 @@ impl GxRenderer {
                 }
             }
 
-            rpass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            let index_used = (self.scratch_indices.len() * std::mem::size_of::<u32>()) as u64;
+            let index_off = self.draw_buffer_layout.index_offset;
+            rpass.set_index_buffer(
+                self.draw_buffer.slice(index_off..index_off + index_used),
+                wgpu::IndexFormat::Uint32,
+            );
 
             let mut last_pipeline_ptr: *const wgpu::RenderPipeline = std::ptr::null();
+            let mut last_vertex_slice: Option<(u64, u64)> = None;
             let mut last_viewport: Option<(f32, f32, f32, f32, f32, f32)> = None;
             let mut last_scissor: Option<(u32, u32, u32, u32)> = None;
-            
-            for (index, (first_vertex, vertex_count, first_index, index_count)) in
-                self.scratch_draws.iter().copied().enumerate()
-            {
+
+            for (index, draw) in self.scratch_draws.iter().copied().enumerate() {
+                let crate::DrawRecord {
+                    vertex_count,
+                    first_index,
+                    index_count,
+                    packed_vertex_byte_offset,
+                    packed_vertex_stride,
+                    src_vertex_index: _,
+                } = draw;
+
+                let first_vertex = 0u32;
+                let vertex_bytes = u64::from(vertex_count) * u64::from(packed_vertex_stride);
+                let vertex_slice_start = vertex_section_off + u64::from(packed_vertex_byte_offset);
+                let vertex_slice_end = vertex_slice_start + vertex_bytes;
+                if last_vertex_slice != Some((vertex_slice_start, vertex_slice_end)) {
+                    rpass.set_vertex_buffer(0, self.draw_buffer.slice(vertex_slice_start..vertex_slice_end));
+                    last_vertex_slice = Some((vertex_slice_start, vertex_slice_end));
+                }
+
                 #[cfg(feature = "renderdoc-capture")]
                 {
                     let primitive = self.draw_primitives[index];
@@ -686,7 +763,7 @@ impl GxRenderer {
                     rpass.set_scissor_rect(sc_x, sc_y, sc_w, sc_h);
                     last_scissor = Some(sc_tuple);
                 }
-                
+
                 #[cfg(feature = "renderdoc-capture")]
                 {
                     let raster_marker = format!(

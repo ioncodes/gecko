@@ -1,4 +1,4 @@
-use crate::{GpuVertex, GxRenderer, PendingWriteback, align_up};
+use crate::{GxRenderer, PendingWriteback, align_up, compute_draw_buffer_layout};
 use gecko::common::Address;
 use gecko::flipper::gx::texture::{self, CopyFormat};
 use gecko::host::XfbPart;
@@ -49,61 +49,84 @@ impl EfbPackPipelines {
     }
 }
 
-/// Upload `bytes` into `buffer` at offset 0 via `write_buffer_with`, which
-/// hands us a writable view into wgpu's staging memory and skips the extra
-/// copy `write_buffer` would do. No-op when `bytes` is empty.
-fn write_buffer(queue: &wgpu::Queue, buffer: &wgpu::Buffer, bytes: &[u8]) {
-    let Some(size) = std::num::NonZeroU64::new(bytes.len() as u64) else {
-        return;
-    };
-    let mut view = queue
-        .write_buffer_with(buffer, 0, size)
-        .expect("buffer too small for write_buffer_with");
-    view.copy_from_slice(bytes);
-}
-
 impl GxRenderer {
     pub(crate) fn upload_buffers(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame_uniform_bytes: &[u8]) {
         let num_draws = self.scratch_draws.len();
-        self.ensure_draw_capacity(device, num_draws);
+        self.ensure_draw_capacity(num_draws);
 
-        if self.scratch_vertices.len() > self.vertex_capacity {
-            self.vertex_capacity = self.scratch_vertices.len().next_power_of_two();
-            self.vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("gx_vertices"),
-                size: (self.vertex_capacity * std::mem::size_of::<GpuVertex>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        // Total packed vertex bytes = sum of per-draw (vertex_count * stride).
+        // Variable per draw because stride depends on `active_texcoords`.
+        let vertex_used: u64 = self
+            .scratch_draws
+            .iter()
+            .map(|d| u64::from(d.vertex_count) * u64::from(d.packed_vertex_stride))
+            .sum();
+        let frame_used = frame_uniform_bytes.len() as u64;
+        let draw_used = self.scratch_uniform_bytes.len() as u64;
+        let index_used = (self.scratch_indices.len() * std::mem::size_of::<u32>()) as u64;
+
+        let layout = self.draw_buffer_layout;
+        let needs_grow = frame_used > layout.frame_capacity
+            || draw_used > layout.draw_capacity
+            || vertex_used > layout.vertex_capacity
+            || index_used > layout.index_capacity;
+        if needs_grow {
+            let frame_cap = grow_capacity(layout.frame_capacity, frame_used);
+            let draw_cap = grow_capacity(layout.draw_capacity, draw_used);
+            let vertex_cap = grow_capacity(layout.vertex_capacity, vertex_used);
+            let index_cap = grow_capacity(layout.index_capacity, index_used);
+            self.draw_buffer_layout =
+                compute_draw_buffer_layout(self.uniform_alignment, frame_cap, draw_cap, vertex_cap, index_cap);
+            self.draw_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gx_draw_buffer"),
+                size: self.draw_buffer_layout.total_size,
+                usage: wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::UNIFORM
+                    | wgpu::BufferUsages::VERTEX
+                    | wgpu::BufferUsages::INDEX,
                 mapped_at_creation: false,
             });
-        }
-
-        if self.scratch_indices.len() > self.index_buffer_capacity {
-            self.index_buffer_capacity = self.scratch_indices.len().next_power_of_two();
-            self.index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("gx_indices"),
-                size: (self.index_buffer_capacity * std::mem::size_of::<u32>()) as u64,
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-        }
-
-        let needed_frame_size = frame_uniform_bytes.len() as u64;
-        if needed_frame_size > self.frame_uniform_buffer.size() {
-            let new_size = needed_frame_size.next_power_of_two().max(needed_frame_size);
-            self.frame_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("gx_frame_uniforms"),
-                size: new_size,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
+            // Bind groups embed BufferBinding pointers to the now-stale buffer.
             self.bind_group_cache.clear();
         }
 
-        write_buffer(queue, &self.frame_uniform_buffer, frame_uniform_bytes);
-        write_buffer(queue, &self.draw_uniform_buffer, &self.scratch_uniform_bytes);
-        write_buffer(queue, &self.vertex_buffer, bytemuck::cast_slice(&self.scratch_vertices));
+        let layout = self.draw_buffer_layout;
+        let total_used = layout.index_offset + index_used;
+        let Some(size) = std::num::NonZeroU64::new(total_used) else {
+            return;
+        };
+        let mut view = queue
+            .write_buffer_with(&self.draw_buffer, 0, size)
+            .expect("gx_draw_buffer too small for write_buffer_with");
+        let frame_off = layout.frame_offset as usize;
+        let draw_off = layout.draw_offset as usize;
+        let vertex_off = layout.vertex_offset as usize;
+        let index_off = layout.index_offset as usize;
+        view[frame_off..frame_off + frame_uniform_bytes.len()].copy_from_slice(frame_uniform_bytes);
+        view[draw_off..draw_off + self.scratch_uniform_bytes.len()].copy_from_slice(&self.scratch_uniform_bytes);
+
+        for draw in &self.scratch_draws {
+            let stride = draw.packed_vertex_stride as usize;
+            let texcoord_bytes = stride - 68;
+            let mut cursor = vertex_off + draw.packed_vertex_byte_offset as usize;
+            let src_base = draw.src_vertex_index as usize;
+            let src_end = src_base + draw.vertex_count as usize;
+            for src_v in &self.scratch_vertices[src_base..src_end] {
+                let src_bytes = bytemuck::bytes_of(src_v);
+
+                view[cursor..cursor + 68].copy_from_slice(&src_bytes[..68]);
+                if texcoord_bytes > 0 {
+                    view[cursor + 68..cursor + 68 + texcoord_bytes]
+                        .copy_from_slice(&src_bytes[68..68 + texcoord_bytes]);
+                }
+
+                cursor += stride;
+            }
+        }
+
         if !self.scratch_indices.is_empty() {
-            write_buffer(queue, &self.index_buffer, bytemuck::cast_slice(&self.scratch_indices));
+            view[index_off..index_off + index_used as usize]
+                .copy_from_slice(bytemuck::cast_slice(&self.scratch_indices));
         }
     }
 
@@ -946,18 +969,18 @@ impl GxRenderer {
         }
     }
 
-    fn ensure_draw_capacity(&mut self, device: &wgpu::Device, count: usize) {
+    fn ensure_draw_capacity(&mut self, count: usize) {
         if count <= self.draw_uniform_capacity {
             return;
         }
-
         self.draw_uniform_capacity = count.next_power_of_two();
-        self.draw_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gx_draw_uniforms"),
-            size: self.draw_uniform_stride * self.draw_uniform_capacity as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        self.bind_group_cache.clear();
+    }
+}
+
+pub(crate) fn grow_capacity(current: u64, needed: u64) -> u64 {
+    if needed <= current {
+        current
+    } else {
+        needed.next_power_of_two().max(needed).max(current)
     }
 }

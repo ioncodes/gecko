@@ -153,6 +153,7 @@ impl GraphicsProcessor {
         boxed.ambient_color = self.cached_ambient_color;
         boxed.material_color = self.cached_material_color;
         boxed.lights = self.cached_lights;
+        boxed.active_texcoords = (self.xf_mem[crate::flipper::gx::constants::XF_NUM_TEXGENS] as u8).min(8);
         boxed.frame_dirty = self.frame_state_dirty;
         self.frame_state_dirty = false;
         renderer.exec(GxAction::Draw(boxed));

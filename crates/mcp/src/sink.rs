@@ -73,10 +73,12 @@ impl RenderSink for McpSink {
             }
             _ => {}
         }
-        self.gx
-            .lock()
-            .unwrap()
-            .process_action_with_external_scratch(&self.device, &self.queue, &action, &mut self.scratch);
+        self.gx.lock().unwrap().process_action_with_external_scratch(
+            &self.device,
+            &self.queue,
+            &action,
+            &mut self.scratch,
+        );
     }
 
     fn vertex_scratch(&mut self) -> &mut Vec<DrawVertex> {

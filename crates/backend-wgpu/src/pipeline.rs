@@ -1,5 +1,5 @@
 use crate::shader_specialization::{KEY_BYTES as SHADER_KEY_BYTES, ShaderKey};
-use crate::{GpuVertex, GxRenderer, helpers};
+use crate::{GxRenderer, helpers};
 use chapa::BitField;
 use gecko::flipper::gx::regs::{BlendFactor, CompareFunc, CullMode, LogicOp};
 
@@ -186,84 +186,54 @@ impl GxRenderer {
         &self,
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
-        key: &PipelineKey,
+        full_key: &FullPipelineKey,
     ) -> wgpu::RenderPipeline {
+        let key = &full_key.fixed;
+        let active_texcoords = full_key.shader.active_texcoords.min(8) as usize;
+
+        const BASE_ATTRS: [wgpu::VertexAttribute; 5] = [
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 0,
+                shader_location: 0,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 12,
+                shader_location: 1,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 28,
+                shader_location: 2,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 44,
+                shader_location: 3,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 56,
+                shader_location: 4,
+            },
+        ];
+
+        let mut attrs: Vec<wgpu::VertexAttribute> = Vec::with_capacity(5 + active_texcoords);
+        attrs.extend_from_slice(&BASE_ATTRS);
+
+        for i in 0..active_texcoords {
+            attrs.push(wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 68 + (i as u64) * 12,
+                shader_location: 5 + i as u32,
+            });
+        }
+
         let vertex_layout = wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<GpuVertex>() as u64,
+            array_stride: 68 + (active_texcoords as u64) * 12,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                // position: vec3<f32>
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 0,
-                    shader_location: 0,
-                },
-                // color0: vec4<f32>
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    offset: 12,
-                    shader_location: 1,
-                },
-                // color1: vec4<f32>
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    offset: 28,
-                    shader_location: 2,
-                },
-                // normal: vec3<f32>
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 44,
-                    shader_location: 3,
-                },
-                // pos_view: vec3<f32>
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 56,
-                    shader_location: 4,
-                },
-                // tex0-tex7: vec3<f32> each (s, t, q for perspective-correct interpolation)
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 68,
-                    shader_location: 5,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 80,
-                    shader_location: 6,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 92,
-                    shader_location: 7,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 104,
-                    shader_location: 8,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 116,
-                    shader_location: 9,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 128,
-                    shader_location: 10,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 140,
-                    shader_location: 11,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 152,
-                    shader_location: 12,
-                },
-            ],
+            attributes: &attrs,
         };
 
         let blend = if key.blend_enable {

@@ -13,9 +13,9 @@ const ALPHA_TEST_WESL: &str = include_str!("shaders/alpha_test.wesl");
 const LIGHTING_WESL: &str = include_str!("shaders/lighting.wesl");
 const MAIN_WESL: &str = include_str!("shaders/main.wesl");
 
-pub(crate) const KEY_BYTES: usize = 5;
+pub(crate) const KEY_BYTES: usize = 6;
 const CACHE_MAGIC: [u8; 4] = *b"GSKC";
-pub(crate) const CACHE_VERSION: u32 = 5;
+pub(crate) const CACHE_VERSION: u32 = 6;
 pub(crate) const SHADER_CACHE_PATH: &str = "cache/shader_keys.bin";
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
@@ -25,6 +25,7 @@ pub(crate) struct ShaderKey {
     pub has_lighting_c0: bool,
     pub has_lighting_c1: bool,
     pub alpha_test_enabled: bool,
+    pub active_texcoords: u8,
 }
 
 impl ShaderKey {
@@ -45,6 +46,7 @@ impl ShaderKey {
             has_lighting_c0,
             has_lighting_c1,
             alpha_test_enabled: !always_pass,
+            active_texcoords: draw.active_texcoords.min(8),
         }
     }
 }
@@ -69,6 +71,7 @@ impl ShaderKey {
             self.has_lighting_c0 as u8,
             self.has_lighting_c1 as u8,
             self.alpha_test_enabled as u8,
+            self.active_texcoords,
         ]
     }
 
@@ -79,6 +82,7 @@ impl ShaderKey {
             has_lighting_c0: b[2] != 0,
             has_lighting_c1: b[3] != 0,
             alpha_test_enabled: b[4] != 0,
+            active_texcoords: b[5].min(8),
         }
     }
 }
@@ -142,6 +146,10 @@ pub(crate) fn compile_variant(key: ShaderKey) -> String {
     compiler.set_feature("HAS_LIGHTING_C0", key.has_lighting_c0);
     compiler.set_feature("HAS_LIGHTING_C1", key.has_lighting_c1);
     compiler.set_feature("ALPHA_TEST_ENABLED", key.alpha_test_enabled);
+
+    for i in 0..8u8 {
+        compiler.set_feature(&format!("TEXCOORD_{i}_ENABLED"), i < key.active_texcoords);
+    }
 
     let entry = "package::main".parse().expect("valid module path");
     compiler

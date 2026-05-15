@@ -160,6 +160,7 @@ pub struct DrawData {
     pub primitive: Primitive,
     pub base_vertex: u32,
     pub vertex_count: u32,
+    pub active_texcoords: u8,
     pub modelview: [[f32; 4]; 4],
     // TEV combiner state
     pub tev_color_env: [u32; 16],

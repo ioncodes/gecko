@@ -20,14 +20,16 @@ fn vs_main(in: VsIn) -> VsOut {
         frame.ambient_color1, frame.material_color1,
         in.color1, in.normal, in.pos_view,
     );
-    out.uv0 = in.tex0;
-    out.uv1 = in.tex1;
-    out.uv2 = in.tex2;
-    out.uv3 = in.tex3;
-    out.uv4 = in.tex4;
-    out.uv5 = in.tex5;
-    out.uv6 = in.tex6;
-    out.uv7 = in.tex7;
+
+    @if(TEXCOORD_0_ENABLED) { out.uv0 = in.tex0; } @else { out.uv0 = vec3<f32>(0.0, 0.0, 1.0); }
+    @if(TEXCOORD_1_ENABLED) { out.uv1 = in.tex1; } @else { out.uv1 = vec3<f32>(0.0, 0.0, 1.0); }
+    @if(TEXCOORD_2_ENABLED) { out.uv2 = in.tex2; } @else { out.uv2 = vec3<f32>(0.0, 0.0, 1.0); }
+    @if(TEXCOORD_3_ENABLED) { out.uv3 = in.tex3; } @else { out.uv3 = vec3<f32>(0.0, 0.0, 1.0); }
+    @if(TEXCOORD_4_ENABLED) { out.uv4 = in.tex4; } @else { out.uv4 = vec3<f32>(0.0, 0.0, 1.0); }
+    @if(TEXCOORD_5_ENABLED) { out.uv5 = in.tex5; } @else { out.uv5 = vec3<f32>(0.0, 0.0, 1.0); }
+    @if(TEXCOORD_6_ENABLED) { out.uv6 = in.tex6; } @else { out.uv6 = vec3<f32>(0.0, 0.0, 1.0); }
+    @if(TEXCOORD_7_ENABLED) { out.uv7 = in.tex7; } @else { out.uv7 = vec3<f32>(0.0, 0.0, 1.0); }
+    
     return out;
 }
 

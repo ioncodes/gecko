@@ -30,6 +30,32 @@ pub(crate) fn align_up(value: u64, alignment: u64) -> u64 {
     (value + alignment - 1) & !(alignment - 1)
 }
 
+pub(crate) fn compute_draw_buffer_layout(
+    uniform_alignment: u64,
+    frame_capacity: u64,
+    draw_capacity: u64,
+    vertex_capacity: u64,
+    index_capacity: u64,
+) -> DrawBufferLayout {
+    let frame_offset = 0;
+    let draw_offset = align_up(frame_offset + frame_capacity, uniform_alignment);
+    let vertex_offset = align_up(draw_offset + draw_capacity, uniform_alignment);
+    let index_offset = align_up(vertex_offset + vertex_capacity, 4);
+    let total_size = (index_offset + index_capacity).max(uniform_alignment);
+
+    DrawBufferLayout {
+        frame_offset,
+        frame_capacity,
+        draw_offset,
+        draw_capacity,
+        vertex_offset,
+        vertex_capacity,
+        index_offset,
+        index_capacity,
+        total_size,
+    }
+}
+
 type SamplerKey = (WrapMode, WrapMode, MagFilter, MinFilter);
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -116,21 +142,33 @@ impl EfbCopyEntry {
     }
 }
 
+/// Layout of [`GxRenderer::draw_buffer`]: a single backing wgpu buffer with
+/// usage `COPY_DST | UNIFORM | VERTEX | INDEX` that holds all per-frame
+/// upload data in four sections at fixed offsets.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct DrawBufferLayout {
+    pub(crate) frame_offset: u64,
+    pub(crate) frame_capacity: u64,
+    pub(crate) draw_offset: u64,
+    pub(crate) draw_capacity: u64,
+    pub(crate) vertex_offset: u64,
+    pub(crate) vertex_capacity: u64,
+    pub(crate) index_offset: u64,
+    pub(crate) index_capacity: u64,
+    pub(crate) total_size: u64,
+}
+
 pub struct GxRenderer {
     pub(crate) pipeline_cache: FxHashMap<FullPipelineKey, wgpu::RenderPipeline>,
     pub(crate) shader_cache: FxHashMap<ShaderKey, wgpu::ShaderModule>,
     pub(crate) pipeline_layout: wgpu::PipelineLayout,
     pub(crate) surface_format: wgpu::TextureFormat,
     pub(crate) bind_group_layout: wgpu::BindGroupLayout,
-    pub(crate) frame_uniform_buffer: wgpu::Buffer,
-    pub(crate) draw_uniform_buffer: wgpu::Buffer,
+    pub(crate) draw_buffer: wgpu::Buffer,
+    pub(crate) draw_buffer_layout: DrawBufferLayout,
+    pub(crate) uniform_alignment: u64,
     pub(crate) draw_uniform_stride: u64,
     pub(crate) draw_uniform_capacity: usize,
-    pub(crate) vertex_buffer: wgpu::Buffer,
-    pub(crate) vertex_capacity: usize,
-    // Index buffers.
-    pub(crate) index_buffer: wgpu::Buffer,
-    pub(crate) index_buffer_capacity: usize,
     pub(crate) scratch_indices: Vec<u32>,
     // EFB: resolved (1x) color used for CopyXfb reads + texture binding.
     pub(crate) efb_texture: wgpu::Texture,
@@ -157,11 +195,7 @@ pub struct GxRenderer {
     pub(crate) efb_depth_writeback_target: Option<(wgpu::Texture, wgpu::TextureView)>,
     pub(crate) fallback_view: wgpu::TextureView,
     pub(crate) scratch_vertices: Vec<GpuVertex>,
-    /// `(first_vertex, vertex_count, first_index, index_count)`. When
-    /// `index_count == 0` the draw is non-indexed (input was Triangles,
-    /// no expansion needed). Otherwise `draw_indexed` is used with
-    /// `base_vertex = first_vertex`.
-    pub(crate) scratch_draws: Vec<(u32, u32, u32, u32)>,
+    pub(crate) scratch_draws: Vec<DrawRecord>,
     pub(crate) scratch_uniform_bytes: Vec<u8>,
     pub(crate) bind_group_cache: FxHashMap<BindGroupCacheKey, wgpu::BindGroup>,
     // Per-frame draw accumulation (persists across process_action calls,
@@ -211,6 +245,24 @@ pub struct GxRenderer {
     pub(crate) efb_depth_resolve_uniform_write_pending: bool,
     pub(crate) efb_readback_staging_pool: FxHashMap<u64, Vec<wgpu::Buffer>>,
     pub(crate) pending_writebacks: Vec<PendingWriteback>,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct DrawRecord {
+    /// Index into [`GxRenderer::scratch_vertices`] (Vec<DrawVertex>) where
+    /// this draw's source vertices start. Used at upload time to pack each
+    /// vertex into the destination stride.
+    pub src_vertex_index: u32,
+    pub vertex_count: u32,
+    pub first_index: u32,
+    pub index_count: u32,
+    /// Byte offset of this draw's vertices inside the packed vertex
+    /// section of `draw_buffer` (relative to section start, not buffer
+    /// start). Used to compute the buffer slice for `set_vertex_buffer`.
+    pub packed_vertex_byte_offset: u32,
+    /// Bytes per vertex in the packed stream
+    /// (`68 + 12 * active_texcoords`).
+    pub packed_vertex_stride: u32,
 }
 
 pub(crate) struct PendingWriteback {
@@ -303,19 +355,7 @@ impl GxRenderer {
             immediate_size: 0,
         });
 
-        let frame_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gx_frame_uniforms"),
-            size: frame_uniform_size,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let draw_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gx_draw_uniforms"),
-            size: draw_uniform_stride,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let uniform_alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("gx_sampler"),
@@ -357,17 +397,23 @@ impl GxRenderer {
         let fallback_view = fallback_texture.create_view(&Default::default());
 
         let initial_capacity = 1024;
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gx_vertices"),
-            size: (initial_capacity * std::mem::size_of::<GpuVertex>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
         let initial_index_capacity = 4096;
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gx_indices"),
-            size: (initial_index_capacity * std::mem::size_of::<u32>()) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+        let initial_frame_slot_count = 8u64;
+        let initial_draw_slot_count = 256u64;
+        let draw_buffer_layout = compute_draw_buffer_layout(
+            uniform_alignment,
+            frame_uniform_size * initial_frame_slot_count,
+            draw_uniform_stride * initial_draw_slot_count,
+            (initial_capacity * std::mem::size_of::<GpuVertex>()) as u64,
+            (initial_index_capacity * std::mem::size_of::<u32>()) as u64,
+        );
+        let draw_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gx_draw_buffer"),
+            size: draw_buffer_layout.total_size,
+            usage: wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::UNIFORM
+                | wgpu::BufferUsages::VERTEX
+                | wgpu::BufferUsages::INDEX,
             mapped_at_creation: false,
         });
 
@@ -654,14 +700,11 @@ impl GxRenderer {
             pipeline_layout,
             surface_format,
             bind_group_layout,
-            frame_uniform_buffer,
-            draw_uniform_buffer,
+            draw_buffer,
+            draw_buffer_layout,
+            uniform_alignment,
             draw_uniform_stride,
-            draw_uniform_capacity: 1,
-            vertex_buffer,
-            vertex_capacity: initial_capacity,
-            index_buffer,
-            index_buffer_capacity: initial_index_capacity,
+            draw_uniform_capacity: initial_draw_slot_count as usize,
             scratch_indices: Vec::new(),
             efb_texture,
             efb_view,
@@ -834,7 +877,7 @@ impl GxRenderer {
                             .iter()
                             .map(|&k| {
                                 let module = &self_ref.shader_cache[&k.shader];
-                                (k, self_ref.create_pipeline(device, module, &k.fixed))
+                                (k, self_ref.create_pipeline(device, module, &k))
                             })
                             .collect::<Vec<_>>()
                     })
