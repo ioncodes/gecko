@@ -13,7 +13,7 @@ A cross-platform GameCube/Wii emulator and debugger written in Rust.
 
 ## Status
 
-Gecko is still in development. Support may vary, while many games work very well, most will likely have varying degrees of visual glitches or will be outright broken. Refer to the screenshot databases to gauge compatiblity:
+Gecko is still in development. While many games work well, most will likely have varying degrees of visual glitches or will be outright broken. Refer to the screenshot databases to gauge compatiblity:
 - [GameCube](https://emu.layle.dev/gecko-gc/4ad1a63/)
 - [Wii](https://emu.layle.dev/gecko-wii/4ad1a63/)
 
@@ -21,7 +21,7 @@ Note: Only NTSC games are tracked. The screenshot service makes a best effort at
 
 ## Features
 
-Gecko is developed with homebrew development and reverse engineering in mind, but also aims to provide accuracy and a playable experience!
+Gecko is developed with homebrew development and reverse engineering in mind, but also aims to provide a faitful and playable experience!
 
 - PowerPC JIT (Cranelift)
 - DSP JIT (Cranelift)
@@ -50,6 +50,70 @@ Gecko is developed with homebrew development and reverse engineering in mind, bu
   - [incl. debugging capabilities](https://gecko.layle.dev/dbg)
 
 There is currently **no way to save games** for GameCube. Wii save games are supported naturally via NAND.
+
+## Usage
+Prebuilt releases (including debug builds) can be downloaded [here](https://github.com/ioncodes/gecko/releases). GameCube and Wii require system files to use the emulator, please refer to the ["Required Files"](https://github.com/ioncodes/gecko#required-files) chapter. Minimal commands to launch a game:
+
+```sh
+# Launch a GameCube game
+./tinyapp --ipl IPL.decoded.bin --dsp dsp_rom.bin --coef dsp_coef.bin --skip-ipl --dvd YourGame.rvz
+
+# Launch a Wii game
+./tinyapp --dsp dsp_rom.bin --coef dsp_coef.bin --dvd YourGame.rvz
+```
+
+### Controls
+
+Keybindings are currently hardcoded into `tinyapp` and `debugger`!
+
+#### GameCube
+
+| Key             | Action                     |
+| --------------- | -------------------------- |
+| Arrow keys      | Main stick                 |
+| `I` `K` `J` `L` | D-pad (up/down/left/right) |
+| `X`             | A                          |
+| `Z`             | B                          |
+| `C`             | X                          |
+| `V`             | Y                          |
+| `Enter`         | Start                      |
+| `A`             | L                          |
+| `S`             | R                          |
+| `D`             | Z                          |
+
+#### Wii
+
+Wiimote:
+
+| Input          | Action         |
+| -------------- | -------------- |
+| Mouse movement | IR pointer     |
+| Left mouse     | A              |
+| Right mouse    | B              |
+| Arrow keys     | D-pad          |
+| `1`            | 1              |
+| `2`            | 2              |
+| `Home`         | Home           |
+| `-`            | Minus          |
+| `=`            | Plus           |
+| `Left Shift`   | Shake (motion) |
+
+Nunchuk:
+
+| Key             | Action       |
+| --------------- | ------------ |
+| `W` `S` `A` `D` | Analog stick |
+| `Q`             | Z            |
+| `E`             | C            |
+
+#### Global
+
+| Key     | Action                                                             |
+| ------- | ------------------------------------------------------------------ |
+| `Space` | Start emulation from the splash screen (`--wait` flag)             |
+| `F10`   | Trigger a RenderDoc capture (requires `renderdoc-capture` feature) |
+| `F11`   | Screenshot the full window                                         |
+| `F12`   | Screenshot the emulated framebuffer only                           |
 
 ## Projects
 This is a table of the main projects. Refer to `crates/` to find out about all available projects.
