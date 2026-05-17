@@ -58,7 +58,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update && sudo apt-get install -y mold
-          echo 'RUSTFLAGS="-C link-arg=-fuse-ld=mold"' >> $GITHUB_ENV
+          echo 'RUSTFLAGS=-C link-arg=-fuse-ld=mold' >> $GITHUB_ENV
 
       - name: Patch Cargo.toml for CI builds
         shell: bash
