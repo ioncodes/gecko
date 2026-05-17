@@ -46,8 +46,8 @@ egui-winit = { git = "https://github.com/ioncodes/egui.git" }
 [profile.release]
 codegen-units = 1
 lto = "fat"
-debug = true
-# panic = "abort"
+#debug = true
+#panic = "abort"
 
 [profile.dev]
 opt-level = 3

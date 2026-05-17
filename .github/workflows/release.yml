@@ -63,7 +63,7 @@ jobs:
       - name: Patch Cargo.toml for CI builds
         shell: bash
         run: |
-          perl -pi -e 's/^# panic = "abort"$/panic = "abort"/' Cargo.toml
+          perl -pi -e 's/^#panic = "abort"$/panic = "abort"/' Cargo.toml
           perl -pi -e 's/^#codegen-units = 1$/codegen-units = 1/' Cargo.toml
 
       - name: Build debugger + multitool (release)
