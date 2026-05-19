@@ -66,11 +66,11 @@ jobs:
           perl -pi -e 's/^#panic = "abort"$/panic = "abort"/' Cargo.toml
           perl -pi -e 's/^#codegen-units = 1$/codegen-units = 1/' Cargo.toml
 
-      - name: Build debugger + multitool (release)
-        run: cargo build --release --target ${{ matrix.target }} -p debugger -p multitool
+      - name: Build debugger + multitool + gecko-app (release)
+        run: cargo build --release --target ${{ matrix.target }} -p debugger -p multitool -p gecko-app
 
-      - name: Build debugger + multitool (dev profile, with tracing output)
-        run: cargo build --profile dev --target ${{ matrix.target }} -p debugger -p multitool
+      - name: Build debugger + multitool + gecko-app (dev profile, with tracing output)
+        run: cargo build --profile dev --target ${{ matrix.target }} -p debugger -p multitool -p gecko-app
 
       # - name: Patch chipi dispatch strategy (tinyapp only)
       #   shell: bash
@@ -96,6 +96,7 @@ jobs:
             cp "target/${{ matrix.target }}/$profile/tinyapp$EXT" "$staging/"
             cp "target/${{ matrix.target }}/$profile/debugger$EXT" "$staging/"
             cp "target/${{ matrix.target }}/$profile/multitool$EXT" "$staging/"
+            cp "target/${{ matrix.target }}/$profile/gecko$EXT" "$staging/"
             cp LICENSE README.md "$staging/"
             (cd "$staging" && 7z a "../artifacts/gecko-$suffix.zip" *)
           }
