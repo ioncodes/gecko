@@ -12,8 +12,9 @@ const APPLOADER_BASE: u32 = 0x8120_0000;
 /// Stack pointer for apploader execution matching Dolphin.
 const APPLOADER_STACK: u32 = 0x816F_FFF0;
 
-/// Wii: 0x8000_4000 (GC: 0x8000_3100). TODO: Verify?
-const APPLOADER_ARG_BASE: u32 = 0x8000_4000;
+/// Must sit above every plausible DOL section and above the apploader stack
+/// or else you'll be in a world of hurt.
+const APPLOADER_ARG_BASE: u32 = 0x8170_0000;
 
 /// Address of the OSReport function pointer passed to apploader's init().
 /// Write a `blr` here to stub it out.

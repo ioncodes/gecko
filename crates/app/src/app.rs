@@ -478,7 +478,7 @@ fn overlay_card(palette: &Palette, title: &str, detail: Option<&str>, error: boo
         card_col = card_col.push(text(detail.to_owned()).size(12).color(dim));
     }
 
-    let card: Element<'static, Message> = container(card_col.align_x(iced::Alignment::Center))
+    let card: Element<'static, Message> = container(card_col.width(Length::Fill).align_x(iced::Alignment::Center))
         .width(Length::Fixed(420.0))
         .padding(24)
         .style(move |_: &Theme| container::Style {
