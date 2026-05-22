@@ -186,13 +186,7 @@ fn update_gc_input(input: &mut HostInput, idx: usize) {
         return;
     };
     pad.stick_y = pad::STICK_CENTER;
-    pad.buttons = 0;
-
-    if idx == 3 {
-        pad.stick_y = 255;
-    } else if idx > 3 && idx % 5 == 0 {
-        pad.buttons = pad::A | pad::START;
-    }
+    pad.buttons = if idx % 2 == 0 { pad::A } else { pad::START };
 }
 
 fn update_wii_input(input: &mut HostInput, idx: usize) {
@@ -206,14 +200,12 @@ fn update_wii_input(input: &mut HostInput, idx: usize) {
     else {
         return;
     };
-    *wiimote_buttons = 0;
     *nunchuk_buttons = 0;
     *nunchuk_stick_x = wiimote::NUNCHUK_STICK_CENTER;
     *nunchuk_stick_y = wiimote::NUNCHUK_STICK_CENTER;
-
-    if idx == 3 {
-        *nunchuk_stick_y = wiimote::NUNCHUK_STICK_MAX;
-    } else if idx > 3 && idx % 5 == 0 {
-        *wiimote_buttons = wiimote::BTN_A | wiimote::BTN_PLUS;
-    }
+    *wiimote_buttons = if idx % 2 == 0 {
+        wiimote::BTN_A
+    } else {
+        wiimote::BTN_PLUS
+    };
 }
