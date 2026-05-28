@@ -6,7 +6,7 @@ const BASE_DIRS: [&str; 9] = [
 
 const SETTING_TXT_PATH: &str = "title/00000001/00000002/data/setting.txt";
 const SETTING_SEED: u32 = 0x73B5_DBFA;
-const SERIAL_NUMBER: &str = "123456789";
+const SERIAL_NUMBER: &str = "696969420";
 
 pub fn ensure_skeleton(root: &Path) {
     for dir in BASE_DIRS {

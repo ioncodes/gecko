@@ -1,4 +1,4 @@
-use crate::cli::IplAction;
+use crate::cli::Action;
 
 use std::path::Path;
 use std::{fs, process};
@@ -69,7 +69,7 @@ fn is_encoded(data: &[u8]) -> bool {
     w != 0x3C800011
 }
 
-pub fn process(file: &str, output: Option<&str>, action: IplAction) {
+pub fn process(file: &str, output: Option<&str>, action: Action) {
     let mut data = fs::read(file).unwrap_or_else(|e| {
         eprintln!("failed to read {}: {}", file, e);
         process::exit(1);
@@ -79,15 +79,15 @@ pub fn process(file: &str, output: Option<&str>, action: IplAction) {
     let encoded = is_encoded(&data);
 
     match action {
-        IplAction::Encode if encoded => eprintln!("warning: ROM appears already encoded"),
-        IplAction::Decode if !encoded => eprintln!("warning: ROM appears already decoded"),
+        Action::Encode if encoded => eprintln!("warning: ROM appears already encoded"),
+        Action::Decode if !encoded => eprintln!("warning: ROM appears already decoded"),
         _ => {}
     }
 
     let copyright = String::from_utf8_lossy(&data[..0x56]);
     let action_label = match action {
-        IplAction::Decode => "Decoding",
-        IplAction::Encode => "Encoding",
+        Action::Decode => "Decoding",
+        Action::Encode => "Encoding",
     };
     println!("{action_label}: {file}");
     println!("  {copyright}");
@@ -104,8 +104,8 @@ pub fn process(file: &str, output: Option<&str>, action: IplAction) {
                 .map(|e| format!(".{}", e.to_string_lossy()))
                 .unwrap_or_default();
             let suffix = match action {
-                IplAction::Encode => ".encoded",
-                IplAction::Decode => ".decoded",
+                Action::Encode => ".encoded",
+                Action::Decode => ".decoded",
             };
             format!("{}{}{}", stem, suffix, ext)
         }

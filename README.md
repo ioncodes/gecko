@@ -45,6 +45,8 @@ Gecko is developed with homebrew development and reverse engineering in mind, bu
 - ISO and RVZ support; also supports either packed as a ZIP
 - Included multitool, supports:
   - IPL decode/encode
+  - SYSCONF decode/encode
+  - setting.txt decode/encode
   - DVD filesystem extraction
   - Disassembler for PPC and DSP
 - Various built-in diagnostics for JIT and GX
@@ -78,7 +80,7 @@ It scans the configured GameCube and Wii folders for `.iso`, `.rvz` and `.zip` f
     IPL.bin                  # GameCube only
     dsp_rom.bin              # GameCube and Wii
     dsp_coef.bin             # GameCube and Wii
-  fs/                        # Wii only (NAND from Dolphin or real console)
+  fs/                        # Wii NAND, auto-generated if missing (or drop in a Dolphin/real dump)
 ```
 
 ### Controls
@@ -242,13 +244,16 @@ multitool ipl --action decode private/IPL.bin private/IPL.decoded.bin
 ```
 
 ### Wii
-NAND filesystem dump from Dolphin or a real Wii. Place it under `./fs/` or point `GECKO_FS_ROOT` at the directory:
+A NAND is generated on boot whenever `fs/` is missing. The folder can be overriden using the `GECKO_FS_ROOT` environment variable.
 
 ```sh
-GECKO_FS_ROOT=/path/to/dolphin-nand tinyapp --dvd wii_game.rvz
+# optional!
+GECKO_FS_ROOT=/path/to/dolphin-nand tinyapp --dvd wii_game.rvz # ... and other arguments
 ```
 
-NAND must likely be NTSC.
+The generated SYSCONF uses some fixed defaults! This may cause some strange side effects, I have not observed any yet
+but there surely are some issues with it.
+
 Reference SHA-256 hashes (these are the files the project is developed against):
 
 | File                         | SHA-256                                                            |
@@ -265,9 +270,15 @@ Example invocations:
 
 ```sh
 multitool ipl --action decode ipl.encoded.bin ipl.decoded.bin
+multitool sysconf --action decode fs/shared2/sys/SYSCONF SYSCONF.txt  # edit, then re-encode
+multitool sysconf --action encode SYSCONF.txt fs/shared2/sys/SYSCONF
+multitool setting --action decode fs/title/00000001/00000002/data/setting.txt setting.decoded
+multitool setting --action encode setting.decoded fs/title/00000001/00000002/data/setting.txt
 multitool dvd --extract game.rvz
+
 tinyapp --dol homebrew.dol  # may also require a DSP depending on the DOL
 tinyapp --dvd game.iso --ipl ipl.decoded.bin --dsp dsp_rom.bin --coef dsp_coef.bin --skip-ipl
+
 debugger --dvd game.rvz --ipl ipl.decoded.bin --dsp dsp_rom.bin --coef dsp_coef.bin --script example.lua
 ```
 

@@ -14,8 +14,9 @@ pub enum DisasmArch {
     Dsp,
 }
 
+/// Decode/encode direction shared by the file-transform subcommands.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-pub enum IplAction {
+pub enum Action {
     Decode,
     Encode,
 }
@@ -41,11 +42,31 @@ pub enum Command {
     /// Decode or encode a GameCube IPL
     Ipl {
         /// IPL transformation to apply
-        #[arg(long, value_enum, default_value_t = IplAction::Decode)]
-        action: IplAction,
+        #[arg(long, value_enum, default_value_t = Action::Decode)]
+        action: Action,
         /// Input IPL file
         file: String,
         /// Output file path (defaults to <name>.encoded.bin or <name>.decoded.bin)
+        output: Option<String>,
+    },
+    /// Decode a Wii SYSCONF to editable text, or encode text back to binary
+    Sysconf {
+        /// SYSCONF transformation to apply
+        #[arg(long, value_enum, default_value_t = Action::Decode)]
+        action: Action,
+        /// Input file (binary SYSCONF for decode, text for encode)
+        file: String,
+        /// Output path (defaults to <file>.txt for decode, <file> minus .txt for encode)
+        output: Option<String>,
+    },
+    /// Decode an encrypted Wii setting.txt to editable text, or encode it back
+    Setting {
+        /// setting.txt transformation to apply
+        #[arg(long, value_enum, default_value_t = Action::Decode)]
+        action: Action,
+        /// Input file (encrypted setting.txt for decode, text for encode)
+        file: String,
+        /// Output path (defaults to <file>.decoded for decode, <file> minus .decoded for encode)
         output: Option<String>,
     },
     /// Dump GameCube/Wii disc image (ISO or RVZ) information
