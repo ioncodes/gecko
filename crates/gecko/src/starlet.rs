@@ -224,6 +224,7 @@ fn ensure_delivery_scheduled<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, d
 }
 
 fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: u32) -> i32 {
+    use crate::hollywood::ipc::fs::FS_ENOENT;
     use crate::hollywood::ipc::{IPC_EINVAL, IPC_ENOENT};
 
     const IOS_OPEN: u32 = 1;
@@ -255,8 +256,13 @@ fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: 
             } else if let Some(real) = HostBackedFile::try_open(&starlet.host_fs_root, &path, mode) {
                 starlet.allocate_owned_fd(&path, Box::new(real))
             } else {
-                tracing::error!(%path, "IOS_Open: no device registered");
-                IPC_ENOENT
+                let rc = if path.starts_with("/dev/") {
+                    IPC_ENOENT
+                } else {
+                    FS_ENOENT
+                };
+                tracing::debug!(%path, rc, "IOS_Open: not found");
+                rc
             };
             tracing::debug!(%path, mode, fd, "IOS_Open");
 

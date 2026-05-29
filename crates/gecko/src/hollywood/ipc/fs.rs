@@ -4,6 +4,7 @@ pub mod nand;
 use crate::hollywood::ipc::{DeviceContext, IosDevice};
 use std::path::{Path, PathBuf};
 
+pub const IOCTL_GET_STATS: u32 = 0x2;
 pub const IOCTL_CREATE_DIR: u32 = 0x3;
 pub const IOCTL_READ_DIR: u32 = 0x4;
 pub const IOCTL_GET_ATTR: u32 = 0x6;
@@ -14,7 +15,7 @@ pub const IOCTL_GET_USAGE: u32 = 0xC;
 
 const FS_EINVAL: i32 = -101;
 const FS_EEXIST: i32 = -105;
-const FS_ENOENT: i32 = -106;
+pub const FS_ENOENT: i32 = -106;
 const FS_MAX_PATH: usize = 0x40;
 const FS_DIRENT_NAME_LEN: usize = 0x13;
 const FS_CREATE_INPUT_LEN: usize = 0x4A;
@@ -32,6 +33,10 @@ const FS_DEFAULT_GROUP_ID: u16 = 0;
 const FS_DEFAULT_PERM: u8 = 0x03;
 const FS_DEFAULT_ATTRIBUTES: u8 = 0;
 const FS_USAGE_CLUSTER_SIZE: u64 = 0x4000;
+const FS_STATS_LEN: usize = 0x1C;
+const FS_STATS_RESERVED_CLUSTERS: u32 = 0x0300;
+const FS_STATS_USABLE_CLUSTERS: u32 = 0x7EC0 - FS_STATS_RESERVED_CLUSTERS;
+const FS_STATS_TOTAL_INODES: u32 = 0x17FF;
 
 pub struct FileSystem {
     host_root: PathBuf,
@@ -54,6 +59,7 @@ impl IosDevice for FileSystem {
         out_len: u32,
     ) -> i32 {
         match cmd {
+            IOCTL_GET_STATS => self.get_stats(ctx, out_ptr, out_len),
             IOCTL_CREATE_DIR => self.create_dir(ctx, in_ptr, in_len),
             IOCTL_GET_ATTR => self.get_attr(ctx, in_ptr, in_len, out_ptr, out_len),
             IOCTL_DELETE => self.delete(ctx, in_ptr, in_len),
@@ -238,6 +244,31 @@ impl FileSystem {
             host_path = format!("{}", host_path.display()),
             "FS_GetAttr"
         );
+
+        0
+    }
+
+    fn get_stats(&self, ctx: &mut DeviceContext<'_>, out_ptr: u32, out_len: u32) -> i32 {
+        if (out_len as usize) < FS_STATS_LEN {
+            tracing::warn!(out_len, "FS_GetStats: output buffer too small");
+            return FS_EINVAL;
+        }
+
+        let (used_clusters, used_inodes) = self::path_usage(&self.host_root).unwrap_or((0, 0));
+        let used_clusters = self::saturating_u32(used_clusters).min(FS_STATS_USABLE_CLUSTERS);
+        let used_inodes = self::saturating_u32(used_inodes).min(FS_STATS_TOTAL_INODES);
+        let free_clusters = FS_STATS_USABLE_CLUSTERS - used_clusters;
+        let free_inodes = FS_STATS_TOTAL_INODES - used_inodes;
+
+        ctx.mmio.phys_write_u32(out_ptr + 0x00, FS_USAGE_CLUSTER_SIZE as u32);
+        ctx.mmio.phys_write_u32(out_ptr + 0x04, free_clusters);
+        ctx.mmio.phys_write_u32(out_ptr + 0x08, used_clusters);
+        ctx.mmio.phys_write_u32(out_ptr + 0x0C, 0); // bad clusters
+        ctx.mmio.phys_write_u32(out_ptr + 0x10, FS_STATS_RESERVED_CLUSTERS);
+        ctx.mmio.phys_write_u32(out_ptr + 0x14, free_inodes);
+        ctx.mmio.phys_write_u32(out_ptr + 0x18, used_inodes);
+
+        tracing::debug!(free_clusters, used_clusters, free_inodes, used_inodes, "FS_GetStats");
 
         0
     }
