@@ -1,3 +1,4 @@
+mod debug;
 mod playback;
 
 use backend_wgpu::sink::{InlineSink, TargetAspect};
@@ -42,6 +43,11 @@ struct Args {
     /// Display aspect ratio: auto (16:9 Wii / 4:3 GC), 4:3, 16:9, stretch
     #[arg(long, default_value = "auto")]
     aspect: String,
+
+    /// Open the FIFO debugger (stepping, disassembly, editing). With
+    /// --screenshot, replays through the stepping engine headlessly instead.
+    #[arg(long)]
+    debug: bool,
 }
 
 fn main() {
@@ -65,6 +71,7 @@ fn main() {
         eprintln!("failed to load {}: {e}", args.file.display());
         std::process::exit(1);
     });
+
     if file.frames.is_empty() {
         eprintln!("{}: no frames", args.file.display());
         std::process::exit(1);
@@ -95,26 +102,35 @@ fn run<const SYSTEM: gecko::SystemId>(file: dff::DffFile, args: Args) {
     let start = args.start.min(last);
     let end = args.end.unwrap_or(last).clamp(start, last);
 
-    if let Some(ref out) = args.screenshot {
+    if args.debug {
+        if let Some(ref out) = args.screenshot {
+            debug::ui::run_headless::<SYSTEM>(file, args.file, start, end, out);
+        } else {
+            debug::ui::run_debug::<SYSTEM>(file, args.file, start, end);
+        }
+    } else if let Some(ref out) = args.screenshot {
         self::run_headless::<SYSTEM>(&file, start, end, out, args.dump_textures.as_deref());
     } else {
         self::run_windowed::<SYSTEM>(file, start, end, args.once, &args.aspect);
     }
 }
 
-fn init_wgpu() -> (wgpu::Instance, wgpu::Adapter, wgpu::Device, wgpu::Queue) {
+pub(crate) fn init_wgpu() -> (wgpu::Instance, wgpu::Adapter, wgpu::Device, wgpu::Queue) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
+
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::default(),
         compatible_surface: None,
         force_fallback_adapter: false,
     }))
     .expect("no compatible wgpu adapter");
+
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
         .expect("failed to acquire wgpu device");
+
     (instance, adapter, device, queue)
 }
 
@@ -134,11 +150,13 @@ fn run_headless<const SYSTEM: gecko::SystemId>(
     playback.load_state(file, &mut sink);
 
     let mut presented = 0usize;
+
     for frame in &file.frames[start..=end] {
         if playback.play_frame(frame, &mut sink) {
             presented += 1;
         }
     }
+
     eprintln!("played frames {start}..={end}, {presented} presents");
 
     if let Some(dir) = dump_textures {
@@ -181,8 +199,10 @@ impl<const SYSTEM: gecko::SystemId> WindowedApp<SYSTEM> {
         if self.finished {
             return;
         }
+
         self.playback
             .play_frame(&self.file.frames[self.frame_idx], &mut self.sink);
+
         if self.frame_idx >= self.end {
             if self.once {
                 self.finished = true;
@@ -202,7 +222,7 @@ impl<const SYSTEM: gecko::SystemId> ApplicationHandler for WindowedApp<SYSTEM> {
             event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title("gecko FIFO player")
+                        .with_title("Gecko — FIFO Player")
                         .with_inner_size(winit::dpi::PhysicalSize::new(1280, 960)),
                 )
                 .unwrap(),
@@ -210,11 +230,13 @@ impl<const SYSTEM: gecko::SystemId> ApplicationHandler for WindowedApp<SYSTEM> {
 
         let surface = self.instance.create_surface(window.clone()).unwrap();
         let actual = window.inner_size();
+
         let (sw, sh) =
             backend_wgpu::sink::snap_size_to_aspect((actual.width, actual.height), self.renderer.target_aspect());
         if (sw, sh) != (actual.width, actual.height) {
             let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(sw, sh));
         }
+
         let surface_caps = surface.get_capabilities(&self.adapter);
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -226,9 +248,11 @@ impl<const SYSTEM: gecko::SystemId> ApplicationHandler for WindowedApp<SYSTEM> {
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
+
         surface.configure(&self.device, &surface_config);
 
         window.request_redraw();
+
         self.window = Some(window);
         self.surface = Some((surface, surface_config));
     }
@@ -241,6 +265,7 @@ impl<const SYSTEM: gecko::SystemId> ApplicationHandler for WindowedApp<SYSTEM> {
                     if size.width == 0 || size.height == 0 {
                         return;
                     }
+
                     let (sw, sh) = backend_wgpu::sink::snap_size_to_aspect(
                         (size.width, size.height),
                         self.renderer.target_aspect(),
@@ -248,6 +273,7 @@ impl<const SYSTEM: gecko::SystemId> ApplicationHandler for WindowedApp<SYSTEM> {
                     if (sw, sh) != (size.width, size.height) {
                         let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(sw, sh));
                     }
+
                     config.width = sw;
                     config.height = sh;
                     surface.configure(&self.device, config);
@@ -265,6 +291,7 @@ impl<const SYSTEM: gecko::SystemId> ApplicationHandler for WindowedApp<SYSTEM> {
                     }
                 };
                 let view = frame.texture.create_view(&Default::default());
+
                 self.renderer.blit(&self.queue, &view, (config.width, config.height));
                 frame.present();
 

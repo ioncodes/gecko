@@ -825,6 +825,15 @@ impl GxRenderer {
         })
     }
 
+    pub fn debug_flush(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.flush_pending_draws(device, queue);
+        self.submit_pending(queue);
+    }
+
+    pub fn efb_view(&self) -> &wgpu::TextureView {
+        &self.efb_view
+    }
+
     pub(crate) fn submit_pending(&mut self, queue: &wgpu::Queue) {
         // Ship any staged texture-upload bytes through ONE `write_buffer_with`
         // before finishing the encoder. wgpu orders queue writes ahead of

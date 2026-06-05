@@ -8,6 +8,10 @@ dff = { path = "../dff" }
 gecko = { path = "../gecko" }
 backend-wgpu = { path = "../backend-wgpu" }
 clap = { version = "4.6.1", features = ["derive"] }
+egui = "0.34.2"
+egui-phosphor = { version = "0.12.0", features = ["fill"] }
+egui-wgpu = "0.34.2"
+egui-winit = { version = "0.34.2", features = ["wayland", "x11"] }
 pollster = "0.4.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
