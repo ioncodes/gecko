@@ -32,7 +32,7 @@ Gecko is developed with homebrew development and reverse engineering in mind, bu
   - Supports all major platforms
 - `wesl` based specialized shader compiler
 - JIT and shader cache
-- FIFO recorder & player
+- FIFO recorder, player and [debugger](https://www.youtube.com/watch?v=8mTPH3iAjy4)
   - Compatible with Dolphin
 - Frame pacing
 - Modular audio backend, defaults to `cpal`
@@ -159,7 +159,7 @@ cargo build -p gecko-app --release                               # game launcher
 cargo build -p tinyapp --release                                 # tinyapp
 cargo build -p debugger --release                                # debugger
 cargo build -p multitool --release                               # multitool
-cargo build -p fifoplayer --release                              # fifo player
+cargo build -p fifoplayer --release                              # fifo player and debugger
 wasm-pack build crates/web --target web --out-dir pkg --release  # web version
 ```
 
