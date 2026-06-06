@@ -1,4 +1,4 @@
-use cranelift_codegen::ir::{InstBuilder, MemFlags, Value, types};
+use cranelift_codegen::ir::{InstBuilder, MemFlagsData, Value, types};
 use cranelift_frontend::FunctionBuilder;
 use cranelift_module::Module;
 
@@ -28,12 +28,14 @@ impl<'a, 'b> TranslatorCtx<'a, 'b> {
     fn load_u16(&mut self, offset: i32) -> Value {
         self.builder
             .ins()
-            .load(types::I16, MemFlags::trusted(), self.sys_ptr, offset)
+            .load(types::I16, MemFlagsData::trusted(), self.sys_ptr, offset)
     }
 
     #[inline]
     fn store_u16(&mut self, val: Value, offset: i32) {
-        self.builder.ins().store(MemFlags::trusted(), val, self.sys_ptr, offset);
+        self.builder
+            .ins()
+            .store(MemFlagsData::trusted(), val, self.sys_ptr, offset);
     }
 
     fn simple_reg_offset(slot: u8) -> Option<i32> {

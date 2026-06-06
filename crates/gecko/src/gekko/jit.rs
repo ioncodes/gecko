@@ -1,5 +1,6 @@
 pub mod abi;
 pub mod block;
+pub mod dense_arena;
 pub mod handlers;
 pub mod idle;
 pub mod insn;
@@ -312,6 +313,9 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         ] {
             jit_builder.symbol(name, addr);
         }
+
+        let arena = dense_arena::DenseArena::new(512 << 20).expect("reserve JIT code arena");
+        jit_builder.memory_provider(Box::new(arena));
 
         let mut module = JITModule::new(jit_builder);
 

@@ -40,6 +40,12 @@ exclude = [
 ]
 
 [patch.crates-io]
+cranelift-codegen = { git = "https://github.com/ioncodes/wasmtime", branch = "gecko" }
+cranelift-frontend = { git = "https://github.com/ioncodes/wasmtime", branch = "gecko" }
+cranelift-jit = { git = "https://github.com/ioncodes/wasmtime", branch = "gecko" }
+cranelift-module = { git = "https://github.com/ioncodes/wasmtime", branch = "gecko" }
+cranelift-native = { git = "https://github.com/ioncodes/wasmtime", branch = "gecko" }
+
 iced_core = { git = "https://github.com/iced-rs/iced.git", rev = "0d12e964da8c3f0f7a02d3d731e3187eecfe5779" }
 iced_widget = { git = "https://github.com/iced-rs/iced.git", rev = "0d12e964da8c3f0f7a02d3d731e3187eecfe5779" }
 iced_runtime = { git = "https://github.com/iced-rs/iced.git", rev = "0d12e964da8c3f0f7a02d3d731e3187eecfe5779" }

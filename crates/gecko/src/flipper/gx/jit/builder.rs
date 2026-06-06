@@ -10,8 +10,8 @@ use super::{ResolvedArray, VtxKey};
 use crate::flipper::gx::regs::{AttributeType, NrmCount};
 use crate::host::DrawVertex;
 
-pub(crate) const MEMFLAGS: ir::MemFlags = ir::MemFlags::new().with_notrap();
-pub(crate) const MEMFLAGS_RO: ir::MemFlags = ir::MemFlags::new().with_notrap().with_readonly();
+pub(crate) const MEMFLAGS: ir::MemFlagsData = ir::MemFlagsData::new().with_notrap();
+pub(crate) const MEMFLAGS_RO: ir::MemFlagsData = ir::MemFlagsData::new().with_notrap().with_readonly();
 
 pub fn build_parser(
     ctx: &mut Context,

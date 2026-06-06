@@ -261,7 +261,7 @@ fn decode_component_at(
         ComponentFormat::F32 => {
             let raw = ctx.bd.ins().load(ir::types::I32, MEMFLAGS_RO, ptr, byte_off);
             let raw = ctx.bd.ins().bswap(raw);
-            ctx.bd.ins().bitcast(ir::types::F32, ir::MemFlags::new(), raw)
+            ctx.bd.ins().bitcast(ir::types::F32, ir::MemFlagsData::new(), raw)
         }
         ComponentFormat::U16 | ComponentFormat::S16 => {
             let raw = ctx.bd.ins().load(ir::types::I16, MEMFLAGS_RO, ptr, byte_off);
