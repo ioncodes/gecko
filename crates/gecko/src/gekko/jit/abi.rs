@@ -1,9 +1,9 @@
-use core::mem::offset_of;
+use core::mem::{offset_of, size_of};
 
-use crate::gekko::Gekko;
 use crate::gekko::condition::ConditionRegister;
 use crate::gekko::msr::Msr;
 use crate::gekko::spr::{Spr, Xer};
+use crate::gekko::{FprFile, Gekko};
 use crate::mmio::Mmio;
 use crate::scheduler::Scheduler;
 use crate::system::{System, SystemId};
@@ -20,6 +20,12 @@ const _: () = {
     }
     if core::mem::size_of::<Msr>() != 4 {
         panic!("Msr is no longer 4 bytes; JIT MSR access needs to be revisited");
+    }
+    if core::mem::size_of::<FprFile>() != 32 * 16 {
+        panic!("FprFile is no longer 32 16-byte pairs; JIT FPR stride needs to be revisited");
+    }
+    if core::mem::align_of::<FprFile>() != 16 {
+        panic!("FprFile alignment changed; JIT FPR access needs to be revisited");
     }
 };
 
@@ -60,7 +66,7 @@ pub const fn fpr_base_offset<const SYSTEM: SystemId>() -> usize {
 
 #[inline(always)]
 pub const fn ps1_base_offset<const SYSTEM: SystemId>() -> usize {
-    gekko_offset::<SYSTEM>() + offset_of!(Gekko, ps1s)
+    gekko_offset::<SYSTEM>() + offset_of!(Gekko, fprs) + size_of::<f64>()
 }
 
 #[inline(always)]

@@ -1889,7 +1889,7 @@ pub(crate) fn gpr_store<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, c
 
 fn fpr_offset<const SYSTEM: SystemId>(i: u8) -> i32 {
     debug_assert!(i < 32);
-    (abi::fpr_base_offset::<SYSTEM>() + 8 * i as usize) as i32
+    (abi::fpr_base_offset::<SYSTEM>() + 16 * i as usize) as i32
 }
 
 pub(crate) fn fpr_load<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, i: u8) -> Value {
@@ -1904,7 +1904,7 @@ pub(crate) fn fpr_store<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, c
 
 fn ps1_offset<const SYSTEM: SystemId>(i: u8) -> i32 {
     debug_assert!(i < 32);
-    (abi::ps1_base_offset::<SYSTEM>() + 8 * i as usize) as i32
+    (abi::ps1_base_offset::<SYSTEM>() + 16 * i as usize) as i32
 }
 
 pub(crate) fn ps1_load<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, i: u8) -> Value {
@@ -1922,18 +1922,77 @@ pub(crate) fn round_to_single(builder: &mut FunctionBuilder, val: Value) -> Valu
     builder.ins().fpromote(types::F64, f32v)
 }
 
+pub(crate) fn round_frc_value(builder: &mut FunctionBuilder, c: Value) -> Value {
+    use crate::gekko::interpreter::{FRC_KEEP_MASK, FRC_ROUND_BIT};
+
+    let bits = builder.ins().bitcast(types::I64, MemFlags::new(), c);
+    let keep = builder.ins().band_imm(bits, FRC_KEEP_MASK as i64);
+    let round = builder.ins().band_imm(bits, FRC_ROUND_BIT as i64);
+    let sum = builder.ins().iadd(keep, round);
+    builder.ins().bitcast(types::F64, MemFlags::new(), sum)
+}
+
+pub(crate) fn neg_unless_nan(builder: &mut FunctionBuilder, v: Value) -> Value {
+    use cranelift_codegen::ir::condcodes::FloatCC;
+
+    let negged = builder.ins().fneg(v);
+    let nan = builder.ins().fcmp(FloatCC::Unordered, v, v);
+    builder.ins().select(nan, v, negged)
+}
+
+pub(crate) fn fpr_pair_load<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, i: u8) -> Value {
+    let off = fpr_offset::<SYSTEM>(i);
+    builder.ins().load(types::F64X2, vmctx_flags(), ctx_ptr, off)
+}
+
+pub(crate) fn fpr_pair_store<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, i: u8, v: Value) {
+    let off = fpr_offset::<SYSTEM>(i);
+    builder.ins().store(vmctx_flags(), v, ctx_ptr, off);
+}
+
+pub(crate) fn pair_round_to_single(builder: &mut FunctionBuilder, v: Value) -> Value {
+    let f32v = builder.ins().fvdemote(v);
+    builder.ins().fvpromote_low(f32v)
+}
+
+pub(crate) fn pair_round_frc(builder: &mut FunctionBuilder, c: Value) -> Value {
+    use crate::gekko::interpreter::{FRC_KEEP_MASK, FRC_ROUND_BIT};
+
+    let bits = builder.ins().bitcast(types::I64X2, MemFlags::new(), c);
+    let keep_mask = builder.ins().iconst(types::I64, FRC_KEEP_MASK as i64);
+    let keep_splat = builder.ins().splat(types::I64X2, keep_mask);
+    let round_mask = builder.ins().iconst(types::I64, FRC_ROUND_BIT as i64);
+    let round_splat = builder.ins().splat(types::I64X2, round_mask);
+    let keep = builder.ins().band(bits, keep_splat);
+    let round = builder.ins().band(bits, round_splat);
+    let sum = builder.ins().iadd(keep, round);
+    builder.ins().bitcast(types::F64X2, MemFlags::new(), sum)
+}
+
+pub(crate) fn pair_neg_unless_nan(builder: &mut FunctionBuilder, v: Value) -> Value {
+    use cranelift_codegen::ir::condcodes::FloatCC;
+
+    let negged = builder.ins().fneg(v);
+    let nan = builder.ins().fcmp(FloatCC::Unordered, v, v);
+    pair_bitselect(builder, nan, v, negged)
+}
+
+pub(crate) fn pair_bitselect(builder: &mut FunctionBuilder, mask: Value, x: Value, y: Value) -> Value {
+    let xi = builder.ins().bitcast(types::I64X2, MemFlags::new(), x);
+    let yi = builder.ins().bitcast(types::I64X2, MemFlags::new(), y);
+    let ri = builder.ins().bitselect(mask, xi, yi);
+    builder.ins().bitcast(types::F64X2, MemFlags::new(), ri)
+}
+
+pub(crate) fn build_pair(builder: &mut FunctionBuilder, ps0: Value, ps1: Value) -> Value {
+    let v = builder.ins().scalar_to_vector(types::F64X2, ps0);
+    builder.ins().insertlane(v, ps1, 1)
+}
+
 pub(crate) fn f32_reciprocal(builder: &mut FunctionBuilder, b_f64: Value) -> Value {
     let b32 = builder.ins().fdemote(types::F32, b_f64);
     let one32 = builder.ins().f32const(1.0f32);
     let q32 = builder.ins().fdiv(one32, b32);
-    builder.ins().fpromote(types::F64, q32)
-}
-
-pub(crate) fn f32_rsqrte(builder: &mut FunctionBuilder, b_f64: Value) -> Value {
-    let b32 = builder.ins().fdemote(types::F32, b_f64);
-    let s32 = builder.ins().sqrt(b32);
-    let one32 = builder.ins().f32const(1.0f32);
-    let q32 = builder.ins().fdiv(one32, s32);
     builder.ins().fpromote(types::F64, q32)
 }
 
@@ -1968,8 +2027,8 @@ pub(crate) fn fpr_store_paired<const SYSTEM: SystemId>(
     i: u8,
     val: Value,
 ) {
-    fpr_store::<SYSTEM>(builder, ctx_ptr, i, val);
-    ps1_store::<SYSTEM>(builder, ctx_ptr, i, val);
+    let v = builder.ins().splat(types::F64X2, val);
+    fpr_pair_store::<SYSTEM>(builder, ctx_ptr, i, v);
 }
 
 pub(crate) fn cr_load<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value) -> Value {
@@ -2322,23 +2381,21 @@ pub(crate) fn emit_psq_x<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
     if store {
-        let ps0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rd());
-        emit_write_f32::<SYSTEM>(builder, ctx_ptr, ea, ps0, local.write_f32, local.cause_smc_write);
-        if !instr.w_21_21() {
-            let ps1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rd());
-            let ea1 = builder.ins().iadd_imm(ea, 4);
-            emit_write_f32::<SYSTEM>(builder, ctx_ptr, ea1, ps1, local.write_f32, local.cause_smc_write);
-        }
-    } else {
-        let ps0 = emit_read_f32::<SYSTEM>(builder, ctx_ptr, ea, local.read_f32);
-        let ps1 = if instr.w_21_21() {
-            builder.ins().f64const(1.0)
+        if instr.w_21_21() {
+            let ps0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rd());
+            emit_write_f32::<SYSTEM>(builder, ctx_ptr, ea, ps0, local.write_f32, local.cause_smc_write);
         } else {
-            let ea1 = builder.ins().iadd_imm(ea, 4);
-            emit_read_f32::<SYSTEM>(builder, ctx_ptr, ea1, local.read_f32)
-        };
-        fpr_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), ps0);
-        ps1_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), ps1);
+            let pair = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rd());
+            emit_write_ps_pair::<SYSTEM>(builder, ctx_ptr, ea, pair, local.write_f32, local.cause_smc_write);
+        }
+    } else if instr.w_21_21() {
+        let ps0 = emit_read_f32::<SYSTEM>(builder, ctx_ptr, ea, local.read_f32);
+        let one = builder.ins().f64const(1.0);
+        let pair = build_pair(builder, ps0, one);
+        fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), pair);
+    } else {
+        let pair = emit_read_ps_pair::<SYSTEM>(builder, ctx_ptr, ea, local.read_f32);
+        fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), pair);
     }
     builder.ins().jump(merge, &[]);
 
@@ -3158,15 +3215,15 @@ pub(crate) fn emit_psq_l<const SYSTEM: SystemId>(
 
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
-    let ps0 = emit_read_f32::<SYSTEM>(builder, ctx_ptr, ea, local.read_f32);
-    let ps1 = if instr.w_16_16() {
-        builder.ins().f64const(1.0)
+    if instr.w_16_16() {
+        let ps0 = emit_read_f32::<SYSTEM>(builder, ctx_ptr, ea, local.read_f32);
+        let one = builder.ins().f64const(1.0);
+        let pair = build_pair(builder, ps0, one);
+        fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), pair);
     } else {
-        let ea1 = builder.ins().iadd_imm(ea, 4);
-        emit_read_f32::<SYSTEM>(builder, ctx_ptr, ea1, local.read_f32)
-    };
-    fpr_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), ps0);
-    ps1_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), ps1);
+        let pair = emit_read_ps_pair::<SYSTEM>(builder, ctx_ptr, ea, local.read_f32);
+        fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), pair);
+    }
     builder.ins().jump(merge, &[]);
 
     builder.switch_to_block(slow_block);
@@ -3214,12 +3271,12 @@ pub(crate) fn emit_psq_st<const SYSTEM: SystemId>(
 
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
-    let ps0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rs());
-    emit_write_f32::<SYSTEM>(builder, ctx_ptr, ea, ps0, local.write_f32, local.cause_smc_write);
-    if !instr.w_16_16() {
-        let ps1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rs());
-        let ea1 = builder.ins().iadd_imm(ea, 4);
-        emit_write_f32::<SYSTEM>(builder, ctx_ptr, ea1, ps1, local.write_f32, local.cause_smc_write);
+    if instr.w_16_16() {
+        let ps0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rs());
+        emit_write_f32::<SYSTEM>(builder, ctx_ptr, ea, ps0, local.write_f32, local.cause_smc_write);
+    } else {
+        let pair = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rs());
+        emit_write_ps_pair::<SYSTEM>(builder, ctx_ptr, ea, pair, local.write_f32, local.cause_smc_write);
     }
     builder.ins().jump(merge, &[]);
 
@@ -3647,6 +3704,100 @@ pub(crate) fn emit_write_f32<const SYSTEM: SystemId>(
     builder.seal_block(merge);
 }
 
+fn le_vec_flags() -> MemFlags {
+    MemFlags::new().with_endianness(cranelift_codegen::ir::Endianness::Little)
+}
+
+pub(crate) fn emit_read_ps_pair<const SYSTEM: SystemId>(
+    builder: &mut FunctionBuilder,
+    ctx_ptr: Value,
+    ea: Value,
+    slow_f32: FuncRef,
+) -> Value {
+    let fast_block = builder.create_block();
+    let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
+    let merge = builder.create_block();
+    builder.append_block_param(merge, types::F64X2);
+
+    let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
+    let host_addr = builder.ins().iadd(host_ptr, page_off);
+    builder
+        .ins()
+        .brif(host_ptr, fast_block, &[host_addr.into()], slow_block, &[]);
+    builder.append_block_param(fast_block, types::I64);
+
+    builder.switch_to_block(fast_block);
+    builder.seal_block(fast_block);
+    let addr = builder.block_params(fast_block)[0];
+    let raw = builder.ins().load(types::I64, heap_flags(), addr, 0);
+    let sw = builder.ins().bswap(raw);
+    let ro = builder.ins().rotl_imm(sw, 32);
+    let v64 = builder.ins().scalar_to_vector(types::I64X2, ro);
+    let f32s = builder.ins().bitcast(types::F32X4, le_vec_flags(), v64);
+    let pair = builder.ins().fvpromote_low(f32s);
+    builder.ins().jump(merge, &[pair.into()]);
+
+    builder.switch_to_block(slow_block);
+    builder.seal_block(slow_block);
+    let c0 = builder.ins().call(slow_f32, &[ctx_ptr, ea]);
+    let p0 = builder.inst_results(c0)[0];
+    let ea1 = builder.ins().iadd_imm(ea, 4);
+    let c1 = builder.ins().call(slow_f32, &[ctx_ptr, ea1]);
+    let p1 = builder.inst_results(c1)[0];
+    let slow_pair = build_pair(builder, p0, p1);
+    builder.ins().jump(merge, &[slow_pair.into()]);
+
+    builder.switch_to_block(merge);
+    builder.seal_block(merge);
+    builder.block_params(merge)[0]
+}
+
+pub(crate) fn emit_write_ps_pair<const SYSTEM: SystemId>(
+    builder: &mut FunctionBuilder,
+    ctx_ptr: Value,
+    ea: Value,
+    pair: Value,
+    slow_f32: FuncRef,
+    cause_smc_write: FuncRef,
+) {
+    let fast_block = builder.create_block();
+    let slow_block = builder.create_block();
+    builder.set_cold_block(slow_block);
+    let merge = builder.create_block();
+
+    let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
+    let host_addr = builder.ins().iadd(host_ptr, page_off);
+    builder
+        .ins()
+        .brif(host_ptr, fast_block, &[host_addr.into()], slow_block, &[]);
+    builder.append_block_param(fast_block, types::I64);
+
+    builder.switch_to_block(fast_block);
+    builder.seal_block(fast_block);
+    let addr = builder.block_params(fast_block)[0];
+    let f32s = builder.ins().fvdemote(pair);
+    let v64 = builder.ins().bitcast(types::I64X2, le_vec_flags(), f32s);
+    let lo = builder.ins().extractlane(v64, 0);
+    let ro = builder.ins().rotl_imm(lo, 32);
+    let sw = builder.ins().bswap(ro);
+    builder.ins().store(heap_flags(), sw, addr, 0);
+    emit_smc_check::<SYSTEM>(builder, ctx_ptr, ea, 8, cause_smc_write);
+    builder.ins().jump(merge, &[]);
+
+    builder.switch_to_block(slow_block);
+    builder.seal_block(slow_block);
+    let p0 = builder.ins().extractlane(pair, 0);
+    builder.ins().call(slow_f32, &[ctx_ptr, ea, p0]);
+    let p1 = builder.ins().extractlane(pair, 1);
+    let ea1 = builder.ins().iadd_imm(ea, 4);
+    builder.ins().call(slow_f32, &[ctx_ptr, ea1, p1]);
+    builder.ins().jump(merge, &[]);
+
+    builder.switch_to_block(merge);
+    builder.seal_block(merge);
+}
+
 pub(crate) fn emit_ps_arith<const OP: u32, const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
@@ -3656,257 +3807,212 @@ pub(crate) fn emit_ps_arith<const OP: u32, const SYSTEM: SystemId>(
 
     match OP {
         lut::OP_PS_ADD => {
-            let a0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let b0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let s0 = builder.ins().fadd(a0, b0);
-            let r0 = round_to_single(builder, s0);
-            let a1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let b1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let s1 = builder.ins().fadd(a1, b1);
-            let r1 = round_to_single(builder, s1);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, r1);
-            return true;
+            let a = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let b = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let s = builder.ins().fadd(a, b);
+            let r = pair_round_to_single(builder, s);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), r);
+            true
         }
         lut::OP_PS_SUB => {
-            let a0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let b0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let s0 = builder.ins().fsub(a0, b0);
-            let r0 = round_to_single(builder, s0);
-            let a1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let b1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let s1 = builder.ins().fsub(a1, b1);
-            let r1 = round_to_single(builder, s1);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, r1);
-            return true;
+            let a = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let b = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let s = builder.ins().fsub(a, b);
+            let r = pair_round_to_single(builder, s);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), r);
+            true
         }
         lut::OP_PS_MUL => {
-            let a0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let c0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
-            let m0 = builder.ins().fmul(a0, c0);
-            let r0 = round_to_single(builder, m0);
-            let a1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let c1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
-            let m1 = builder.ins().fmul(a1, c1);
-            let r1 = round_to_single(builder, m1);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, r1);
-            return true;
+            let a = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let c = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
+            let c25 = pair_round_frc(builder, c);
+            let m = builder.ins().fmul(a, c25);
+            let r = pair_round_to_single(builder, m);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), r);
+            true
         }
         lut::OP_PS_DIV => {
-            let a0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let b0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let q0 = builder.ins().fdiv(a0, b0);
-            let r0 = round_to_single(builder, q0);
-            let a1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let b1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let q1 = builder.ins().fdiv(a1, b1);
-            let r1 = round_to_single(builder, q1);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, r1);
-            return true;
+            let a = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let b = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let q = builder.ins().fdiv(a, b);
+            let r = pair_round_to_single(builder, q);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), r);
+            true
         }
         lut::OP_PS_MADD => {
-            let r0 = ps_fma::<SYSTEM>(
-                builder,
-                ctx_ptr,
-                instr.ra(),
-                instr.fc(),
-                instr.rb(),
-                FmaSign::Pos,
-                false,
-            );
-            let r1 = ps_fma::<SYSTEM>(builder, ctx_ptr, instr.ra(), instr.fc(), instr.rb(), FmaSign::Pos, true);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, r1);
-            return true;
+            let a = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let c = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
+            let b = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let c25 = pair_round_frc(builder, c);
+            let t = builder.ins().fma(a, c25, b);
+            let r = pair_round_to_single(builder, t);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), r);
+            true
         }
         lut::OP_PS_MSUB => {
-            let r0 = ps_fma::<SYSTEM>(
-                builder,
-                ctx_ptr,
-                instr.ra(),
-                instr.fc(),
-                instr.rb(),
-                FmaSign::Neg,
-                false,
-            );
-            let r1 = ps_fma::<SYSTEM>(builder, ctx_ptr, instr.ra(), instr.fc(), instr.rb(), FmaSign::Neg, true);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, r1);
-            return true;
+            let a = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let c = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
+            let b = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let c25 = pair_round_frc(builder, c);
+            let nb = builder.ins().fneg(b);
+            let t = builder.ins().fma(a, c25, nb);
+            let r = pair_round_to_single(builder, t);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), r);
+            true
         }
         lut::OP_PS_NMADD => {
-            let v0 = ps_fma::<SYSTEM>(
-                builder,
-                ctx_ptr,
-                instr.ra(),
-                instr.fc(),
-                instr.rb(),
-                FmaSign::Pos,
-                false,
-            );
-            let r0 = builder.ins().fneg(v0);
-            let v1 = ps_fma::<SYSTEM>(builder, ctx_ptr, instr.ra(), instr.fc(), instr.rb(), FmaSign::Pos, true);
-            let r1 = builder.ins().fneg(v1);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, r1);
-            return true;
+            let a = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let c = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
+            let b = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let c25 = pair_round_frc(builder, c);
+            let t = builder.ins().fma(a, c25, b);
+            let r = pair_round_to_single(builder, t);
+            let n = pair_neg_unless_nan(builder, r);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), n);
+            true
         }
         lut::OP_PS_NMSUB => {
-            let v0 = ps_fma::<SYSTEM>(
-                builder,
-                ctx_ptr,
-                instr.ra(),
-                instr.fc(),
-                instr.rb(),
-                FmaSign::Neg,
-                false,
-            );
-            let r0 = builder.ins().fneg(v0);
-            let v1 = ps_fma::<SYSTEM>(builder, ctx_ptr, instr.ra(), instr.fc(), instr.rb(), FmaSign::Neg, true);
-            let r1 = builder.ins().fneg(v1);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, r1);
-            return true;
+            let a = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let c = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
+            let b = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let c25 = pair_round_frc(builder, c);
+            let nb = builder.ins().fneg(b);
+            let t = builder.ins().fma(a, c25, nb);
+            let r = pair_round_to_single(builder, t);
+            let n = pair_neg_unless_nan(builder, r);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), n);
+            true
         }
         lut::OP_PS_MULS0 => {
-            let c0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
-            let a0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let m0 = builder.ins().fmul(a0, c0);
-            let r0 = round_to_single(builder, m0);
-            let a1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let m1 = builder.ins().fmul(a1, c0);
-            let r1 = round_to_single(builder, m1);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, r1);
-            return true;
+            let c = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
+            let c25 = round_frc_value(builder, c);
+            let cs = builder.ins().splat(types::F64X2, c25);
+            let a = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let m = builder.ins().fmul(a, cs);
+            let r = pair_round_to_single(builder, m);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), r);
+            true
         }
         lut::OP_PS_MULS1 => {
-            let c1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
-            let a0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let m0 = builder.ins().fmul(a0, c1);
-            let r0 = round_to_single(builder, m0);
-            let a1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let m1 = builder.ins().fmul(a1, c1);
-            let r1 = round_to_single(builder, m1);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, r1);
-            return true;
+            let c = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
+            let c25 = round_frc_value(builder, c);
+            let cs = builder.ins().splat(types::F64X2, c25);
+            let a = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let m = builder.ins().fmul(a, cs);
+            let r = pair_round_to_single(builder, m);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), r);
+            true
         }
         lut::OP_PS_MADDS0 => {
-            let c0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
-            let a0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let b0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let m0 = builder.ins().fmul(a0, c0);
-            let s0 = builder.ins().fadd(m0, b0);
-            let r0 = round_to_single(builder, s0);
-            let a1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let b1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let m1 = builder.ins().fmul(a1, c0);
-            let s1 = builder.ins().fadd(m1, b1);
-            let r1 = round_to_single(builder, s1);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, r1);
-            return true;
+            let c = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
+            let c25 = round_frc_value(builder, c);
+            let cs = builder.ins().splat(types::F64X2, c25);
+            let a = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let b = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let t = builder.ins().fma(a, cs, b);
+            let r = pair_round_to_single(builder, t);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), r);
+            true
         }
         lut::OP_PS_MADDS1 => {
-            let c1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
-            let a0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let b0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let m0 = builder.ins().fmul(a0, c1);
-            let s0 = builder.ins().fadd(m0, b0);
-            let r0 = round_to_single(builder, s0);
-            let a1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let b1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let m1 = builder.ins().fmul(a1, c1);
-            let s1 = builder.ins().fadd(m1, b1);
-            let r1 = round_to_single(builder, s1);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, r1);
-            return true;
+            let c = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
+            let c25 = round_frc_value(builder, c);
+            let cs = builder.ins().splat(types::F64X2, c25);
+            let a = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let b = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let t = builder.ins().fma(a, cs, b);
+            let r = pair_round_to_single(builder, t);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), r);
+            true
         }
         lut::OP_PS_SUM0 => {
-            let a = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let b = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let s = builder.ins().fadd(a, b);
+            let a0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let b1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let s = builder.ins().fadd(a0, b1);
             let r0 = round_to_single(builder, s);
-            let r1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, r1);
-            return true;
+            let c1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
+            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, c1);
+            true
         }
         lut::OP_PS_SUM1 => {
-            let r0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
-            let a = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let b = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let s = builder.ins().fadd(a, b);
+            let c0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
+            let a0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let b1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let s = builder.ins().fadd(a0, b1);
             let r1 = round_to_single(builder, s);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, r1);
-            return true;
+            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), c0, r1);
+            true
         }
         lut::OP_PS_SEL => {
             use cranelift_codegen::ir::condcodes::FloatCC;
+
             let zero = builder.ins().f64const(0.0);
-            let a0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let c0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
-            let b0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let cond0 = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, a0, zero);
-            let r0 = builder.ins().select(cond0, c0, b0);
-            let a1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let c1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
-            let b1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let cond1 = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, a1, zero);
-            let r1 = builder.ins().select(cond1, c1, b1);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, r1);
-            return true;
+            let zs = builder.ins().splat(types::F64X2, zero);
+            let a = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let c = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
+            let b = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let mask = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, a, zs);
+            let r = pair_bitselect(builder, mask, c, b);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), r);
+            true
         }
         lut::OP_PS_RES => {
-            let b0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let b1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let r0 = f32_reciprocal(builder, b0);
-            let r1 = f32_reciprocal(builder, b1);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, r1);
-            return true;
+            let b = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let b32 = builder.ins().fvdemote(b);
+            let one = builder.ins().f32const(1.0);
+            let ones = builder.ins().splat(types::F32X4, one);
+            let q = builder.ins().fdiv(ones, b32);
+            let r = builder.ins().fvpromote_low(q);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), r);
+            true
         }
         lut::OP_PS_RSQRTE => {
-            let b0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let b1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let r0 = f32_rsqrte(builder, b0);
-            let r1 = f32_rsqrte(builder, b1);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), r0, r1);
-            return true;
+            let b = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let b32 = builder.ins().fvdemote(b);
+            let s = builder.ins().sqrt(b32);
+            let one = builder.ins().f32const(1.0);
+            let ones = builder.ins().splat(types::F32X4, one);
+            let q = builder.ins().fdiv(ones, s);
+            let r = builder.ins().fvpromote_low(q);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), r);
+            true
         }
         lut::OP_PS_MR => {
-            let p0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let p1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), p0, p1);
+            let v = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), v);
             true
         }
         lut::OP_PS_NEG => {
-            let p0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let p1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let n0 = builder.ins().fneg(p0);
-            let n1 = builder.ins().fneg(p1);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), n0, n1);
+            let v = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let n = builder.ins().fneg(v);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), n);
             true
         }
         lut::OP_PS_ABS => {
-            let p0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let p1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let a0 = builder.ins().fabs(p0);
-            let a1 = builder.ins().fabs(p1);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), a0, a1);
+            let v = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let a = builder.ins().fabs(v);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), a);
             true
         }
         lut::OP_PS_NABS => {
-            let p0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let p1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let a0 = builder.ins().fabs(p0);
-            let a1 = builder.ins().fabs(p1);
-            let n0 = builder.ins().fneg(a0);
-            let n1 = builder.ins().fneg(a1);
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), n0, n1);
+            let v = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let a = builder.ins().fabs(v);
+            let n = builder.ins().fneg(a);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), n);
             true
         }
         lut::OP_PS_MERGE00 => {
-            let p0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let p1 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), p0, p1);
+            let a = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let b0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let v = builder.ins().insertlane(a, b0, 1);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), v);
             true
         }
         lut::OP_PS_MERGE01 => {
-            let p0 = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let p1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), p0, p1);
+            let a = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let b1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let v = builder.ins().insertlane(a, b1, 1);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), v);
             true
         }
         lut::OP_PS_MERGE10 => {
@@ -3916,9 +4022,10 @@ pub(crate) fn emit_ps_arith<const OP: u32, const SYSTEM: SystemId>(
             true
         }
         lut::OP_PS_MERGE11 => {
-            let p0 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
-            let p1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            ps_write::<SYSTEM>(builder, ctx_ptr, instr.rd(), p0, p1);
+            let b = fpr_pair_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
+            let a1 = ps1_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let v = builder.ins().insertlane(b, a1, 0);
+            fpr_pair_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), v);
             true
         }
         lut::OP_PS_CMPU0 | lut::OP_PS_CMPO0 => {
@@ -3937,44 +4044,6 @@ pub(crate) fn emit_ps_arith<const OP: u32, const SYSTEM: SystemId>(
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) enum FmaSign {
-    Pos,
-    Neg,
-}
-
-pub(crate) fn ps_fma<const SYSTEM: SystemId>(
-    builder: &mut FunctionBuilder,
-    ctx_ptr: Value,
-    fra: u8,
-    frc: u8,
-    frb: u8,
-    sign: FmaSign,
-    pick_ps1: bool,
-) -> Value {
-    let a = if pick_ps1 {
-        ps1_load::<SYSTEM>(builder, ctx_ptr, fra)
-    } else {
-        fpr_load::<SYSTEM>(builder, ctx_ptr, fra)
-    };
-    let c = if pick_ps1 {
-        ps1_load::<SYSTEM>(builder, ctx_ptr, frc)
-    } else {
-        fpr_load::<SYSTEM>(builder, ctx_ptr, frc)
-    };
-    let b = if pick_ps1 {
-        ps1_load::<SYSTEM>(builder, ctx_ptr, frb)
-    } else {
-        fpr_load::<SYSTEM>(builder, ctx_ptr, frb)
-    };
-    let m = builder.ins().fmul(a, c);
-    let r = match sign {
-        FmaSign::Pos => builder.ins().fadd(m, b),
-        FmaSign::Neg => builder.ins().fsub(m, b),
-    };
-    round_to_single(builder, r)
-}
-
 pub(crate) fn ps_write<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
@@ -3982,8 +4051,8 @@ pub(crate) fn ps_write<const SYSTEM: SystemId>(
     ps0: Value,
     ps1: Value,
 ) {
-    fpr_store::<SYSTEM>(builder, ctx_ptr, rd, ps0);
-    ps1_store::<SYSTEM>(builder, ctx_ptr, rd, ps1);
+    let v = build_pair(builder, ps0, ps1);
+    fpr_pair_store::<SYSTEM>(builder, ctx_ptr, rd, v);
 }
 
 pub(crate) fn emit_fp_compare<const SYSTEM: SystemId>(
@@ -4056,7 +4125,16 @@ pub(crate) fn emit_fp_arith<const OP: u32, const SYSTEM: SystemId>(
             );
             return true;
         }
-        lut::OP_FMULSX | lut::OP_FMULX => {
+        lut::OP_FMULSX => {
+            let a = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
+            let c = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
+            let c25 = round_frc_value(builder, c);
+            let m = builder.ins().fmul(a, c25);
+            let r = round_to_single(builder, m);
+            fpr_store_paired::<SYSTEM>(builder, ctx_ptr, instr.rd(), r);
+            return true;
+        }
+        lut::OP_FMULX => {
             emit_fp_binop::<SYSTEM>(
                 builder,
                 ctx_ptr,
@@ -4099,18 +4177,14 @@ pub(crate) fn emit_fp_arith<const OP: u32, const SYSTEM: SystemId>(
             let a = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
             let c = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.fc());
             let b = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
-            let m = builder.ins().fmul(a, c);
-            let core = if is_add {
-                builder.ins().fadd(m, b)
-            } else {
-                builder.ins().fsub(m, b)
-            };
-            let signed = if neg { builder.ins().fneg(core) } else { core };
-            let stored = if single {
-                round_to_single(builder, signed)
-            } else {
-                signed
-            };
+
+            let c_in = if single { round_frc_value(builder, c) } else { c };
+            let b_in = if is_add { b } else { builder.ins().fneg(b) };
+            let core = builder.ins().fma(a, c_in, b_in);
+
+            let rounded = if single { round_to_single(builder, core) } else { core };
+            let stored = if neg { neg_unless_nan(builder, rounded) } else { rounded };
+
             if single {
                 fpr_store_paired::<SYSTEM>(builder, ctx_ptr, instr.rd(), stored);
             } else {

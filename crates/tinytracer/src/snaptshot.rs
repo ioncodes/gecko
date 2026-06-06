@@ -13,7 +13,7 @@ impl CpuSnapshot {
     pub fn from_cpu(cpu: &gecko::gekko::Gekko) -> Self {
         Self {
             gprs: cpu.gprs,
-            fprs: cpu.fprs,
+            fprs: cpu.fpr_array(),
             lr: cpu.spr.lr,
             ctr: cpu.spr.ctr,
             cr: cpu.cr,

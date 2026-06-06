@@ -26,10 +26,12 @@ pub mod lut_wii {
 
 pub const IPL_RESET_VECTOR: u32 = 0xFFF0_0100;
 
+#[repr(C, align(16))]
+pub struct FprFile(pub [[f64; 2]; 32]);
+
 pub struct Gekko {
     pub gprs: [u32; 32],
-    pub fprs: [f64; 32], // PS0
-    pub ps1s: [f64; 32], // PS1 (paired single slot 1)
+    pub fprs: FprFile,
     pub pc: u32,
     pub cr: ConditionRegister,
     pub fpscr: fpscr::Fpscr,
@@ -55,8 +57,7 @@ impl Gekko {
 
         Gekko {
             gprs: [0; 32],
-            fprs: [0.0; 32],
-            ps1s: [1.0; 32],
+            fprs: FprFile([[0.0, 1.0]; 32]),
             pc: initial_pc,
             cia: initial_pc,
             nia: initial_pc.wrapping_add(4),
@@ -85,25 +86,33 @@ impl Gekko {
     #[inline(always)]
     pub fn read_fpr(&self, index: u8) -> f64 {
         debug_assert!(index < 32);
-        unsafe { *self.fprs.get_unchecked(index as usize) }
+        unsafe { self.fprs.0.get_unchecked(index as usize)[0] }
     }
 
     #[inline(always)]
     pub fn write_fpr(&mut self, index: u8, value: f64) {
         debug_assert!(index < 32);
-        unsafe { *self.fprs.get_unchecked_mut(index as usize) = value }
+        unsafe { self.fprs.0.get_unchecked_mut(index as usize)[0] = value }
     }
 
     #[inline(always)]
     pub fn read_ps1(&self, index: u8) -> f64 {
         debug_assert!(index < 32);
-        unsafe { *self.ps1s.get_unchecked(index as usize) }
+        unsafe { self.fprs.0.get_unchecked(index as usize)[1] }
     }
 
     #[inline(always)]
     pub fn write_ps1(&mut self, index: u8, value: f64) {
         debug_assert!(index < 32);
-        unsafe { *self.ps1s.get_unchecked_mut(index as usize) = value }
+        unsafe { self.fprs.0.get_unchecked_mut(index as usize)[1] = value }
+    }
+
+    pub fn fpr_array(&self) -> [f64; 32] {
+        core::array::from_fn(|i| self.fprs.0[i][0])
+    }
+
+    pub fn ps1_array(&self) -> [f64; 32] {
+        core::array::from_fn(|i| self.fprs.0[i][1])
     }
 
     #[inline(always)]

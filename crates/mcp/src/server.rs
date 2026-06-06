@@ -719,8 +719,8 @@ fn registers_of<const SYSTEM: gecko::SystemId>(sys: &gecko::System<{ SYSTEM }>) 
         srr0: g.spr.srr0.raw(),
         srr1: g.spr.srr1,
         gprs: g.gprs,
-        fprs: g.fprs,
-        ps1s: g.ps1s,
+        fprs: g.fpr_array(),
+        ps1s: g.ps1_array(),
     }
 }
 
