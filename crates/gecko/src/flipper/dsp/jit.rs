@@ -235,6 +235,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
                 if ((w & 0xFFE0) == 0x0060 || (w & 0xFF00) == 0x1100) && i + 1 < words {
                     let end = u16::from_be_bytes([mem[i * 2 + 2], mem[i * 2 + 3]]);
                     self.loop_end_table[end as usize] = 1;
+                    self.loop_end_table[end.wrapping_sub(1) as usize] = 1;
                 }
             }
         }
