@@ -40,6 +40,7 @@ impl Program<Message> for PlayerProgram {
             iced::Event::Keyboard(kbd) => match kbd {
                 iced::keyboard::Event::KeyPressed { physical_key, .. } => {
                     let hotkey = match state::physical_to_code(physical_key) {
+                        Some(Code::Tab) => Some(Message::PlayerToggleUncapped(self.window)),
                         Some(Code::F10) => Some(Message::PlayerToggleFullscreen(self.window)),
                         Some(Code::F11) => Some(Message::PlayerToggleOverlay(self.window)),
                         Some(Code::F12) => Some(Message::PlayerScreenshot(self.window)),

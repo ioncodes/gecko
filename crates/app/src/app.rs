@@ -46,6 +46,7 @@ pub enum Message {
     SystemThemeChanged(Mode),
     PlayerToggleFullscreen(window::Id),
     PlayerToggleOverlay(window::Id),
+    PlayerToggleUncapped(window::Id),
     PlayerScreenshot(window::Id),
 }
 
@@ -53,6 +54,16 @@ pub struct Toast {
     title: String,
     detail: String,
     expires: Instant,
+}
+
+impl Toast {
+    fn new(title: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            detail: detail.into(),
+            expires: Instant::now() + TOAST_DURATION,
+        }
+    }
 }
 
 pub struct PlayerWindow {
@@ -347,6 +358,20 @@ impl App {
                 }
                 Task::none()
             }
+            Message::PlayerToggleUncapped(id) => {
+                let Some(player) = self.players.get_mut(&id) else {
+                    return Task::none();
+                };
+
+                let (title, detail) = if player.state.toggle_throttle() {
+                    ("Speed limit on", "Throttled to native speed")
+                } else {
+                    ("Speed limit off", "Running uncapped")
+                };
+
+                player.toast = Some(Toast::new(title, detail));
+                Task::none()
+            }
             Message::PlayerScreenshot(id) => {
                 let Some(player) = self.players.get_mut(&id) else {
                     return Task::none();
@@ -365,11 +390,7 @@ impl App {
                     None => ("Screenshot failed", "No frame to capture yet".to_owned()),
                 };
 
-                player.toast = Some(Toast {
-                    title: title.to_owned(),
-                    detail,
-                    expires: Instant::now() + TOAST_DURATION,
-                });
+                player.toast = Some(Toast::new(title, detail));
                 Task::none()
             }
         }

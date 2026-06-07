@@ -35,6 +35,7 @@ pub struct PlayerState {
     boot: Mutex<Option<BootParams>>,
     initialized: OnceLock<Initialized>,
     shutdown: Arc<AtomicBool>,
+    throttle: Arc<AtomicBool>,
     aspect: TargetAspect,
     input: Arc<Mutex<HostInput>>,
     platform: Platform,
@@ -84,6 +85,7 @@ impl PlayerState {
             })),
             initialized: OnceLock::new(),
             shutdown: Arc::new(AtomicBool::new(false)),
+            throttle: Arc::new(AtomicBool::new(true)),
             aspect,
             input: Arc::new(Mutex::new(neutral)),
             platform: game.platform,
@@ -197,6 +199,10 @@ impl PlayerState {
         self.initialized.get().and_then(|init| init.renderer.capture_xfb())
     }
 
+    pub fn toggle_throttle(&self) -> bool {
+        !self.throttle.fetch_xor(true, Ordering::Relaxed)
+    }
+
     pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Relaxed);
     }
@@ -272,7 +278,13 @@ fn player_thread(
             let audio = self::install_audio_sink(&mut emu);
             let _ = emu.load_jit_cache(&game_id);
             self::set_initialized(&state, renderer, audio, &game_id);
-            emu_thread::run::<{ system::WII }>(emu, state.input.clone(), Some(game_id), true, shutdown);
+            emu_thread::run::<{ system::WII }>(
+                emu,
+                state.input.clone(),
+                Some(game_id),
+                state.throttle.clone(),
+                shutdown,
+            );
         }
         Platform::Gcn => {
             let mut emu = self::build_gamecube(dvd, &params);
@@ -281,7 +293,13 @@ fn player_thread(
             let audio = self::install_audio_sink(&mut emu);
             let _ = emu.load_jit_cache(&game_id);
             self::set_initialized(&state, renderer, audio, &game_id);
-            emu_thread::run::<{ system::GC }>(emu, state.input.clone(), Some(game_id), true, shutdown);
+            emu_thread::run::<{ system::GC }>(
+                emu,
+                state.input.clone(),
+                Some(game_id),
+                state.throttle.clone(),
+                shutdown,
+            );
         }
     }
 }

@@ -9,14 +9,14 @@ pub fn run<const SYSTEM: SystemId>(
     mut emulator: System<SYSTEM>,
     input: Arc<Mutex<HostInput>>,
     game_id: Option<String>,
-    throttle: bool,
+    throttle: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
 ) {
     let sleeper = SpinSleeper::default();
     let throttle_step = Duration::from_micros(5);
 
     while !shutdown.load(Ordering::Relaxed) {
-        while throttle && emulator.audio_sink.should_throttle() {
+        while throttle.load(Ordering::Relaxed) && emulator.audio_sink.should_throttle() {
             if shutdown.load(Ordering::Relaxed) {
                 break;
             }
