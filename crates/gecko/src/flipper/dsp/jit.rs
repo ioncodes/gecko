@@ -83,83 +83,30 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         let mut jit_builder = JITBuilder::with_isa(isa, default_libcall_names());
 
         struct Syms {
-            loop_tail: (&'static str, *const u8),
             read_dmem: (&'static str, *const u8),
             write_dmem: (&'static str, *const u8),
-            inc_ar: (&'static str, *const u8),
-            dec_ar: (&'static str, *const u8),
-            increase_ar: (&'static str, *const u8),
-            decrease_ar_ix: (&'static str, *const u8),
-            dynamic_shift: (&'static str, *const u8),
-            read_imem: (&'static str, *const u8),
-            call_stack_push: (&'static str, *const u8),
-            call_stack_pop: (&'static str, *const u8),
-            data_stack_pop: (&'static str, *const u8),
             read_reg_full: (&'static str, *const u8),
             write_reg_full: (&'static str, *const u8),
-            loop_setup: (&'static str, *const u8),
         }
         let syms: Syms = match SYSTEM {
             GC => Syms {
-                loop_tail: ("gecko_dsp_jit_loop_tail_gc", runtime::dsp_loop_tail_gc as *const u8),
                 read_dmem: ("gecko_dsp_jit_rdmem_gc", runtime::dsp_read_dmem_gc as *const u8),
                 write_dmem: ("gecko_dsp_jit_wdmem_gc", runtime::dsp_write_dmem_gc as *const u8),
-                inc_ar: ("gecko_dsp_jit_incar_gc", runtime::dsp_increment_ar_gc as *const u8),
-                dec_ar: ("gecko_dsp_jit_decar_gc", runtime::dsp_decrement_ar_gc as *const u8),
-                increase_ar: ("gecko_dsp_jit_incrar_gc", runtime::dsp_increase_ar_gc as *const u8),
-                decrease_ar_ix: ("gecko_dsp_jit_decarix_gc", runtime::dsp_decrease_ar_ix_gc as *const u8),
-                dynamic_shift: ("gecko_dsp_jit_dynshift_gc", runtime::dsp_dynamic_shift_gc as *const u8),
-                read_imem: ("gecko_dsp_jit_rimem_gc", runtime::dsp_read_imem_gc as *const u8),
-                call_stack_push: ("gecko_dsp_jit_cspush_gc", runtime::dsp_call_stack_push_gc as *const u8),
-                call_stack_pop: ("gecko_dsp_jit_cspop_gc", runtime::dsp_call_stack_pop_gc as *const u8),
-                data_stack_pop: ("gecko_dsp_jit_dspop_gc", runtime::dsp_data_stack_pop_gc as *const u8),
                 read_reg_full: ("gecko_dsp_jit_rdregf_gc", runtime::dsp_read_reg_full_gc as *const u8),
                 write_reg_full: ("gecko_dsp_jit_wrregf_gc", runtime::dsp_write_reg_full_gc as *const u8),
-                loop_setup: ("gecko_dsp_jit_loopsetup_gc", runtime::dsp_loop_setup_gc as *const u8),
             },
             WII => Syms {
-                loop_tail: ("gecko_dsp_jit_loop_tail_wii", runtime::dsp_loop_tail_wii as *const u8),
                 read_dmem: ("gecko_dsp_jit_rdmem_wii", runtime::dsp_read_dmem_wii as *const u8),
                 write_dmem: ("gecko_dsp_jit_wdmem_wii", runtime::dsp_write_dmem_wii as *const u8),
-                inc_ar: ("gecko_dsp_jit_incar_wii", runtime::dsp_increment_ar_wii as *const u8),
-                dec_ar: ("gecko_dsp_jit_decar_wii", runtime::dsp_decrement_ar_wii as *const u8),
-                increase_ar: ("gecko_dsp_jit_incrar_wii", runtime::dsp_increase_ar_wii as *const u8),
-                decrease_ar_ix: (
-                    "gecko_dsp_jit_decarix_wii",
-                    runtime::dsp_decrease_ar_ix_wii as *const u8,
-                ),
-                dynamic_shift: (
-                    "gecko_dsp_jit_dynshift_wii",
-                    runtime::dsp_dynamic_shift_wii as *const u8,
-                ),
-                read_imem: ("gecko_dsp_jit_rimem_wii", runtime::dsp_read_imem_wii as *const u8),
-                call_stack_push: (
-                    "gecko_dsp_jit_cspush_wii",
-                    runtime::dsp_call_stack_push_wii as *const u8,
-                ),
-                call_stack_pop: ("gecko_dsp_jit_cspop_wii", runtime::dsp_call_stack_pop_wii as *const u8),
-                data_stack_pop: ("gecko_dsp_jit_dspop_wii", runtime::dsp_data_stack_pop_wii as *const u8),
                 read_reg_full: ("gecko_dsp_jit_rdregf_wii", runtime::dsp_read_reg_full_wii as *const u8),
                 write_reg_full: ("gecko_dsp_jit_wrregf_wii", runtime::dsp_write_reg_full_wii as *const u8),
-                loop_setup: ("gecko_dsp_jit_loopsetup_wii", runtime::dsp_loop_setup_wii as *const u8),
             },
             _ => unreachable!(),
         };
-        jit_builder.symbol(syms.loop_tail.0, syms.loop_tail.1);
         jit_builder.symbol(syms.read_dmem.0, syms.read_dmem.1);
         jit_builder.symbol(syms.write_dmem.0, syms.write_dmem.1);
-        jit_builder.symbol(syms.inc_ar.0, syms.inc_ar.1);
-        jit_builder.symbol(syms.dec_ar.0, syms.dec_ar.1);
-        jit_builder.symbol(syms.increase_ar.0, syms.increase_ar.1);
-        jit_builder.symbol(syms.decrease_ar_ix.0, syms.decrease_ar_ix.1);
-        jit_builder.symbol(syms.dynamic_shift.0, syms.dynamic_shift.1);
-        jit_builder.symbol(syms.read_imem.0, syms.read_imem.1);
-        jit_builder.symbol(syms.call_stack_push.0, syms.call_stack_push.1);
-        jit_builder.symbol(syms.call_stack_pop.0, syms.call_stack_pop.1);
-        jit_builder.symbol(syms.data_stack_pop.0, syms.data_stack_pop.1);
         jit_builder.symbol(syms.read_reg_full.0, syms.read_reg_full.1);
         jit_builder.symbol(syms.write_reg_full.0, syms.write_reg_full.1);
-        jit_builder.symbol(syms.loop_setup.0, syms.loop_setup.1);
 
         let mut module = JITModule::new(jit_builder);
 
@@ -167,59 +114,15 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         let host_cc = module.target_config().default_call_conv;
 
         let block_sig = translator::block_signature(pointer_type);
-        let void_thunk_sig = translator::void_thunk_signature(pointer_type, host_cc);
         let dmem_read_sig = translator::dmem_read_signature(pointer_type, host_cc);
         let dmem_write_sig = translator::dmem_write_signature(pointer_type, host_cc);
-        let ar_unary_sig = translator::ar_unary_signature(pointer_type, host_cc);
-        let ar_binary_sig = translator::ar_binary_signature(pointer_type, host_cc);
-        let dynamic_shift_sig = translator::dynamic_shift_signature(pointer_type, host_cc);
 
-        let loop_tail_id = module
-            .declare_function(syms.loop_tail.0, Linkage::Import, &void_thunk_sig)
-            .expect("declare loop_tail thunk");
         let read_dmem_id = module
             .declare_function(syms.read_dmem.0, Linkage::Import, &dmem_read_sig)
             .expect("declare read_dmem thunk");
         let write_dmem_id = module
             .declare_function(syms.write_dmem.0, Linkage::Import, &dmem_write_sig)
             .expect("declare write_dmem thunk");
-        let inc_ar_id = module
-            .declare_function(syms.inc_ar.0, Linkage::Import, &ar_unary_sig)
-            .expect("declare inc_ar thunk");
-        let dec_ar_id = module
-            .declare_function(syms.dec_ar.0, Linkage::Import, &ar_unary_sig)
-            .expect("declare dec_ar thunk");
-        let increase_ar_id = module
-            .declare_function(syms.increase_ar.0, Linkage::Import, &ar_binary_sig)
-            .expect("declare increase_ar thunk");
-        let decrease_ar_ix_id = module
-            .declare_function(syms.decrease_ar_ix.0, Linkage::Import, &ar_binary_sig)
-            .expect("declare decrease_ar_ix thunk");
-        let dynamic_shift_id = module
-            .declare_function(syms.dynamic_shift.0, Linkage::Import, &dynamic_shift_sig)
-            .expect("declare dynamic_shift thunk");
-        let read_imem_id = module
-            .declare_function(syms.read_imem.0, Linkage::Import, &dmem_read_sig)
-            .expect("declare read_imem thunk");
-
-        let call_stack_push_sig = {
-            let mut sig = cranelift_codegen::ir::Signature::new(host_cc);
-            sig.params.push(cranelift_codegen::ir::AbiParam::new(pointer_type));
-            sig.params
-                .push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I32));
-            sig
-        };
-        let call_stack_push_id = module
-            .declare_function(syms.call_stack_push.0, Linkage::Import, &call_stack_push_sig)
-            .expect("declare call_stack_push thunk");
-
-        let stack_pop_sig = translator::stack_pop_signature(pointer_type, host_cc);
-        let call_stack_pop_id = module
-            .declare_function(syms.call_stack_pop.0, Linkage::Import, &stack_pop_sig)
-            .expect("declare call_stack_pop thunk");
-        let data_stack_pop_id = module
-            .declare_function(syms.data_stack_pop.0, Linkage::Import, &stack_pop_sig)
-            .expect("declare data_stack_pop thunk");
 
         let read_reg_full_id = module
             .declare_function(syms.read_reg_full.0, Linkage::Import, &dmem_read_sig)
@@ -228,30 +131,12 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         let write_reg_full_id = module
             .declare_function(syms.write_reg_full.0, Linkage::Import, &dmem_write_sig)
             .expect("declare write_reg_full thunk");
-        let loop_setup_id = module
-            .declare_function(
-                syms.loop_setup.0,
-                Linkage::Import,
-                &translator::loop_setup_signature(pointer_type, host_cc),
-            )
-            .expect("declare loop_setup thunk");
 
         let extern_funcs = translator::ExternFuncs {
-            loop_tail: loop_tail_id,
             read_dmem: read_dmem_id,
             write_dmem: write_dmem_id,
-            inc_ar: inc_ar_id,
-            dec_ar: dec_ar_id,
-            increase_ar: increase_ar_id,
-            decrease_ar_ix: decrease_ar_ix_id,
-            dynamic_shift: dynamic_shift_id,
-            read_imem: read_imem_id,
-            call_stack_push: call_stack_push_id,
-            call_stack_pop: call_stack_pop_id,
-            data_stack_pop: data_stack_pop_id,
             read_reg_full: read_reg_full_id,
             write_reg_full: write_reg_full_id,
-            loop_setup: loop_setup_id,
         };
 
         let trampoline_fn = build_trampoline(&mut module, host_cc, pointer_type, &block_sig);

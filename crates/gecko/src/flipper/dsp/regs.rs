@@ -182,7 +182,7 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for MailboxToDspLo {
         // AID consumes the buffer with the prior cycle's contents at the
         // start of each render before the new contents land.
         // Based off of FFCC, thanks SpinningCube, zayd, JustinCase
-        sys.drain_dsp_synchronous(64 * 1024);
+        sys.drain_dsp_synchronous(1024 * 1024);
         crate::flipper::dsp::wake_dsp_scheduler::<SYSTEM>(sys);
     }
 }
