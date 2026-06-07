@@ -24,7 +24,7 @@ use crate::mmio::Mmio;
 use crate::system::{ExecutionMode, System, SystemId};
 
 #[cfg(feature = "jit")]
-pub const DSP_JIT_CHAIN_BUDGET: u32 = 16;
+pub const DSP_JIT_CHAIN_BUDGET: u32 = 64;
 
 pub struct Dsp {
     pub registers: core::Registers,
@@ -133,9 +133,10 @@ impl Dsp {
     }
 
     #[inline(always)]
-    pub fn mailbox_wait_state(&self) -> (bool, bool) {
-        let b = self.wait_table[self.registers.pc as usize];
-        (b & 1 != 0, b & 2 != 0)
+    pub fn parked_in_mailbox_wait(&self) -> bool {
+        let cpu_mail_quiet = !self.mailbox_to_dsp_hi.busy();
+        let dsp_mail_full = self.mailbox_to_cpu_hi.busy();
+        (cpu_mail_quiet && self.is_waiting_for_cpu_mail()) || (dsp_mail_full && self.is_waiting_for_dsp_mail())
     }
 
     pub fn rebuild_wait_table(&mut self) {
@@ -358,7 +359,39 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     }
 
     #[cfg(feature = "jit")]
+    fn dsp_jit_step(&mut self, iram: &[u8], irom: &[u8]) -> u64 {
+        let ctx_ptr = self as *mut crate::system::System<SYSTEM> as *mut ::core::ffi::c_void;
+
+        if self.dsp.csr.pi_interrupt() && self.dsp.registers.status.external_interrupt_enable() {
+            self.dsp.csr = self.dsp.csr.with_pi_interrupt(false);
+            self.dsp.registers.call_stack.push(self.dsp.registers.pc);
+            self.dsp.registers.data_stack.push(self.dsp.registers.status.raw());
+            self.dsp.registers.status = self.dsp.registers.status.with_external_interrupt_enable(false);
+            self.dsp.registers.pc = 0x000E;
+        }
+
+        let start_pc = self.dsp.registers.pc;
+        self.dsp.chain_budget = DSP_JIT_CHAIN_BUDGET;
+        self.dsp.instr_count = 0;
+
+        let next_pc = self.dsp.jit.as_mut().unwrap().run_block(ctx_ptr, iram, irom, start_pc);
+        self.dsp.registers.pc = next_pc;
+
+        #[cfg(feature = "jit-stats")]
+        {
+            let chain_depth = DSP_JIT_CHAIN_BUDGET - self.dsp.chain_budget;
+            self.dsp.jit.as_mut().unwrap().record_chain_depth(chain_depth);
+        }
+
+        (self.dsp.instr_count as u64).max(1)
+    }
+
+    #[cfg(feature = "jit")]
+    #[cfg_attr(feature = "hotpath", hotpath::measure(label = "dsp_batch"))]
     fn execute_dsp_batch_jit(&mut self) {
+        #[cfg(feature = "jit-stats")]
+        let batch_start = std::time::Instant::now();
+
         if self.dsp.csr.reset() || self.dsp.csr.halt() {
             self::refresh_interrupts(self);
             return;
@@ -368,7 +401,6 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             self.dsp.jit = Some(Box::new(jit::JitEngine::<SYSTEM>::new()));
         }
 
-        let ctx_ptr = self as *mut crate::system::System<SYSTEM> as *mut ::core::ffi::c_void;
         let iram_ptr = self.dsp.iram.as_ptr();
         let irom_ptr = self.dsp.irom.as_ptr();
         let iram_len = self.dsp.iram.len();
@@ -378,12 +410,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
         let mut budget = crate::scheduler::DSP_BATCH_SIZE as u64;
         while budget > 0 {
-            let cpu_mail_quiet = !self.dsp.mailbox_to_dsp_hi.busy();
-            let dsp_mail_full = self.dsp.mailbox_to_cpu_hi.busy();
-
-            if (cpu_mail_quiet && self.dsp.is_waiting_for_cpu_mail())
-                || (dsp_mail_full && self.dsp.is_waiting_for_dsp_mail())
-            {
+            if self.dsp.parked_in_mailbox_wait() {
                 break;
             }
 
@@ -391,26 +418,17 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 break;
             }
 
-            if self.dsp.csr.pi_interrupt() && self.dsp.registers.status.external_interrupt_enable() {
-                self.dsp.csr = self.dsp.csr.with_pi_interrupt(false);
-                self.dsp.registers.call_stack.push(self.dsp.registers.pc);
-                self.dsp.registers.data_stack.push(self.dsp.registers.status.raw());
-                self.dsp.registers.status = self.dsp.registers.status.with_external_interrupt_enable(false);
-                self.dsp.registers.pc = 0x000E;
-            }
-
-            let start_pc = self.dsp.registers.pc;
-            self.dsp.chain_budget = DSP_JIT_CHAIN_BUDGET;
-            self.dsp.instr_count = 0;
-
-            let next_pc = self.dsp.jit.as_mut().unwrap().run_block(ctx_ptr, iram, irom, start_pc);
-            self.dsp.registers.pc = next_pc;
-
-            let consumed = (self.dsp.instr_count as u64).max(1);
+            let consumed = self.dsp_jit_step(iram, irom);
             budget = budget.saturating_sub(consumed);
+        }
 
-            let chain_depth = DSP_JIT_CHAIN_BUDGET - self.dsp.chain_budget;
-            self.dsp.jit.as_mut().unwrap().record_chain_depth(chain_depth);
+        #[cfg(feature = "jit-stats")]
+        {
+            use std::sync::atomic::Ordering;
+
+            DSP_BATCH_CALLS.fetch_add(1, Ordering::Relaxed);
+            DSP_BATCH_STEPS.fetch_add(crate::scheduler::DSP_BATCH_SIZE - budget, Ordering::Relaxed);
+            DSP_BATCH_NANOS.fetch_add(batch_start.elapsed().as_nanos() as u64, Ordering::Relaxed);
         }
 
         self::refresh_interrupts(self);
@@ -427,10 +445,20 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     }
 
     #[cfg(feature = "jit")]
+    #[cfg_attr(feature = "hotpath", hotpath::measure(label = "dsp_drain"))]
     fn drain_dsp_synchronous_jit(&mut self, max_steps: u32) {
+        #[cfg(feature = "jit-stats")]
+        let drain_start = std::time::Instant::now();
+
         let already_busy = self.dsp.mailbox_to_cpu_hi.busy();
 
         if self.dsp.csr.reset() || self.dsp.csr.halt() {
+            #[cfg(feature = "jit-stats")]
+            {
+                DSP_DRAIN_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                DSP_DRAIN_EXIT_HALT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+
             self::refresh_interrupts(self);
             return;
         }
@@ -439,7 +467,6 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             self.dsp.jit = Some(Box::new(jit::JitEngine::<SYSTEM>::new()));
         }
 
-        let ctx_ptr = self as *mut crate::system::System<SYSTEM> as *mut ::core::ffi::c_void;
         let iram_ptr = self.dsp.iram.as_ptr();
         let irom_ptr = self.dsp.irom.as_ptr();
         let iram_len = self.dsp.iram.len();
@@ -448,6 +475,10 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         let irom = unsafe { ::core::slice::from_raw_parts(irom_ptr, irom_len) };
 
         let mut budget = max_steps as u64;
+
+        #[cfg(feature = "jit-stats")]
+        let mut blocks: u64 = 0;
+
         while budget > 0 {
             if self.dsp.csr.reset() || self.dsp.csr.halt() {
                 break;
@@ -457,34 +488,38 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 break;
             }
 
-            let cpu_mail_quiet = !self.dsp.mailbox_to_dsp_hi.busy();
-            let dsp_mail_full = self.dsp.mailbox_to_cpu_hi.busy();
-            if (cpu_mail_quiet && self.dsp.is_waiting_for_cpu_mail())
-                || (dsp_mail_full && self.dsp.is_waiting_for_dsp_mail())
-            {
+            if self.dsp.parked_in_mailbox_wait() {
                 break;
             }
 
-            if self.dsp.csr.pi_interrupt() && self.dsp.registers.status.external_interrupt_enable() {
-                self.dsp.csr = self.dsp.csr.with_pi_interrupt(false);
-                self.dsp.registers.call_stack.push(self.dsp.registers.pc);
-                self.dsp.registers.data_stack.push(self.dsp.registers.status.raw());
-                self.dsp.registers.status = self.dsp.registers.status.with_external_interrupt_enable(false);
-                self.dsp.registers.pc = 0x000E;
-            }
-
-            let start_pc = self.dsp.registers.pc;
-            self.dsp.chain_budget = DSP_JIT_CHAIN_BUDGET;
-            self.dsp.instr_count = 0;
-
-            let next_pc = self.dsp.jit.as_mut().unwrap().run_block(ctx_ptr, iram, irom, start_pc);
-            self.dsp.registers.pc = next_pc;
-
-            let consumed = (self.dsp.instr_count as u64).max(1);
+            let consumed = self.dsp_jit_step(iram, irom);
             budget = budget.saturating_sub(consumed);
 
-            let chain_depth = DSP_JIT_CHAIN_BUDGET - self.dsp.chain_budget;
-            self.dsp.jit.as_mut().unwrap().record_chain_depth(chain_depth);
+            #[cfg(feature = "jit-stats")]
+            {
+                blocks += 1;
+            }
+        }
+
+        #[cfg(feature = "jit-stats")]
+        {
+            use std::sync::atomic::Ordering;
+
+            DSP_DRAIN_CALLS.fetch_add(1, Ordering::Relaxed);
+            DSP_DRAIN_STEPS.fetch_add(max_steps as u64 - budget, Ordering::Relaxed);
+            DSP_DRAIN_BLOCKS.fetch_add(blocks, Ordering::Relaxed);
+            DSP_DRAIN_NANOS.fetch_add(drain_start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+
+            let exit = if self.dsp.csr.reset() || self.dsp.csr.halt() {
+                &DSP_DRAIN_EXIT_HALT
+            } else if !already_busy && self.dsp.mailbox_to_cpu_hi.busy() {
+                &DSP_DRAIN_EXIT_ANSWERED
+            } else if budget > 0 {
+                &DSP_DRAIN_EXIT_WAIT
+            } else {
+                &DSP_DRAIN_EXIT_BUDGET
+            };
+            exit.fetch_add(1, Ordering::Relaxed);
         }
 
         self::refresh_interrupts(self);
@@ -499,6 +534,10 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             }
 
             if !already_busy && self.dsp.mailbox_to_cpu_hi.busy() {
+                break;
+            }
+
+            if self.dsp.parked_in_mailbox_wait() {
                 break;
             }
         }
@@ -578,6 +617,28 @@ pub fn refresh_interrupts<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
 pub static DSP_SUSPEND_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 #[cfg(feature = "jit-stats")]
 pub static DSP_WAKE_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(feature = "jit-stats")]
+pub static DSP_DRAIN_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(feature = "jit-stats")]
+pub static DSP_DRAIN_STEPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(feature = "jit-stats")]
+pub static DSP_DRAIN_BLOCKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(feature = "jit-stats")]
+pub static DSP_DRAIN_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(feature = "jit-stats")]
+pub static DSP_DRAIN_EXIT_HALT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(feature = "jit-stats")]
+pub static DSP_DRAIN_EXIT_ANSWERED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(feature = "jit-stats")]
+pub static DSP_DRAIN_EXIT_WAIT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(feature = "jit-stats")]
+pub static DSP_DRAIN_EXIT_BUDGET: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(feature = "jit-stats")]
+pub static DSP_BATCH_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(feature = "jit-stats")]
+pub static DSP_BATCH_STEPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(feature = "jit-stats")]
+pub static DSP_BATCH_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[inline]
 pub fn wake_dsp_scheduler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
@@ -793,7 +854,10 @@ pub trait DspJitHandle {
 #[cfg(feature = "jit")]
 impl<const SYSTEM: SystemId> DspJitHandle for jit::JitEngine<SYSTEM> {
     fn run_block(&mut self, ctx_ptr: *mut ::core::ffi::c_void, iram: &[u8], irom: &[u8], start_pc: u16) -> u16 {
-        let entry = self.lookup_or_compile(iram, irom, start_pc);
+        let entry = match self.lookup_block_fast(start_pc) {
+            Some(entry) => entry,
+            None => self.lookup_or_compile(iram, irom, start_pc),
+        };
         Self::run_block(self, ctx_ptr, entry)
     }
 

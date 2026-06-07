@@ -457,6 +457,39 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         let dsp_suspends = crate::flipper::dsp::DSP_SUSPEND_COUNT.load(Ordering::Relaxed);
         let dsp_wakes = crate::flipper::dsp::DSP_WAKE_COUNT.load(Ordering::Relaxed);
 
+        let drain_calls = crate::flipper::dsp::DSP_DRAIN_CALLS.load(Ordering::Relaxed);
+        let drain_steps = crate::flipper::dsp::DSP_DRAIN_STEPS.load(Ordering::Relaxed);
+        let drain_blocks = crate::flipper::dsp::DSP_DRAIN_BLOCKS.load(Ordering::Relaxed);
+        let drain_nanos = crate::flipper::dsp::DSP_DRAIN_NANOS.load(Ordering::Relaxed);
+        let drain_halt = crate::flipper::dsp::DSP_DRAIN_EXIT_HALT.load(Ordering::Relaxed);
+        let drain_answered = crate::flipper::dsp::DSP_DRAIN_EXIT_ANSWERED.load(Ordering::Relaxed);
+        let drain_wait = crate::flipper::dsp::DSP_DRAIN_EXIT_WAIT.load(Ordering::Relaxed);
+        let drain_budget = crate::flipper::dsp::DSP_DRAIN_EXIT_BUDGET.load(Ordering::Relaxed);
+        let batch_calls = crate::flipper::dsp::DSP_BATCH_CALLS.load(Ordering::Relaxed);
+        let batch_steps = crate::flipper::dsp::DSP_BATCH_STEPS.load(Ordering::Relaxed);
+        let batch_nanos = crate::flipper::dsp::DSP_BATCH_NANOS.load(Ordering::Relaxed);
+
+        let drain_avg_steps = if drain_calls > 0 {
+            drain_steps as f64 / drain_calls as f64
+        } else {
+            0.0
+        };
+        let drain_avg_block = if drain_blocks > 0 {
+            drain_steps as f64 / drain_blocks as f64
+        } else {
+            0.0
+        };
+        let drain_ns_per_step = if drain_steps > 0 {
+            drain_nanos as f64 / drain_steps as f64
+        } else {
+            0.0
+        };
+        let batch_ns_per_step = if batch_steps > 0 {
+            batch_nanos as f64 / batch_steps as f64
+        } else {
+            0.0
+        };
+
         let event_breakdown = self.event_breakdown_top_n(20);
 
         let path = self.heatmap.out_dir.join("idle-skip.txt");
@@ -465,6 +498,33 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 f,
                 "vsync_count={}\nppc_idle_calls={}\nppc_cycles_advanced={}\nppc_avg_advance={:.1}\ndsp_suspends={}\ndsp_wakes={}",
                 self.vsync_count, calls, cycles, avg, dsp_suspends, dsp_wakes
+            )?;
+
+            writeln!(
+                f,
+                "dsp_drain_calls={}\ndsp_drain_steps={}\ndsp_drain_blocks={}\ndsp_drain_ms={:.1}\ndsp_drain_avg_steps={:.1}\ndsp_drain_avg_steps_per_block={:.1}\ndsp_drain_ns_per_step={:.1}",
+                drain_calls,
+                drain_steps,
+                drain_blocks,
+                drain_nanos as f64 / 1e6,
+                drain_avg_steps,
+                drain_avg_block,
+                drain_ns_per_step
+            )?;
+
+            writeln!(
+                f,
+                "dsp_drain_exit_halt={}\ndsp_drain_exit_answered={}\ndsp_drain_exit_wait={}\ndsp_drain_exit_budget={}",
+                drain_halt, drain_answered, drain_wait, drain_budget
+            )?;
+
+            writeln!(
+                f,
+                "dsp_batch_calls={}\ndsp_batch_steps={}\ndsp_batch_ms={:.1}\ndsp_batch_ns_per_step={:.1}",
+                batch_calls,
+                batch_steps,
+                batch_nanos as f64 / 1e6,
+                batch_ns_per_step
             )?;
 
             writeln!(f, "\n--- top scheduler events by fire count ---")?;

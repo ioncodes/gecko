@@ -35,16 +35,40 @@ fn read_imem_word(iram: &[u8], irom: &[u8], addr: u16) -> Option<u16> {
     }
 }
 
+pub fn is_terminator_word(primary: u16) -> bool {
+    self::classify(primary).is_some()
+}
+
 fn classify(primary: u16) -> Option<TermKind> {
-    let nibble = (primary >> 12) & 0xF;
-    match nibble {
-        0x0 | 0x1 => {
-            if primary == 0x0021 {
-                Some(TermKind::Halt)
-            } else {
-                Some(TermKind::Jump)
-            }
-        }
+    match primary {
+        0x0021 => Some(TermKind::Halt),
+
+        0x0040..=0x007F | 0x1000..=0x11FF => Some(TermKind::LoopSetup),
+
+        0x0270..=0x027F => Some(TermKind::IfCc),
+        0x0290..=0x029F => Some(TermKind::Jump),
+        0x02B0..=0x02BF => Some(TermKind::Call),
+        0x02D0..=0x02DF | 0x02F0..=0x02FF => Some(TermKind::Ret),
+        _ if (primary & 0xFF10) == 0x1700 => Some(TermKind::Jump),
+        _ if (primary & 0xFF10) == 0x1710 => Some(TermKind::Call),
+
+        0x0000 | 0x0004..=0x001F => None,
+        0x0080..=0x009F | 0x00C0..=0x00FF => None,
+        0x02CA | 0x02CB => None,
+        0x0400..=0x0FFF => None,
+        0x1200..=0x1207 | 0x1300..=0x1307 => None,
+        0x1400..=0x16FF | 0x1800..=0x1FFF => None,
+        _ if (primary & 0xFEFF) == 0x0200 => None,
+        _ if (primary & 0xFEFF) == 0x0220 => None,
+        _ if (primary & 0xFEFF) == 0x0240 => None,
+        _ if (primary & 0xFEFF) == 0x0260 => None,
+        _ if (primary & 0xFEFF) == 0x0280 => None,
+        _ if (primary & 0xFEFF) == 0x02A0 => None,
+        _ if (primary & 0xFEFF) == 0x02C0 => None,
+        _ if (primary & 0xFEF0) == 0x0210 => None,
+
+        _ if (primary >> 12) <= 0x1 => Some(TermKind::Jump),
+
         _ => None,
     }
 }

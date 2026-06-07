@@ -435,22 +435,37 @@ struct RunResult {
     failed: u32,
 }
 
-fn run_one_test(emu: &mut GameCube, test_name: &str, path: &Path) -> Result<RunResult, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let cases = parse_test_file(&bytes)?;
-    let ignore_flags = is_prod_test(test_name);
+fn run_case(emu: &mut GameCube, case: &TestCase, jit: bool) -> (TestState, bool) {
+    reset_dsp(&mut emu.dsp);
+    apply_initial_state(&mut emu.dsp, &case.initial);
+    load_instructions(&mut emu.dsp, &case.instructions);
+    emu.dsp.registers.pc = TEST_PC;
+    emu.dsp.rebuild_wait_table();
 
-    let mut passed = 0u32;
-    let mut failed = 0u32;
+    let mut runaway = false;
 
-    for (idx, case) in cases.iter().enumerate() {
-        reset_dsp(&mut emu.dsp);
-        apply_initial_state(&mut emu.dsp, &case.initial);
-        load_instructions(&mut emu.dsp, &case.instructions);
-        emu.dsp.registers.pc = TEST_PC;
+    if jit {
+        emu.execution_mode = gecko::system::ExecutionMode::Jit;
+        if let Some(j) = emu.dsp.jit.as_mut() {
+            j.flush();
+        }
 
         let mut steps = 0u64;
-        let mut runaway = false;
+        loop {
+            if emu.dsp.csr.halt() {
+                break;
+            }
+            if steps >= MAX_STEPS {
+                runaway = true;
+                break;
+            }
+            emu.execute_dsp_batch();
+            steps += 1024;
+        }
+    } else {
+        emu.execution_mode = gecko::system::ExecutionMode::Interpreter;
+
+        let mut steps = 0u64;
         while !emu.dsp.csr.halt() {
             if !emu.step_dsp_instruction() {
                 break;
@@ -461,39 +476,136 @@ fn run_one_test(emu: &mut GameCube, test_name: &str, path: &Path) -> Result<RunR
                 break;
             }
         }
+    }
 
-        let actual = read_actual_state(&mut emu.dsp);
-        let diff = diff_state(&case.initial, &case.expected, &actual, ignore_flags);
+    (read_actual_state(&mut emu.dsp), runaway)
+}
 
-        if runaway || diff.any_failure() {
+const SEQ_CHUNK: usize = 8;
+
+fn run_sequences(emu: &mut GameCube, test_name: &str, cases: &[TestCase]) -> (u32, u32) {
+    let mut passed = 0u32;
+    let mut failed = 0u32;
+
+    let eligible: Vec<&TestCase> = cases
+        .iter()
+        .filter(|c| {
+            !c.instructions
+                .iter()
+                .any(|&w| gecko::flipper::dsp::jit::block::is_terminator_word(w))
+        })
+        .collect();
+
+    for chunk in eligible.chunks(SEQ_CHUNK) {
+        if chunk.len() < 2 {
+            continue;
+        }
+
+        let mut program = Vec::new();
+        for c in chunk {
+            program.extend_from_slice(&c.instructions);
+        }
+        if (TEST_PC as usize + program.len() + 1) * 2 > emu.dsp.iram.len() {
+            continue;
+        }
+
+        let synth = TestCase {
+            instructions: program,
+            expected: TestState::default(),
+            initial: chunk[0].initial,
+        };
+
+        let dram_snapshot = emu.dsp.dram.clone();
+        let ifx_snapshot = emu.dsp.ifx.clone();
+        let (interp_state, interp_runaway) = run_case(emu, &synth, false);
+
+        emu.dsp.dram.copy_from_slice(&dram_snapshot[..]);
+        emu.dsp.ifx.copy_from_slice(&ifx_snapshot[..]);
+        let (jit_state, jit_runaway) = run_case(emu, &synth, true);
+
+        let mismatches: Vec<usize> = (0..31)
+            .filter(|&slot| interp_state.reg[slot] != jit_state.reg[slot])
+            .collect();
+
+        if interp_runaway || jit_runaway || !mismatches.is_empty() {
             failed += 1;
-            println!("===== DSP Test {test_name} Failed =====");
-            println!("Test case: {idx}");
+            println!("===== DSP Seq {test_name} interp/jit mismatch =====");
 
-            if runaway {
+            if interp_runaway || jit_runaway {
+                println!("(runaway: interp={interp_runaway} jit={jit_runaway})");
+            }
+
+            for &slot in &mismatches {
+                let reg = slot_to_dsp_reg(slot);
                 println!(
-                    "(runaway: >= {MAX_STEPS} steps without halt, pc={:04x})",
-                    emu.dsp.registers.pc
+                    "reg {:2}: interp={:04x} jit={:04x}",
+                    reg, interp_state.reg[slot], jit_state.reg[slot]
                 );
             }
 
-            println!("Instructions: {}", format_instructions_hex(&case.instructions));
+            println!("Instructions: {}", format_instructions_hex(&synth.instructions));
 
-            for line in disassemble_instructions(&case.instructions) {
+            for line in disassemble_instructions(&synth.instructions) {
                 println!("{line}");
             }
 
-            println!("Initial state:");
-            pretty_print(&case.initial, &diff);
-            println!("Expected:");
-            pretty_print(&case.expected, &diff);
-            println!("Actual:");
-            pretty_print(&actual, &diff);
             println!();
         } else {
             passed += 1;
         }
     }
+
+    (passed, failed)
+}
+
+fn run_one_test(emu: &mut GameCube, test_name: &str, path: &Path) -> Result<RunResult, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let cases = parse_test_file(&bytes)?;
+    let ignore_flags = is_prod_test(test_name);
+
+    let mut passed = 0u32;
+    let mut failed = 0u32;
+
+    for (idx, case) in cases.iter().enumerate() {
+        for jit in [false, true] {
+            let (actual, runaway) = run_case(emu, case, jit);
+            let diff = diff_state(&case.initial, &case.expected, &actual, ignore_flags);
+            let mode = if jit { "jit" } else { "interp" };
+
+            if runaway || diff.any_failure() {
+                failed += 1;
+                println!("===== DSP Test {test_name} Failed [{mode}] =====");
+                println!("Test case: {idx}");
+
+                if runaway {
+                    println!(
+                        "(runaway: >= {MAX_STEPS} steps without halt, pc={:04x})",
+                        emu.dsp.registers.pc
+                    );
+                }
+
+                println!("Instructions: {}", format_instructions_hex(&case.instructions));
+
+                for line in disassemble_instructions(&case.instructions) {
+                    println!("{line}");
+                }
+
+                println!("Initial state:");
+                pretty_print(&case.initial, &diff);
+                println!("Expected:");
+                pretty_print(&case.expected, &diff);
+                println!("Actual:");
+                pretty_print(&actual, &diff);
+                println!();
+            } else {
+                passed += 1;
+            }
+        }
+    }
+
+    let (seq_passed, seq_failed) = self::run_sequences(emu, test_name, &cases);
+    passed += seq_passed;
+    failed += seq_failed;
 
     Ok(RunResult { passed, failed })
 }

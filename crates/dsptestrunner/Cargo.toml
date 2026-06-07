@@ -5,5 +5,5 @@ edition = "2024"
 
 [dependencies]
 image = { path = "../image" }
-gecko = { path = "../gecko", features = ["hooks"] }
+gecko = { path = "../gecko", features = ["hooks", "jit"] }
 disasm = { path = "../disasm" }

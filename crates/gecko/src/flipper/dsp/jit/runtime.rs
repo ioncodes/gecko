@@ -44,62 +44,6 @@ pub extern "C" fn dsp_loop_tail_wii(sys: *mut core::ffi::c_void) {
     loop_tail::<WII>(sys.cast());
 }
 
-#[inline(always)]
-fn update_flags_logic<const SYSTEM: SystemId>(sys: *mut System<SYSTEM>, result16: u32, ac_full: i64) {
-    let sys = unsafe { &mut *sys };
-    sys.dsp.registers.update_flags_logic(result16 as u16, ac_full);
-}
-
-pub extern "C" fn dsp_update_flags_logic_gc(sys: *mut core::ffi::c_void, result: u32, ac_full: i64) {
-    update_flags_logic::<GC>(sys.cast(), result, ac_full);
-}
-
-pub extern "C" fn dsp_update_flags_logic_wii(sys: *mut core::ffi::c_void, result: u32, ac_full: i64) {
-    update_flags_logic::<WII>(sys.cast(), result, ac_full);
-}
-
-#[inline(always)]
-fn update_flags_add<const SYSTEM: SystemId>(sys: *mut System<SYSTEM>, a: i64, b: i64, result: i64) {
-    let sys = unsafe { &mut *sys };
-    sys.dsp.registers.update_flags_add(a, b, result);
-}
-
-pub extern "C" fn dsp_update_flags_add_gc(sys: *mut core::ffi::c_void, a: i64, b: i64, result: i64) {
-    update_flags_add::<GC>(sys.cast(), a, b, result);
-}
-
-pub extern "C" fn dsp_update_flags_add_wii(sys: *mut core::ffi::c_void, a: i64, b: i64, result: i64) {
-    update_flags_add::<WII>(sys.cast(), a, b, result);
-}
-
-#[inline(always)]
-fn update_flags_sub<const SYSTEM: SystemId>(sys: *mut System<SYSTEM>, a: i64, b: i64, result: i64) {
-    let sys = unsafe { &mut *sys };
-    sys.dsp.registers.update_flags_sub(a, b, result);
-}
-
-pub extern "C" fn dsp_update_flags_sub_gc(sys: *mut core::ffi::c_void, a: i64, b: i64, result: i64) {
-    update_flags_sub::<GC>(sys.cast(), a, b, result);
-}
-
-pub extern "C" fn dsp_update_flags_sub_wii(sys: *mut core::ffi::c_void, a: i64, b: i64, result: i64) {
-    update_flags_sub::<WII>(sys.cast(), a, b, result);
-}
-
-#[inline(always)]
-fn update_flags_ac<const SYSTEM: SystemId>(sys: *mut System<SYSTEM>, ac_full: i64) {
-    let sys = unsafe { &mut *sys };
-    sys.dsp.registers.update_flags_ac(ac_full);
-}
-
-pub extern "C" fn dsp_update_flags_ac_gc(sys: *mut core::ffi::c_void, ac_full: i64) {
-    update_flags_ac::<GC>(sys.cast(), ac_full);
-}
-
-pub extern "C" fn dsp_update_flags_ac_wii(sys: *mut core::ffi::c_void, ac_full: i64) {
-    update_flags_ac::<WII>(sys.cast(), ac_full);
-}
-
 pub extern "C" fn dsp_read_dmem_gc(sys: *mut core::ffi::c_void, addr: u32) -> u32 {
     let sys = unsafe { &mut *(sys as *mut System<GC>) };
     dsp::read_dmem(sys, addr as u16) as u32
@@ -213,20 +157,6 @@ pub extern "C" fn dsp_read_imem_gc(sys: *mut core::ffi::c_void, addr: u32) -> u3
 
 pub extern "C" fn dsp_read_imem_wii(sys: *mut core::ffi::c_void, addr: u32) -> u32 {
     read_imem::<WII>(sys.cast(), addr)
-}
-
-#[inline(always)]
-fn write_ac_mid_sxm<const SYSTEM: SystemId>(sys: *mut System<SYSTEM>, idx: u32, value: u32) {
-    let sys = unsafe { &mut *sys };
-    sys.dsp.registers.write::<true>(30 + idx as u8, value as u16);
-}
-
-pub extern "C" fn dsp_write_ac_mid_sxm_gc(sys: *mut core::ffi::c_void, idx: u32, value: u32) {
-    write_ac_mid_sxm::<GC>(sys.cast(), idx, value);
-}
-
-pub extern "C" fn dsp_write_ac_mid_sxm_wii(sys: *mut core::ffi::c_void, idx: u32, value: u32) {
-    write_ac_mid_sxm::<WII>(sys.cast(), idx, value);
 }
 
 #[inline(always)]

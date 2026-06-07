@@ -446,33 +446,132 @@ impl<'a, 'b> TranslatorCtx<'a, 'b> {
         self.store_u16(val, m_off);
     }
 
+    fn store_status_bits(&mut self, bits: Value, clear_mask: i64) {
+        let off = abi::dsp_status_offset() as i32;
+        let sr = self.load_u16(off);
+        let cleared = self.builder.ins().band_imm(sr, clear_mask);
+        let new_sr = self.builder.ins().bor(cleared, bits);
+        self.store_u16(new_sr, off);
+    }
+
+    fn flags40_as32_pos(&mut self, r40: Value) -> Value {
+        use cranelift_codegen::ir::condcodes::IntCC;
+
+        let upper9_raw = self.builder.ins().ushr_imm(r40, 31);
+        let upper9 = self.builder.ins().band_imm(upper9_raw, 0x1FF);
+        let ne0 = self.builder.ins().icmp_imm(IntCC::NotEqual, upper9, 0);
+        let ne1ff = self.builder.ins().icmp_imm(IntCC::NotEqual, upper9, 0x1FF);
+        let as32 = self.builder.ins().band(ne0, ne1ff);
+        let as32_16 = self.builder.ins().uextend(types::I16, as32);
+        self.builder.ins().ishl_imm(as32_16, 4)
+    }
+
+    fn flags40_szat(&mut self, r40: Value) -> Value {
+        use cranelift_codegen::ir::condcodes::IntCC;
+
+        let sign64 = self.builder.ins().ushr_imm(r40, 39);
+        let sign16 = self.builder.ins().ireduce(types::I16, sign64);
+        let s_pos = self.builder.ins().ishl_imm(sign16, 3);
+
+        let z = self.builder.ins().icmp_imm(IntCC::Equal, r40, 0);
+        let z16 = self.builder.ins().uextend(types::I16, z);
+        let z_pos = self.builder.ins().ishl_imm(z16, 2);
+
+        let top2 = self.builder.ins().band_imm(r40, 0xC000_0000_i64);
+        let tb0 = self.builder.ins().icmp_imm(IntCC::Equal, top2, 0);
+        let tb3 = self.builder.ins().icmp_imm(IntCC::Equal, top2, 0xC000_0000_i64);
+        let tb = self.builder.ins().bor(tb0, tb3);
+        let tb16 = self.builder.ins().uextend(types::I16, tb);
+        let tb_pos = self.builder.ins().ishl_imm(tb16, 5);
+
+        let as32_pos = self.flags40_as32_pos(r40);
+
+        let sz = self.builder.ins().bor(s_pos, z_pos);
+        let at = self.builder.ins().bor(as32_pos, tb_pos);
+        self.builder.ins().bor(sz, at)
+    }
+
+    fn flags40_carry_overflow(&mut self, a: Value, b: Value, a40: Value, r40: Value, sub: bool) -> Value {
+        use cranelift_codegen::ir::condcodes::IntCC;
+
+        let carry = if sub {
+            self.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, a40, r40)
+        } else {
+            self.builder.ins().icmp(IntCC::UnsignedLessThan, r40, a40)
+        };
+        let c_pos = self.builder.ins().uextend(types::I16, carry);
+
+        let a_shift = self.builder.ins().ushr_imm(a, 39);
+        let a_sign = self.builder.ins().band_imm(a_shift, 1);
+        let b_shift = self.builder.ins().ushr_imm(b, 39);
+        let b_sign = self.builder.ins().band_imm(b_shift, 1);
+        let r_sign = self.builder.ins().ushr_imm(r40, 39);
+
+        let ab = if sub {
+            self.builder.ins().icmp(IntCC::NotEqual, a_sign, b_sign)
+        } else {
+            self.builder.ins().icmp(IntCC::Equal, a_sign, b_sign)
+        };
+        let ra = self.builder.ins().icmp(IntCC::NotEqual, r_sign, a_sign);
+        let overflow = self.builder.ins().band(ab, ra);
+        let o16 = self.builder.ins().uextend(types::I16, overflow);
+        let o_pos = self.builder.ins().ishl_imm(o16, 1);
+        let os_pos = self.builder.ins().ishl_imm(o16, 7);
+
+        let co = self.builder.ins().bor(c_pos, o_pos);
+        self.builder.ins().bor(co, os_pos)
+    }
+
     pub fn emit_update_flags_logic(&mut self, result16: Value, ac_full: Value) {
-        let result32 = self.builder.ins().uextend(types::I32, result16);
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.update_flags_logic, self.builder.func);
-        self.builder.ins().call(f, &[self.sys_ptr, result32, ac_full]);
+        use cranelift_codegen::ir::condcodes::IntCC;
+
+        let sign = self.builder.ins().ushr_imm(result16, 15);
+        let s_pos = self.builder.ins().ishl_imm(sign, 3);
+
+        let z = self.builder.ins().icmp_imm(IntCC::Equal, result16, 0);
+        let z16 = self.builder.ins().uextend(types::I16, z);
+        let z_pos = self.builder.ins().ishl_imm(z16, 2);
+
+        let top2 = self.builder.ins().ushr_imm(result16, 14);
+        let tb0 = self.builder.ins().icmp_imm(IntCC::Equal, top2, 0);
+        let tb3 = self.builder.ins().icmp_imm(IntCC::Equal, top2, 3);
+        let tb = self.builder.ins().bor(tb0, tb3);
+        let tb16 = self.builder.ins().uextend(types::I16, tb);
+        let tb_pos = self.builder.ins().ishl_imm(tb16, 5);
+
+        let r40 = self.builder.ins().band_imm(ac_full, 0xFF_FFFF_FFFF_i64);
+        let as32_pos = self.flags40_as32_pos(r40);
+
+        let sz = self.builder.ins().bor(s_pos, z_pos);
+        let at = self.builder.ins().bor(as32_pos, tb_pos);
+        let bits = self.builder.ins().bor(sz, at);
+        self.store_status_bits(bits, !0x003C_i64);
     }
 
     pub fn emit_update_flags_add(&mut self, a: Value, b: Value, result: Value) {
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.update_flags_add, self.builder.func);
-        self.builder.ins().call(f, &[self.sys_ptr, a, b, result]);
+        let r40 = self.builder.ins().band_imm(result, 0xFF_FFFF_FFFF_i64);
+        let a40 = self.builder.ins().band_imm(a, 0xFF_FFFF_FFFF_i64);
+
+        let szat = self.flags40_szat(r40);
+        let co = self.flags40_carry_overflow(a, b, a40, r40, false);
+        let bits = self.builder.ins().bor(szat, co);
+        self.store_status_bits(bits, !0x003F_i64);
     }
 
     pub fn emit_update_flags_sub(&mut self, a: Value, b: Value, result: Value) {
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.update_flags_sub, self.builder.func);
-        self.builder.ins().call(f, &[self.sys_ptr, a, b, result]);
+        let r40 = self.builder.ins().band_imm(result, 0xFF_FFFF_FFFF_i64);
+        let a40 = self.builder.ins().band_imm(a, 0xFF_FFFF_FFFF_i64);
+
+        let szat = self.flags40_szat(r40);
+        let co = self.flags40_carry_overflow(a, b, a40, r40, true);
+        let bits = self.builder.ins().bor(szat, co);
+        self.store_status_bits(bits, !0x003F_i64);
     }
 
     pub fn emit_update_flags_ac(&mut self, ac_full: Value) {
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.update_flags_ac, self.builder.func);
-        self.builder.ins().call(f, &[self.sys_ptr, ac_full]);
+        let r40 = self.builder.ins().band_imm(ac_full, 0xFF_FFFF_FFFF_i64);
+        let bits = self.flags40_szat(r40);
+        self.store_status_bits(bits, !0x003C_i64);
     }
 
     pub fn emit_read_dmem(&mut self, addr_u32: Value) -> Value {

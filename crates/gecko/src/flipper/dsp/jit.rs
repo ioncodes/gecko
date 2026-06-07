@@ -45,6 +45,8 @@ pub struct JitEngine<const SYSTEM: SystemId> {
     trampoline_fn: TrampolineFn,
     block_seq: u64,
     block_lookup_table_addr: usize,
+    loop_end_table: Box<[u8; 0x10000]>,
+    loop_end_table_built: bool,
     chain_depth_total: u64,
     dispatcher_entries_total: u64,
     chain_depth_histogram: [u64; CHAIN_DEPTH_HISTOGRAM_LEN],
@@ -81,12 +83,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         let mut jit_builder = JITBuilder::with_isa(isa, default_libcall_names());
 
         struct Syms {
-            cache_ext_ac: (&'static str, *const u8),
             loop_tail: (&'static str, *const u8),
-            update_flags_logic: (&'static str, *const u8),
-            update_flags_add: (&'static str, *const u8),
-            update_flags_sub: (&'static str, *const u8),
-            update_flags_ac: (&'static str, *const u8),
             read_dmem: (&'static str, *const u8),
             write_dmem: (&'static str, *const u8),
             inc_ar: (&'static str, *const u8),
@@ -95,7 +92,6 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             decrease_ar_ix: (&'static str, *const u8),
             dynamic_shift: (&'static str, *const u8),
             read_imem: (&'static str, *const u8),
-            write_ac_mid_sxm: (&'static str, *const u8),
             call_stack_push: (&'static str, *const u8),
             call_stack_pop: (&'static str, *const u8),
             data_stack_pop: (&'static str, *const u8),
@@ -105,18 +101,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         }
         let syms: Syms = match SYSTEM {
             GC => Syms {
-                cache_ext_ac: (
-                    "gecko_dsp_jit_cache_ext_ac_gc",
-                    runtime::dsp_cache_ext_ac_gc as *const u8,
-                ),
                 loop_tail: ("gecko_dsp_jit_loop_tail_gc", runtime::dsp_loop_tail_gc as *const u8),
-                update_flags_logic: (
-                    "gecko_dsp_jit_uflog_gc",
-                    runtime::dsp_update_flags_logic_gc as *const u8,
-                ),
-                update_flags_add: ("gecko_dsp_jit_ufadd_gc", runtime::dsp_update_flags_add_gc as *const u8),
-                update_flags_sub: ("gecko_dsp_jit_ufsub_gc", runtime::dsp_update_flags_sub_gc as *const u8),
-                update_flags_ac: ("gecko_dsp_jit_ufac_gc", runtime::dsp_update_flags_ac_gc as *const u8),
                 read_dmem: ("gecko_dsp_jit_rdmem_gc", runtime::dsp_read_dmem_gc as *const u8),
                 write_dmem: ("gecko_dsp_jit_wdmem_gc", runtime::dsp_write_dmem_gc as *const u8),
                 inc_ar: ("gecko_dsp_jit_incar_gc", runtime::dsp_increment_ar_gc as *const u8),
@@ -125,7 +110,6 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
                 decrease_ar_ix: ("gecko_dsp_jit_decarix_gc", runtime::dsp_decrease_ar_ix_gc as *const u8),
                 dynamic_shift: ("gecko_dsp_jit_dynshift_gc", runtime::dsp_dynamic_shift_gc as *const u8),
                 read_imem: ("gecko_dsp_jit_rimem_gc", runtime::dsp_read_imem_gc as *const u8),
-                write_ac_mid_sxm: ("gecko_dsp_jit_wamsxm_gc", runtime::dsp_write_ac_mid_sxm_gc as *const u8),
                 call_stack_push: ("gecko_dsp_jit_cspush_gc", runtime::dsp_call_stack_push_gc as *const u8),
                 call_stack_pop: ("gecko_dsp_jit_cspop_gc", runtime::dsp_call_stack_pop_gc as *const u8),
                 data_stack_pop: ("gecko_dsp_jit_dspop_gc", runtime::dsp_data_stack_pop_gc as *const u8),
@@ -134,24 +118,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
                 loop_setup: ("gecko_dsp_jit_loopsetup_gc", runtime::dsp_loop_setup_gc as *const u8),
             },
             WII => Syms {
-                cache_ext_ac: (
-                    "gecko_dsp_jit_cache_ext_ac_wii",
-                    runtime::dsp_cache_ext_ac_wii as *const u8,
-                ),
                 loop_tail: ("gecko_dsp_jit_loop_tail_wii", runtime::dsp_loop_tail_wii as *const u8),
-                update_flags_logic: (
-                    "gecko_dsp_jit_uflog_wii",
-                    runtime::dsp_update_flags_logic_wii as *const u8,
-                ),
-                update_flags_add: (
-                    "gecko_dsp_jit_ufadd_wii",
-                    runtime::dsp_update_flags_add_wii as *const u8,
-                ),
-                update_flags_sub: (
-                    "gecko_dsp_jit_ufsub_wii",
-                    runtime::dsp_update_flags_sub_wii as *const u8,
-                ),
-                update_flags_ac: ("gecko_dsp_jit_ufac_wii", runtime::dsp_update_flags_ac_wii as *const u8),
                 read_dmem: ("gecko_dsp_jit_rdmem_wii", runtime::dsp_read_dmem_wii as *const u8),
                 write_dmem: ("gecko_dsp_jit_wdmem_wii", runtime::dsp_write_dmem_wii as *const u8),
                 inc_ar: ("gecko_dsp_jit_incar_wii", runtime::dsp_increment_ar_wii as *const u8),
@@ -166,10 +133,6 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
                     runtime::dsp_dynamic_shift_wii as *const u8,
                 ),
                 read_imem: ("gecko_dsp_jit_rimem_wii", runtime::dsp_read_imem_wii as *const u8),
-                write_ac_mid_sxm: (
-                    "gecko_dsp_jit_wamsxm_wii",
-                    runtime::dsp_write_ac_mid_sxm_wii as *const u8,
-                ),
                 call_stack_push: (
                     "gecko_dsp_jit_cspush_wii",
                     runtime::dsp_call_stack_push_wii as *const u8,
@@ -182,12 +145,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             },
             _ => unreachable!(),
         };
-        jit_builder.symbol(syms.cache_ext_ac.0, syms.cache_ext_ac.1);
         jit_builder.symbol(syms.loop_tail.0, syms.loop_tail.1);
-        jit_builder.symbol(syms.update_flags_logic.0, syms.update_flags_logic.1);
-        jit_builder.symbol(syms.update_flags_add.0, syms.update_flags_add.1);
-        jit_builder.symbol(syms.update_flags_sub.0, syms.update_flags_sub.1);
-        jit_builder.symbol(syms.update_flags_ac.0, syms.update_flags_ac.1);
         jit_builder.symbol(syms.read_dmem.0, syms.read_dmem.1);
         jit_builder.symbol(syms.write_dmem.0, syms.write_dmem.1);
         jit_builder.symbol(syms.inc_ar.0, syms.inc_ar.1);
@@ -196,7 +154,6 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         jit_builder.symbol(syms.decrease_ar_ix.0, syms.decrease_ar_ix.1);
         jit_builder.symbol(syms.dynamic_shift.0, syms.dynamic_shift.1);
         jit_builder.symbol(syms.read_imem.0, syms.read_imem.1);
-        jit_builder.symbol(syms.write_ac_mid_sxm.0, syms.write_ac_mid_sxm.1);
         jit_builder.symbol(syms.call_stack_push.0, syms.call_stack_push.1);
         jit_builder.symbol(syms.call_stack_pop.0, syms.call_stack_pop.1);
         jit_builder.symbol(syms.data_stack_pop.0, syms.data_stack_pop.1);
@@ -211,33 +168,15 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
 
         let block_sig = translator::block_signature(pointer_type);
         let void_thunk_sig = translator::void_thunk_signature(pointer_type, host_cc);
-        let flags_logic_sig = translator::flags_logic_signature(pointer_type, host_cc);
-        let flags_arith_sig = translator::flags_arith_signature(pointer_type, host_cc);
-        let flags_ac_sig = translator::flags_ac_signature(pointer_type, host_cc);
         let dmem_read_sig = translator::dmem_read_signature(pointer_type, host_cc);
         let dmem_write_sig = translator::dmem_write_signature(pointer_type, host_cc);
         let ar_unary_sig = translator::ar_unary_signature(pointer_type, host_cc);
         let ar_binary_sig = translator::ar_binary_signature(pointer_type, host_cc);
         let dynamic_shift_sig = translator::dynamic_shift_signature(pointer_type, host_cc);
 
-        let cache_ext_ac_id = module
-            .declare_function(syms.cache_ext_ac.0, Linkage::Import, &void_thunk_sig)
-            .expect("declare cache_ext_ac thunk");
         let loop_tail_id = module
             .declare_function(syms.loop_tail.0, Linkage::Import, &void_thunk_sig)
             .expect("declare loop_tail thunk");
-        let update_flags_logic_id = module
-            .declare_function(syms.update_flags_logic.0, Linkage::Import, &flags_logic_sig)
-            .expect("declare update_flags_logic thunk");
-        let update_flags_add_id = module
-            .declare_function(syms.update_flags_add.0, Linkage::Import, &flags_arith_sig)
-            .expect("declare update_flags_add thunk");
-        let update_flags_sub_id = module
-            .declare_function(syms.update_flags_sub.0, Linkage::Import, &flags_arith_sig)
-            .expect("declare update_flags_sub thunk");
-        let update_flags_ac_id = module
-            .declare_function(syms.update_flags_ac.0, Linkage::Import, &flags_ac_sig)
-            .expect("declare update_flags_ac thunk");
         let read_dmem_id = module
             .declare_function(syms.read_dmem.0, Linkage::Import, &dmem_read_sig)
             .expect("declare read_dmem thunk");
@@ -262,9 +201,6 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         let read_imem_id = module
             .declare_function(syms.read_imem.0, Linkage::Import, &dmem_read_sig)
             .expect("declare read_imem thunk");
-        let write_ac_mid_sxm_id = module
-            .declare_function(syms.write_ac_mid_sxm.0, Linkage::Import, &dmem_write_sig)
-            .expect("declare write_ac_mid_sxm thunk");
 
         let call_stack_push_sig = {
             let mut sig = cranelift_codegen::ir::Signature::new(host_cc);
@@ -301,12 +237,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             .expect("declare loop_setup thunk");
 
         let extern_funcs = translator::ExternFuncs {
-            cache_ext_ac: cache_ext_ac_id,
             loop_tail: loop_tail_id,
-            update_flags_logic: update_flags_logic_id,
-            update_flags_add: update_flags_add_id,
-            update_flags_sub: update_flags_sub_id,
-            update_flags_ac: update_flags_ac_id,
             read_dmem: read_dmem_id,
             write_dmem: write_dmem_id,
             inc_ar: inc_ar_id,
@@ -315,7 +246,6 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             decrease_ar_ix: decrease_ar_ix_id,
             dynamic_shift: dynamic_shift_id,
             read_imem: read_imem_id,
-            write_ac_mid_sxm: write_ac_mid_sxm_id,
             call_stack_push: call_stack_push_id,
             call_stack_pop: call_stack_pop_id,
             data_stack_pop: data_stack_pop_id,
@@ -348,6 +278,8 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             trampoline_fn,
             block_seq: 0,
             block_lookup_table_addr,
+            loop_end_table: unsafe { Box::<[u8; 0x10000]>::new_zeroed().assume_init() },
+            loop_end_table_built: false,
             chain_depth_total: 0,
             dispatcher_entries_total: 0,
             chain_depth_histogram: [0; CHAIN_DEPTH_HISTOGRAM_LEN],
@@ -377,9 +309,14 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         self.chain_depth_histogram[bucket] = self.chain_depth_histogram[bucket].wrapping_add(1);
     }
 
+    fn lookup_table_index(pc: u16) -> usize {
+        let pc_u32 = pc as u32;
+        ((pc_u32 & 0xFFF) | ((pc_u32 >> 3) & 0x1000)) as usize
+    }
+
     fn register_in_lookup_table(&self, pc: u16, entry: usize) {
         let pc_u32 = pc as u32;
-        let idx = ((pc_u32 & 0xFFF) | ((pc_u32 >> 3) & 0x1000)) as usize;
+        let idx = Self::lookup_table_index(pc);
         unsafe {
             let table = self.block_lookup_table_addr as *mut DspBlockLookupSlot;
             (*table.add(idx)).pc = pc_u32;
@@ -397,6 +334,51 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         }
     }
 
+    fn rebuild_loop_end_table(&mut self, iram: &[u8], irom: &[u8]) {
+        self.loop_end_table.fill(0);
+
+        for (base, mem) in [(0x0000u32, iram), (0x8000u32, irom)] {
+            let words = mem.len() / 2;
+            for i in 0..words {
+                let w = u16::from_be_bytes([mem[i * 2], mem[i * 2 + 1]]);
+
+                if (w & 0xFFE0) == 0x0040 || (w & 0xFF00) == 0x1000 {
+                    let end = (base + i as u32 + 1) as u16;
+                    self.loop_end_table[end as usize] = 1;
+                }
+
+                if ((w & 0xFFE0) == 0x0060 || (w & 0xFF00) == 0x1100) && i + 1 < words {
+                    let end = u16::from_be_bytes([mem[i * 2 + 2], mem[i * 2 + 3]]);
+                    self.loop_end_table[end as usize] = 1;
+                }
+            }
+        }
+
+        self.loop_end_table_built = true;
+    }
+
+    pub fn lookup_block_fast(&mut self, pc: u16) -> Option<BlockEntry> {
+        let pc_u32 = pc as u32;
+        let idx = Self::lookup_table_index(pc);
+
+        let entry = unsafe {
+            let table = self.block_lookup_table_addr as *const DspBlockLookupSlot;
+            let slot = &*table.add(idx);
+            if slot.pc == pc_u32 && slot.entry != 0 {
+                Some(slot.entry)
+            } else {
+                None
+            }
+        };
+
+        #[cfg(feature = "jit-stats")]
+        if entry.is_some() {
+            *self.hits.entry(pc).or_insert(0) += 1;
+        }
+
+        entry
+    }
+
     pub fn lookup_or_compile(&mut self, iram: &[u8], irom: &[u8], start_pc: u16) -> BlockEntry {
         if let Some(&entry) = self.cache.get(&start_pc) {
             #[cfg(feature = "jit-stats")]
@@ -404,6 +386,10 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
                 *self.hits.entry(start_pc).or_insert(0) += 1;
             }
             return entry;
+        }
+
+        if !self.loop_end_table_built {
+            self.rebuild_loop_end_table(iram, irom);
         }
         let spec = block::discover(iram, irom, start_pc);
         let entry = self.compile(&spec);
@@ -489,6 +475,10 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
 
     #[cfg(feature = "jit-stats")]
     pub fn dump_block_clif(&mut self, start_pc: u16, iram: &[u8], irom: &[u8]) {
+        if !self.loop_end_table_built {
+            self.rebuild_loop_end_table(iram, irom);
+        }
+
         let spec = block::discover(iram, irom, start_pc);
 
         self.ctx.clear();
@@ -501,6 +491,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             &spec,
             self.block_lookup_table_addr as i64,
             None,
+            &self.loop_end_table,
         );
         tracing::info!(
             "CLIF for DSP block pc={:04X} (len={}, term={:?})",
@@ -531,6 +522,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             spec,
             self.block_lookup_table_addr as i64,
             entry_counter_addr,
+            &self.loop_end_table,
         );
 
         self.module
@@ -548,6 +540,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
     pub fn flush(&mut self) {
         self.cache.clear();
         self.block_func_ids.clear();
+        self.loop_end_table_built = false;
 
         self.clear_lookup_table();
     }

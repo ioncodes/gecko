@@ -5,15 +5,10 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Module};
 
-use super::block::BlockSpec;
+use super::block::{BlockSpec, TermKind};
 #[derive(Clone, Copy)]
 pub struct ExternFuncs {
-    pub cache_ext_ac: FuncId,
     pub loop_tail: FuncId,
-    pub update_flags_logic: FuncId,
-    pub update_flags_add: FuncId,
-    pub update_flags_sub: FuncId,
-    pub update_flags_ac: FuncId,
     pub read_dmem: FuncId,
     pub write_dmem: FuncId,
     pub inc_ar: FuncId,
@@ -22,7 +17,6 @@ pub struct ExternFuncs {
     pub decrease_ar_ix: FuncId,
     pub dynamic_shift: FuncId,
     pub read_imem: FuncId,
-    pub write_ac_mid_sxm: FuncId,
     pub call_stack_push: FuncId,
     pub call_stack_pop: FuncId,
     pub data_stack_pop: FuncId,
@@ -39,6 +33,7 @@ pub fn translate(
     spec: &BlockSpec,
     block_lookup_table_addr: i64,
     entry_counter_addr: Option<usize>,
+    loop_end_table: &[u8; 0x10000],
 ) {
     let pointer_type = module.target_config().pointer_type();
 
@@ -65,7 +60,9 @@ pub fn translate(
         builder.ins().store(MemFlagsData::trusted(), next, slot_v, 0);
     }
 
-    for entry in &spec.instrs {
+    let block_sig_ref = builder.import_signature(block_signature(pointer_type));
+
+    for (idx, entry) in spec.instrs.iter().enumerate() {
         let natural_nia = entry.pc.wrapping_add(entry.size as u16);
         let nia_v = builder.ins().iconst(types::I16, natural_nia as i64);
         builder.ins().store(MemFlagsData::trusted(), nia_v, ctx_ptr, nia_offset);
@@ -102,6 +99,16 @@ pub fn translate(
                 size: entry.size,
             };
             jit_lut::dispatch_gc_dsp_ext(&mut tctx2, crate::flipper::dsp::instruction::GcDspExt(ext_byte as u8));
+        }
+
+        let is_last = idx + 1 == spec.instrs.len();
+        let dynamic_nia = is_last && spec.terminator != TermKind::LengthLimit;
+        let marked_loop_end = loop_end_table[entry.pc as usize] != 0;
+
+        if !dynamic_nia && !marked_loop_end {
+            let pc_v = builder.ins().iconst(types::I16, natural_nia as i64);
+            builder.ins().store(MemFlagsData::trusted(), pc_v, ctx_ptr, pc_offset);
+            continue;
         }
 
         let loop_ptr = builder
@@ -141,14 +148,18 @@ pub fn translate(
 
         builder.switch_to_block(exit_block);
         builder.seal_block(exit_block);
-        let pc_u32 = builder.ins().uextend(types::I32, pc_after);
-        builder.ins().return_(&[pc_u32]);
+        emit_block_tail_chain(
+            &mut builder,
+            ctx_ptr,
+            block_sig_ref,
+            block_lookup_table_addr,
+            idx as i64 + 1,
+        );
 
         builder.switch_to_block(continue_block);
         builder.seal_block(continue_block);
     }
 
-    let block_sig_ref = builder.import_signature(block_signature(pointer_type));
     emit_block_tail_chain(
         &mut builder,
         ctx_ptr,
@@ -321,30 +332,6 @@ pub fn block_signature(pointer_type: cranelift_codegen::ir::Type) -> Signature {
 pub fn void_thunk_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: CallConv) -> Signature {
     let mut sig = Signature::new(host_cc);
     sig.params.push(AbiParam::new(pointer_type));
-    sig
-}
-
-pub fn flags_logic_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: CallConv) -> Signature {
-    let mut sig = Signature::new(host_cc);
-    sig.params.push(AbiParam::new(pointer_type));
-    sig.params.push(AbiParam::new(types::I32));
-    sig.params.push(AbiParam::new(types::I64));
-    sig
-}
-
-pub fn flags_arith_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: CallConv) -> Signature {
-    let mut sig = Signature::new(host_cc);
-    sig.params.push(AbiParam::new(pointer_type));
-    sig.params.push(AbiParam::new(types::I64));
-    sig.params.push(AbiParam::new(types::I64));
-    sig.params.push(AbiParam::new(types::I64));
-    sig
-}
-
-pub fn flags_ac_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: CallConv) -> Signature {
-    let mut sig = Signature::new(host_cc);
-    sig.params.push(AbiParam::new(pointer_type));
-    sig.params.push(AbiParam::new(types::I64));
     sig
 }
 

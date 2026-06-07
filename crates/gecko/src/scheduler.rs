@@ -197,10 +197,7 @@ pub fn dsp_batch_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
         return;
     }
 
-    let cpu_mail_quiet = !sys.dsp.mailbox_to_dsp_hi.busy();
-    let dsp_mail_full = sys.dsp.mailbox_to_cpu_hi.busy();
-    let (waits_cpu, waits_dsp) = sys.dsp.mailbox_wait_state();
-    let in_idle_wait = (cpu_mail_quiet && waits_cpu) || (dsp_mail_full && waits_dsp);
+    let in_idle_wait = sys.dsp.parked_in_mailbox_wait();
     let pending_interrupt = sys.dsp.csr.pi_interrupt() && sys.dsp.registers.status.external_interrupt_enable();
 
     if in_idle_wait && !pending_interrupt {
