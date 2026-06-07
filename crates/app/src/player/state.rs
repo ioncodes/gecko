@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use backend_wgpu::capture::CapturedFrame;
 use backend_wgpu::sink::{Renderer, TargetAspect};
 use gecko::audio::EmptyAudioSink;
+use gecko::fps::{self, FpsShared};
 use gecko::gamecube::GameCube;
 use gecko::hollywood::ipc::usb;
 use gecko::wii::Wii;
@@ -38,6 +40,7 @@ pub struct PlayerState {
     platform: Platform,
     boot_error: Option<String>,
     first_frame: Arc<AtomicBool>,
+    fps: FpsShared,
 }
 
 #[derive(Debug, Clone)]
@@ -86,6 +89,7 @@ impl PlayerState {
             platform: game.platform,
             boot_error,
             first_frame: Arc::new(AtomicBool::new(false)),
+            fps: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -185,6 +189,14 @@ impl PlayerState {
         }
     }
 
+    pub fn fps(&self) -> (f32, f32) {
+        fps::read(&self.fps)
+    }
+
+    pub fn capture_frame(&self) -> Option<CapturedFrame> {
+        self.initialized.get().and_then(|init| init.renderer.capture_xfb())
+    }
+
     pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Relaxed);
     }
@@ -255,7 +267,7 @@ fn player_thread(
     match state.platform {
         Platform::Wii => {
             let mut emu = Wii::apploader_hle(dvd).build();
-            self::configure_emu(&mut emu, &params, sink);
+            self::configure_emu(&mut emu, &params, sink, state.fps.clone());
             emu.apply_host_input(&HostInput::neutral_for(system::WII));
             let audio = self::install_audio_sink(&mut emu);
             let _ = emu.load_jit_cache(&game_id);
@@ -264,7 +276,7 @@ fn player_thread(
         }
         Platform::Gcn => {
             let mut emu = self::build_gamecube(dvd, &params);
-            self::configure_emu(&mut emu, &params, sink);
+            self::configure_emu(&mut emu, &params, sink, state.fps.clone());
             emu.apply_host_input(&HostInput::neutral_for(system::GC));
             let audio = self::install_audio_sink(&mut emu);
             let _ = emu.load_jit_cache(&game_id);
@@ -296,10 +308,12 @@ fn configure_emu<const S: gecko::system::SystemId>(
     emu: &mut gecko::system::System<S>,
     params: &BootParams,
     sink: backend_wgpu::sink::ThreadedSink,
+    fps: FpsShared,
 ) {
     emu.set_execution_mode(params.execution_mode);
     self::load_dsp_roms(emu, params.dsp_path.as_deref(), params.coef_path.as_deref());
     emu.render_sink = Box::new(sink);
+    emu.fps_counter.shared = fps;
 }
 
 fn set_initialized(state: &Arc<PlayerState>, renderer: Renderer, audio: Option<cpal::Stream>, game_id: &str) {

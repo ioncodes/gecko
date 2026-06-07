@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use backend_wgpu::capture;
 use iced::theme::Mode;
-use iced::widget::{button, column, container, mouse_area, scrollable, stack, text};
+use iced::widget::{Stack, button, column, container, mouse_area, scrollable, stack, text};
 use iced::{Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, window};
 
 use crate::cache::{self, LibraryCache};
@@ -17,6 +18,7 @@ use crate::widgets::{game_row, menubar, search_bar, statusbar};
 
 const REPO_URL: &str = "https://github.com/ioncodes/gecko";
 const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
+const TOAST_DURATION: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -42,11 +44,23 @@ pub enum Message {
     LaunchPlayer(usize),
     SystemThemeLoaded(Mode),
     SystemThemeChanged(Mode),
+    PlayerToggleFullscreen(window::Id),
+    PlayerToggleOverlay(window::Id),
+    PlayerScreenshot(window::Id),
+}
+
+pub struct Toast {
+    title: String,
+    detail: String,
+    expires: Instant,
 }
 
 pub struct PlayerWindow {
     pub(crate) game: Game,
     pub(crate) state: Arc<PlayerState>,
+    pub(crate) fullscreen: bool,
+    pub(crate) overlay: bool,
+    pub(crate) toast: Option<Toast>,
 }
 
 pub struct App {
@@ -146,10 +160,27 @@ impl App {
             }
             Message::PlayerWindowOpened(id, game, state) => {
                 tracing::info!(window = ?id, title = %game.title, "player window opened");
-                self.players.insert(id, PlayerWindow { game: *game, state });
+                self.players.insert(
+                    id,
+                    PlayerWindow {
+                        game: *game,
+                        state,
+                        fullscreen: false,
+                        overlay: false,
+                        toast: None,
+                    },
+                );
                 Task::none()
             }
-            Message::PlayerTick => Task::none(),
+            Message::PlayerTick => {
+                let now = Instant::now();
+                for player in self.players.values_mut() {
+                    if player.toast.as_ref().is_some_and(|t| now >= t.expires) {
+                        player.toast = None;
+                    }
+                }
+                Task::none()
+            }
             Message::WindowClosed(id) => {
                 if Some(id) == self.library_window {
                     self.library_window = None;
@@ -297,6 +328,50 @@ impl App {
                 self.refresh_palette();
                 Task::none()
             }
+            Message::PlayerToggleFullscreen(id) => {
+                let Some(player) = self.players.get_mut(&id) else {
+                    return Task::none();
+                };
+
+                player.fullscreen = !player.fullscreen;
+                let mode = if player.fullscreen {
+                    window::Mode::Fullscreen
+                } else {
+                    window::Mode::Windowed
+                };
+                window::set_mode(id, mode)
+            }
+            Message::PlayerToggleOverlay(id) => {
+                if let Some(player) = self.players.get_mut(&id) {
+                    player.overlay = !player.overlay;
+                }
+                Task::none()
+            }
+            Message::PlayerScreenshot(id) => {
+                let Some(player) = self.players.get_mut(&id) else {
+                    return Task::none();
+                };
+
+                let (title, detail) = match player.state.capture_frame() {
+                    Some(frame) => {
+                        let path = self::screenshot_path(&player.game.game_id);
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        capture::save_png_async(path, frame, true);
+                        ("Screenshot saved", name)
+                    }
+                    None => ("Screenshot failed", "No frame to capture yet".to_owned()),
+                };
+
+                player.toast = Some(Toast {
+                    title: title.to_owned(),
+                    detail,
+                    expires: Instant::now() + TOAST_DURATION,
+                });
+                Task::none()
+            }
         }
     }
 
@@ -304,7 +379,7 @@ impl App {
         if Some(window_id) == self.library_window {
             self.library_view()
         } else if let Some(player) = self.players.get(&window_id) {
-            self.player_view(player)
+            self.player_view(window_id, player)
         } else {
             container(text("")).width(Length::Fill).height(Length::Fill).into()
         }
@@ -359,13 +434,13 @@ impl App {
         }
     }
 
-    fn player_view<'a>(&'a self, player: &'a PlayerWindow) -> Element<'a, Message> {
+    fn player_view<'a>(&'a self, window_id: window::Id, player: &'a PlayerWindow) -> Element<'a, Message> {
         let palette = &self.palette;
         let bg = palette.bg;
         let text_color = palette.text;
 
         let status = player.state.status();
-        let shader: Element<'a, Message> = player::shader_widget(player.state.clone()).into();
+        let shader: Element<'a, Message> = player::shader_widget(player.state.clone(), window_id).into();
 
         let overlay: Option<Element<'a, Message>> = match &status {
             PlayerStatus::Ready => None,
@@ -378,11 +453,22 @@ impl App {
             PlayerStatus::Failed(msg) => Some(self::overlay_card(palette, "Cannot start game", Some(msg), true)),
         };
 
-        let body: Element<'a, Message> = if let Some(ov) = overlay {
-            stack![shader, ov].into()
-        } else {
-            shader
-        };
+        let mut layers: Vec<Element<'a, Message>> = vec![shader];
+        if let Some(ov) = overlay {
+            layers.push(ov);
+        }
+        if player.overlay {
+            let (fps, native_pct) = player.state.fps();
+            layers.push(self::stats_overlay(palette, fps, native_pct));
+        }
+        if let Some(toast) = &player.toast {
+            layers.push(self::toast_overlay(palette, toast));
+        }
+
+        let body: Element<'a, Message> = Stack::with_children(layers)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
 
         container(body)
             .width(Length::Fill)
@@ -450,6 +536,58 @@ fn resolve_palette(pref: ThemePreference, system_mode: Mode) -> Palette {
         ThemePreference::System => system_mode,
     };
     Palette::for_mode(effective)
+}
+
+fn screenshot_path(game_id: &str) -> PathBuf {
+    config::exe_relative(capture::timestamped_path(game_id))
+}
+
+fn corner_card<'a>(palette: &Palette, content: Element<'a, Message>) -> Element<'a, Message> {
+    let card_bg = Color { a: 0.85, ..palette.bg };
+    let border_2 = palette.border_2;
+
+    container(content)
+        .padding(Padding::from([8, 12]))
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(card_bg)),
+            border: Border {
+                color: border_2,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
+fn stats_overlay(palette: &Palette, fps: f32, native_pct: f32) -> Element<'static, Message> {
+    let label = text(format!("{fps:.1} FPS  {native_pct:.0}%"))
+        .size(13)
+        .color(palette.text);
+    let card = self::corner_card(palette, label.into());
+
+    container(card)
+        .width(Length::Fill)
+        .align_x(iced::Alignment::End)
+        .padding(12)
+        .into()
+}
+
+fn toast_overlay<'a>(palette: &Palette, toast: &'a Toast) -> Element<'a, Message> {
+    let content = column![
+        text(&toast.title).size(13).color(palette.text),
+        text(&toast.detail).size(11).color(palette.text_dim),
+    ]
+    .spacing(2);
+    let card = self::corner_card(palette, content.into());
+
+    container(card)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(iced::Alignment::End)
+        .align_y(iced::Alignment::End)
+        .padding(12)
+        .into()
 }
 
 fn overlay_card(palette: &Palette, title: &str, detail: Option<&str>, error: bool) -> Element<'static, Message> {

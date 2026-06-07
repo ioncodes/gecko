@@ -45,13 +45,7 @@ pub const IPL_FILE: &str = "IPL.bin";
 
 impl Config {
     pub fn system_dir_resolved(&self) -> PathBuf {
-        if let Some(dir) = self.system_dir.as_ref() {
-            return dir.clone();
-        }
-        std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|p| p.join("system")))
-            .unwrap_or_else(|| PathBuf::from("system"))
+        self.system_dir.clone().unwrap_or_else(|| self::exe_relative("system"))
     }
 
     pub fn resolve_in_dir(override_path: &Option<PathBuf>, system_dir: &Path, name: &str) -> Option<PathBuf> {
@@ -63,14 +57,16 @@ impl Config {
     }
 }
 
+pub fn exe_relative(rel: impl AsRef<Path>) -> PathBuf {
+    let rel = rel.as_ref();
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|p| p.join(rel)))
+        .unwrap_or_else(|| rel.to_path_buf())
+}
+
 pub fn config_path() -> PathBuf {
-    match std::env::current_exe() {
-        Ok(exe) => exe
-            .parent()
-            .map(|p| p.join("config.toml"))
-            .unwrap_or_else(|| PathBuf::from("config.toml")),
-        Err(_) => PathBuf::from("config.toml"),
-    }
+    self::exe_relative("config.toml")
 }
 
 pub fn load(path: &Path) -> Config {

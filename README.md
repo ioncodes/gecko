@@ -76,10 +76,11 @@ It scans the configured GameCube and Wii folders for `.iso`, `.rvz` and `.zip` f
 
 ```
 <gecko exe dir>/
-  config.toml                # settings
-  cache/library.bin          # cached library
-  system/                    # system file folder (!)
-    IPL.bin                  # GameCube only
+  config.toml                # settings, auto-generated
+  cache/library.bin          # cached library, auto-generated
+  screenshots/               # F12 screenshots, auto-generated
+  system/                    # system file folder (user provided!)
+    IPL.bin                  # GameCube only (must be decoded! see multitool)
     dsp_rom.bin              # GameCube and Wii
     dsp_coef.bin             # GameCube and Wii
   fs/                        # Wii NAND, auto-generated if missing (or drop in a Dolphin/real dump)
@@ -131,12 +132,22 @@ Nunchuk:
 
 #### Global
 
+`tinyapp` and `debugger`:
+
 | Key     | Action                                                             |
 | ------- | ------------------------------------------------------------------ |
 | `Space` | Start emulation from the splash screen (`--wait` flag)             |
 | `F10`   | Trigger a RenderDoc capture (requires `renderdoc-capture` feature) |
 | `F11`   | Screenshot the full window                                         |
 | `F12`   | Screenshot the emulated framebuffer only                           |
+
+`gecko` player window:
+
+| Key   | Action                                                                |
+| ----- | --------------------------------------------------------------------- |
+| `F10` | Toggle borderless fullscreen                                          |
+| `F11` | Toggle the FPS and emulation speed overlay                            |
+| `F12` | Screenshot the emulated framebuffer to `<gecko exe dir>/screenshots/` |
 
 ## Projects
 This is a table of the main projects. Refer to `crates/` to find out about all available projects.
@@ -148,7 +159,7 @@ This is a table of the main projects. Refer to `crates/` to find out about all a
 | `debugger`   | Interactive GUI debugger built on egui with rendering support, hooks and scripting capabilities                                 |
 | `web`        | WebAssembly build of the emulator for browser deployment via wasm-bindgen, with optional debug UI                               |
 | `multitool`  | CLI utility for analyzing, disassembling and extracting GC/Wii binaries/images (DOL, IPL, ISO/RVZ) with support for PPC and DSP |
-| `fifoplayer` | Plays a recorded `.dff` fifo log. Supports replays generated from Dolphin and Gecko's debugger                                  |
+| `fifoplayer` | Plays (and debugs via `--debug`) a recorded `.dff` fifo log. Supports replays generated from Dolphin and Gecko's debugger       |
 
 ## Building
 
