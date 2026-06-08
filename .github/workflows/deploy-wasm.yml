@@ -25,7 +25,7 @@ jobs:
           git submodule update --init --depth 1 --recursive submodules/chipi-spec
           git submodule update --init --depth 1 --recursive submodules/solstice
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.0
         with:
           targets: wasm32-unknown-unknown
 

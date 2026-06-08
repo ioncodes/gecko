@@ -1,11 +1,5 @@
-submodules/gcwii-resources/
-submodules/lilyskategc/
-submodules/gamecube-examples/
 submodules/solstice/**
-submodules/guy/
 submodules/beanwii/
-submodules/lily-gamecube-roms/
-.claude/
 private/
 target/
 **/target/
@@ -14,24 +8,18 @@ target/
 _site/
 docs/
 roms/
+fs/
 .git/
-*.svg
-*.png
 *.iso
 *.gcm
 *.wbfs
 *.rvz
 *.dol
 *.bin
-*.log
-*.txt
 *.i64
 *.idb
-perf.*
-stdout.txt
-out.txt
 *.pdb
-fs/
+perf.*
 
 # IPL HLE binary needed at compile time
 !submodules/solstice/ipl/

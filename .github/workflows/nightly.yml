@@ -62,7 +62,7 @@ jobs:
       - name: Init submodules
         run: git submodule update --init --depth 1 --recursive submodules/chipi-spec submodules/solstice
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.0
         with:
           targets: ${{ matrix.target }}
 
