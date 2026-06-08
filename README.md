@@ -44,7 +44,8 @@ Gecko is developed with homebrew development and reverse engineering in mind, bu
 - Symbol parsing from ELFs and IDA Pro databases
 - IDA Pro loaders for DOL and Apploader
 - RenderDoc captures with all sorts of debug markers
-- ISO and RVZ support; also supports either packed as a ZIP
+- ISO and RVZ support
+  - Supports either compressed as ZIP
 - Included multitool, supports:
   - IPL decode/encode
   - SYSCONF decode/encode
@@ -149,6 +150,62 @@ Nunchuk:
 | `F11` | Toggle the FPS and emulation speed overlay                            |
 | `F12` | Screenshot the emulated framebuffer to `<gecko exe dir>/screenshots/` |
 
+## Required files
+
+Gecko does not ship any system files.  
+
+Reference SHA-256 hashes (these are the files the project is developed against):
+
+| File                         | SHA-256                                                            |
+| ---------------------------- | ------------------------------------------------------------------ |
+| `IPL.bin` (NTSC, encoded)    | `7228bd8f0171008e71c48788eef5e0fd5abce8ef85f1d00327c6f3368113d2a5` |
+| `IPL.decoded.bin` (NTSC)     | `31e9aa82d972a423d9b7ea7bdbdcff0aff86c3ed953600ca841fe24f3f577051` |
+| `PAL_IPL.bin` (PAL, encoded) | `a5fd3ab0ed3d63ad365990cbf522f9f175e01d3b37e5f30a8e5a103cbbc749fd` |
+| `PAL_IPL.decoded.bin` (PAL)  | `011b66ce68d8dcb4f37460fcb322215bcda7df79072aeca22fdc690499deabac` |
+| `dsp_rom.bin`                | `49d987ee1eab29a157425b82d54516957a81e1bac247c8834e494642605c3e8c` |
+| `dsp_coef.bin`               | `d7741279c2e8ec5c5fb318f8fbdd6de6bf583520d288e836a5383233a4238179` |
+
+### GameCube
+- IPL (NTSC and PAL tested)
+- DSP IROM
+- DSP coefficient ROM
+
+If you only have an encoded IPL, decode it first with multitool:
+
+```sh
+multitool ipl --action decode private/IPL.bin private/IPL.decoded.bin
+```
+
+### Wii
+A NAND is generated on boot whenever `fs/` is missing. The folder can be overriden using the `GECKO_FS_ROOT` environment variable.
+
+```sh
+# optional!
+GECKO_FS_ROOT=/path/to/dolphin-nand tinyapp --dvd wii_game.rvz # ... and other arguments
+```
+
+## Examples
+Examples you might find useful:
+
+```sh
+multitool ipl --action decode ipl.encoded.bin ipl.decoded.bin
+multitool sysconf --action decode fs/shared2/sys/SYSCONF SYSCONF.txt  # edit, then re-encode
+multitool sysconf --action encode SYSCONF.txt fs/shared2/sys/SYSCONF
+multitool setting --action decode fs/title/00000001/00000002/data/setting.txt setting.decoded
+multitool setting --action encode setting.decoded fs/title/00000001/00000002/data/setting.txt
+multitool dvd --extract game.rvz
+
+tinyapp --dol homebrew.dol  # may also require a DSP depending on the DOL
+tinyapp --dvd game.iso --ipl ipl.decoded.bin --dsp dsp_rom.bin --coef dsp_coef.bin --skip-ipl
+
+debugger --dvd game.rvz --ipl ipl.decoded.bin --dsp dsp_rom.bin --coef dsp_coef.bin --script example.lua
+
+fifoplayer recording.dff # just the player
+fifoplayer recording.dff --debug # enable the debugger
+```
+
+The CLI options are largely the same across the sub projects (such as the debugger). For more options, see `--help`.
+
 ## Projects
 This is a table of the main projects. Refer to `crates/` to find out about all available projects.
 
@@ -178,8 +235,11 @@ wasm-pack build crates/web --target web --out-dir pkg --release  # web version
 
 ### Features
 
-Features below are listed based on the frontend crate that supports them. Most of them are simply forwarded into the core `gecko` and `backend-wgpu` crates,
-so the underlying flag of the same name is what actually toggles the behavior. For exact build invocations refer to the GitHub CI actions file.
+Features below are listed based on the frontend crate that supports them. Most of them are simply forwarded into the core `gecko` and `backend-wgpu` crates, so the underlying flag of the same name is what actually toggles the behavior. These can be useful when debugging the emulator itself and when investigating various issues (example: performance bugs in games).
+
+<details>
+
+<summary>Expand build feature flags</summary>
 
 #### `tinyapp`
 
@@ -243,58 +303,7 @@ so the underlying flag of the same name is what actually toggles the behavior. F
 | _(default)_ |    —    | Forwards `gecko/rendersink-blackbox` so the renderless benchmark loop doesn't get optimized away. |
 | `jit-stats` |   off   | Forwards `gecko/jit-stats` for benchmarking.                                                      |
 
-## Required files
-
-Gecko does not ship any system files.  
-
-Reference SHA-256 hashes (these are the files the project is developed against):
-
-| File                         | SHA-256                                                            |
-| ---------------------------- | ------------------------------------------------------------------ |
-| `IPL.bin` (NTSC, encoded)    | `7228bd8f0171008e71c48788eef5e0fd5abce8ef85f1d00327c6f3368113d2a5` |
-| `IPL.decoded.bin` (NTSC)     | `31e9aa82d972a423d9b7ea7bdbdcff0aff86c3ed953600ca841fe24f3f577051` |
-| `PAL_IPL.bin` (PAL, encoded) | `a5fd3ab0ed3d63ad365990cbf522f9f175e01d3b37e5f30a8e5a103cbbc749fd` |
-| `PAL_IPL.decoded.bin` (PAL)  | `011b66ce68d8dcb4f37460fcb322215bcda7df79072aeca22fdc690499deabac` |
-| `dsp_rom.bin`                | `49d987ee1eab29a157425b82d54516957a81e1bac247c8834e494642605c3e8c` |
-| `dsp_coef.bin`               | `d7741279c2e8ec5c5fb318f8fbdd6de6bf583520d288e836a5383233a4238179` |
-
-### GameCube
-- IPL (NTSC and PAL tested)
-- DSP IROM
-- DSP coefficient ROM
-
-If you only have an encoded IPL, decode it first with multitool:
-
-```sh
-multitool ipl --action decode private/IPL.bin private/IPL.decoded.bin
-```
-
-### Wii
-A NAND is generated on boot whenever `fs/` is missing. The folder can be overriden using the `GECKO_FS_ROOT` environment variable.
-
-```sh
-# optional!
-GECKO_FS_ROOT=/path/to/dolphin-nand tinyapp --dvd wii_game.rvz # ... and other arguments
-```
-
-## Usage
-Example invocations:
-
-```sh
-multitool ipl --action decode ipl.encoded.bin ipl.decoded.bin
-multitool sysconf --action decode fs/shared2/sys/SYSCONF SYSCONF.txt  # edit, then re-encode
-multitool sysconf --action encode SYSCONF.txt fs/shared2/sys/SYSCONF
-multitool setting --action decode fs/title/00000001/00000002/data/setting.txt setting.decoded
-multitool setting --action encode setting.decoded fs/title/00000001/00000002/data/setting.txt
-multitool dvd --extract game.rvz
-
-tinyapp --dol homebrew.dol  # may also require a DSP depending on the DOL
-tinyapp --dvd game.iso --ipl ipl.decoded.bin --dsp dsp_rom.bin --coef dsp_coef.bin --skip-ipl
-
-debugger --dvd game.rvz --ipl ipl.decoded.bin --dsp dsp_rom.bin --coef dsp_coef.bin --script example.lua
-```
-
-The CLI options are largely the same across the sub projects (such as the debugger). For more options, see `--help`.
+</details>
 
 ## Why?
 Why do we get a new Wii emulator? Well, it all started a few years ago. I wanted to do something nostalgic and as a kid I spent countless hour in this one Wii game called *Final Fantasy Crystal Chronicals: The Crystal Bearers*. It wasn't a well received game but I loved it so much, I chose my online persona "Layle" after the main protagonist. I figured it would be cool to spend some years learning about emulation development with the goal to eventually run the game in my own emulator!
