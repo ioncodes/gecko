@@ -18,11 +18,7 @@ pub fn build_parser(
     module: &mut JITModule,
     pointer_ty: ir::Type,
     key: VtxKey,
-) -> bool {
-    if !self::is_supported() {
-        return false;
-    }
-
+) {
     let isa = module.isa();
     let mut bd = FunctionBuilder::new(&mut ctx.func, fn_ctx);
 
@@ -106,11 +102,6 @@ pub fn build_parser(
     bd.ins().return_(&[]);
 
     bd.finalize();
-    true
-}
-
-fn is_supported() -> bool {
-    std::env::var("GECKO_VTX_JIT_OFF").is_err()
 }
 
 pub mod offset {

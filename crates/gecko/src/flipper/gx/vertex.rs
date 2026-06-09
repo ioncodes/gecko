@@ -902,11 +902,22 @@ fn run_interpreter<const SYSTEM: SystemId>(
     vf: &VertexFormat,
     verts: &mut Vec<DrawVertex>,
 ) {
+    self::decode_vertices(gp, mmio, data, vertex_count, vf, verts);
+}
+
+fn decode_vertices<const SYSTEM: SystemId>(
+    gp: &mut GraphicsProcessor,
+    mmio: &mut Mmio<SYSTEM>,
+    data: &[u8],
+    vertex_count: usize,
+    vf: &VertexFormat,
+    dest: &mut Vec<DrawVertex>,
+) {
     let view = mmio.ram_view();
     let mut cur = Cursor::new(data);
     for _ in 0..vertex_count {
         let v = gp.decode_vertex(&mut cur, data, &view, vf);
-        verts.push(v);
+        dest.push(v);
     }
 }
 
@@ -919,25 +930,14 @@ fn run_validator<const SYSTEM: SystemId>(
     data: &[u8],
     vertex_count: usize,
     vf: &VertexFormat,
-    verts: &mut Vec<DrawVertex>,
+    verts: &[DrawVertex],
     base: usize,
 ) {
-    if !gp.jit_vtx_validator.enabled {
-        return;
-    }
-
     let mut interp_buf = std::mem::take(&mut gp.jit_vtx_validator.interp_scratch);
     interp_buf.clear();
     interp_buf.reserve(vertex_count);
 
-    {
-        let view = mmio.ram_view();
-        let mut cur = Cursor::new(data);
-        for _ in 0..vertex_count {
-            let v = gp.decode_vertex(&mut cur, data, &view, vf);
-            interp_buf.push(v);
-        }
-    }
+    self::decode_vertices(gp, mmio, data, vertex_count, vf, &mut interp_buf);
 
     let ctx = jit::validate::CompareCtx {
         key,
@@ -947,10 +947,6 @@ fn run_validator<const SYSTEM: SystemId>(
     let jit_slice = &verts[base..base + vertex_count];
     let mismatches = jit::validate::compare_draw_vertices(jit_slice, &interp_buf, &ctx);
     gp.jit_vtx_validator.record(&ctx, &mismatches);
-
-    if !gp.jit_vtx_validator.use_jit_output_downstream {
-        verts[base..base + vertex_count].copy_from_slice(&interp_buf);
-    }
 
     gp.jit_vtx_validator.interp_scratch = interp_buf;
 }

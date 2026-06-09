@@ -296,10 +296,7 @@ impl JitVertexEngine {
         self.ctx.func.signature = self.parser_sig.clone();
 
         let pointer_ty = self.module.target_config().pointer_type();
-        if !builder::build_parser(&mut self.ctx, &mut self.fn_ctx, &mut self.module, pointer_ty, key) {
-            // Codegen refused (unsupported feature). Drop the in-progress fn.
-            return None;
-        }
+        builder::build_parser(&mut self.ctx, &mut self.fn_ctx, &mut self.module, pointer_ty, key);
 
         self.module
             .define_function(func_id, &mut self.ctx)
