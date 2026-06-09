@@ -2316,6 +2316,7 @@ dependencies = [
  "iced",
  "iced_aw",
  "image 0.1.0",
+ "mimalloc",
  "rfd",
  "ringbuf",
  "serde",

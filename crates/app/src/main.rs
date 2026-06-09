@@ -7,6 +7,9 @@ mod player;
 mod theme;
 mod widgets;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use std::path::PathBuf;
 
 use clap::Parser;
