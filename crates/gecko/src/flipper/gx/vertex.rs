@@ -866,21 +866,13 @@ fn dispatch_decode<const SYSTEM: SystemId>(
         };
 
         if let Some(parser) = parser {
-            let gp_raw = gp as *mut GraphicsProcessor as *mut std::ffi::c_void;
             let xf_mem_ptr = gp.xf_mem.as_ptr();
             let arrays_ptr = gp.jit_vtx_arrays.0.as_ptr();
             let base = verts.len();
             let out_ptr = unsafe { verts.as_mut_ptr().add(base) };
 
             unsafe {
-                parser(
-                    gp_raw,
-                    xf_mem_ptr,
-                    arrays_ptr,
-                    data.as_ptr(),
-                    out_ptr,
-                    vertex_count as u32,
-                );
+                parser(xf_mem_ptr, arrays_ptr, data.as_ptr(), out_ptr, vertex_count as u32);
                 verts.set_len(base + vertex_count);
             }
 

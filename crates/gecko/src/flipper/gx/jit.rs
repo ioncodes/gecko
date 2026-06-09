@@ -2,7 +2,6 @@
 
 pub mod attr;
 pub mod builder;
-pub mod runtime;
 #[cfg(feature = "vtx-jit-validate")]
 pub mod validate;
 
@@ -14,7 +13,6 @@ use cranelift_frontend::FunctionBuilderContext;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 use rustc_hash::FxHashMap;
-use std::ffi::c_void;
 
 use crate::flipper::gx::constants::*;
 use crate::flipper::gx::regs::{VatA, VatB, VatC, VcdHi, VcdLo};
@@ -119,9 +117,8 @@ pub fn resolve_addr(mem1: &[u8], mem2: &[u8], addr: u32) -> *const u8 {
 
 /// JIT'd parser entry signature. The compiled function decodes
 /// `vertex_count` vertices from `fifo_ptr` straight into `out_ptr`,
-/// invoking the texgen helper per vertex via `gp_ptr`.
+/// reading transform/texgen config from `xf_mem_ptr`.
 pub type ParserFn = unsafe extern "C" fn(
-    gp_ptr: *mut c_void,
     xf_mem_ptr: *const u32,
     arrays_ptr: *const ResolvedArray,
     fifo_ptr: *const u8,
@@ -187,11 +184,6 @@ impl JitVertexEngine {
             .expect("ISA finish");
 
         let mut jit_builder = JITBuilder::with_isa(isa, default_libcall_names());
-
-        jit_builder.symbol(
-            runtime::SYM_APPLY_TEXGENS,
-            runtime::gecko_gx_jit_apply_texgens as *const u8,
-        );
 
         let arena = crate::jit::arena::DenseArena::new(64 << 20).expect("reserve VTX JIT code arena");
         jit_builder.memory_provider(Box::new(arena));
@@ -296,7 +288,7 @@ impl JitVertexEngine {
         self.ctx.func.signature = self.parser_sig.clone();
 
         let pointer_ty = self.module.target_config().pointer_type();
-        builder::build_parser(&mut self.ctx, &mut self.fn_ctx, &mut self.module, pointer_ty, key);
+        builder::build_parser(&mut self.ctx, &mut self.fn_ctx, pointer_ty, key);
 
         self.module
             .define_function(func_id, &mut self.ctx)
@@ -318,7 +310,6 @@ impl Default for JitVertexEngine {
 fn parser_signature(ptr: ir::Type, cc: CallConv) -> Signature {
     Signature {
         params: vec![
-            ir::AbiParam::new(ptr),            // gp_ptr
             ir::AbiParam::new(ptr),            // xf_mem_ptr
             ir::AbiParam::new(ptr),            // arrays_ptr
             ir::AbiParam::new(ptr),            // fifo_ptr

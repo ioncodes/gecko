@@ -1,5 +1,4 @@
-use cranelift_codegen::ir::{self, InstBuilder, StackSlotData, StackSlotKind};
-use cranelift_codegen::isa::TargetIsa;
+use cranelift_codegen::ir::{self, InstBuilder};
 use cranelift_frontend::FunctionBuilder;
 
 use super::VtxKey;
@@ -9,8 +8,6 @@ use crate::flipper::gx::regs::{AttributeType, ColorCount, ColorFormat, Component
 
 pub struct AttrCtx<'a, 'f> {
     pub bd: &'a mut FunctionBuilder<'f>,
-    pub isa: &'a dyn TargetIsa,
-    pub gp_ptr: ir::Value,
     pub xf_mem_ptr: ir::Value,
     pub arrays_ptr: ir::Value,
     pub data_ptr: ir::Value,
@@ -27,39 +24,13 @@ pub fn emit_vertex(ctx: &mut AttrCtx) {
     let vat_b = key.vat_b();
     let vat_c = key.vat_c();
 
-    let raw_pos_slot = ctx
-        .bd
-        .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 12, 2));
-    let raw_nrm_slot = ctx
-        .bd
-        .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 12, 2));
-    let raw_tex_slot = ctx
-        .bd
-        .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 64, 2));
-    let tex_mtx_slot = ctx
-        .bd
-        .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 0));
-
     let pos_mtx_idx = read_pos_mtx_idx(ctx, vcd_lo);
-
     let tex_mtx_idx = read_tex_mtx_indices(ctx, vcd_lo);
-    for (i, tmi) in tex_mtx_idx.iter().enumerate() {
-        // Width must be I8: tex_mtx_slot is byte-addressed and storing
-        // a wider value at byte offsets 0..7 would overlap and overflow.
-        let byte = ctx.bd.ins().ireduce(ir::types::I8, *tmi);
-        ctx.bd.ins().stack_store(byte, tex_mtx_slot, i as i32);
-    }
 
     let pos_xyz = decode_position(ctx, vcd_lo.position(), vat_a);
     store_vec3(ctx.bd, ctx.out_ptr, offset::POSITION, &pos_xyz);
-    ctx.bd.ins().stack_store(pos_xyz[0], raw_pos_slot, 0);
-    ctx.bd.ins().stack_store(pos_xyz[1], raw_pos_slot, 4);
-    ctx.bd.ins().stack_store(pos_xyz[2], raw_pos_slot, 8);
 
     let nrm_xyz = decode_normal(ctx, vcd_lo.normal(), vat_a);
-    ctx.bd.ins().stack_store(nrm_xyz[0], raw_nrm_slot, 0);
-    ctx.bd.ins().stack_store(nrm_xyz[1], raw_nrm_slot, 4);
-    ctx.bd.ins().stack_store(nrm_xyz[2], raw_nrm_slot, 8);
 
     let color0 = decode_color(ctx, vcd_lo.color0(), vat_a.clr0_fmt(), vat_a.clr0_cnt(), 2);
     ctx.bd.ins().store(MEMFLAGS, color0, ctx.out_ptr, offset::COLOR0);
@@ -67,7 +38,6 @@ pub fn emit_vertex(ctx: &mut AttrCtx) {
     let color1 = decode_color(ctx, vcd_lo.color1(), vat_a.clr1_fmt(), vat_a.clr1_cnt(), 3);
     ctx.bd.ins().store(MEMFLAGS, color1, ctx.out_ptr, offset::COLOR1);
 
-    let mut present_mask: u32 = 0;
     let tex_attrs = [
         vcd_hi.tex0(),
         vcd_hi.tex1(),
@@ -109,12 +79,17 @@ pub fn emit_vertex(ctx: &mut AttrCtx) {
         vat_c.tex7_cnt(),
     ];
 
+    let mut raw_st: [Option<[ir::Value; 2]>; 8] = [None; 8];
     for i in 0..8 {
         if !matches!(tex_attrs[i], AttributeType::None) {
-            let st = decode_texcoord(ctx, tex_attrs[i], tex_fmts[i], tex_shifts[i], tex_cnts[i], 4 + i);
-            ctx.bd.ins().stack_store(st[0], raw_tex_slot, (i * 8) as i32);
-            ctx.bd.ins().stack_store(st[1], raw_tex_slot, (i * 8 + 4) as i32);
-            present_mask |= 1u32 << i;
+            raw_st[i] = Some(decode_texcoord(
+                ctx,
+                tex_attrs[i],
+                tex_fmts[i],
+                tex_shifts[i],
+                tex_cnts[i],
+                4 + i,
+            ));
         }
     }
 
@@ -124,14 +99,7 @@ pub fn emit_vertex(ctx: &mut AttrCtx) {
     let nrm_view = transform_and_normalize_normal(ctx, pos_mtx_idx, &nrm_xyz);
     store_vec3(ctx.bd, ctx.out_ptr, offset::NORMAL, &nrm_view);
 
-    call_texgen_extern(
-        ctx,
-        raw_pos_slot,
-        raw_nrm_slot,
-        raw_tex_slot,
-        present_mask,
-        tex_mtx_slot,
-    );
+    self::emit_texgens(ctx, &pos_xyz, &nrm_xyz, &tex_mtx_idx, &raw_st);
 }
 
 fn read_pos_mtx_idx(ctx: &mut AttrCtx, vcd_lo: crate::flipper::gx::regs::VcdLo) -> ir::Value {
@@ -577,33 +545,12 @@ fn decode_texcoord(
 }
 
 fn xf_transform_3x4(ctx: &mut AttrCtx, pos_mtx_idx: ir::Value, pos: &[ir::Value; 3]) -> [ir::Value; 3] {
-    // base_byte_off = pos_mtx_idx * XF_POS_MTX_STRIDE * 4
-    let base_off = ctx.bd.ins().imul_imm(pos_mtx_idx, (XF_POS_MTX_STRIDE * 4) as i64);
-    let base_off = ctx.bd.ins().uextend(ctx.pointer_ty, base_off);
-    let base_addr = ctx.bd.ins().iadd(ctx.xf_mem_ptr, base_off);
+    let base_addr = self::pos_mtx_base_addr(ctx, pos_mtx_idx);
+    let m = self::load_matrix12(ctx, base_addr);
 
-    let m = std::array::from_fn::<ir::Value, 12, _>(|i| {
-        ctx.bd
-            .ins()
-            .load(ir::types::F32, MEMFLAGS_RO, base_addr, (i * 4) as i32)
-    });
-
-    let row = |i: usize, ctx: &mut AttrCtx| -> ir::Value {
-        let m0 = m[i * 4 + 0];
-        let m1 = m[i * 4 + 1];
-        let m2 = m[i * 4 + 2];
-        let m3 = m[i * 4 + 3];
-        let p0 = ctx.bd.ins().fmul(m0, pos[0]);
-        let p1 = ctx.bd.ins().fmul(m1, pos[1]);
-        let p2 = ctx.bd.ins().fmul(m2, pos[2]);
-        let s = ctx.bd.ins().fadd(p0, p1);
-        let s = ctx.bd.ins().fadd(s, p2);
-        ctx.bd.ins().fadd(s, m3)
-    };
-
-    let r0 = row(0, ctx);
-    let r1 = row(1, ctx);
-    let r2 = row(2, ctx);
+    let r0 = self::dot3_affine(ctx, [m[0], m[1], m[2], m[3]], *pos);
+    let r1 = self::dot3_affine(ctx, [m[4], m[5], m[6], m[7]], *pos);
+    let r2 = self::dot3_affine(ctx, [m[8], m[9], m[10], m[11]], *pos);
     [r0, r1, r2]
 }
 
@@ -657,42 +604,327 @@ fn transform_and_normalize_normal(ctx: &mut AttrCtx, pos_mtx_idx: ir::Value, nrm
     [xs, ys, zs]
 }
 
-fn call_texgen_extern(
+fn emit_texgens(
     ctx: &mut AttrCtx,
-    raw_pos_slot: ir::StackSlot,
-    raw_nrm_slot: ir::StackSlot,
-    raw_tex_slot: ir::StackSlot,
-    present_mask: u32,
-    tex_mtx_slot: ir::StackSlot,
+    pos: &[ir::Value; 3],
+    nrm: &[ir::Value; 3],
+    tex_mtx_idx: &[ir::Value; 8],
+    raw_st: &[Option<[ir::Value; 2]>; 8],
 ) {
-    let pos_addr = ctx.bd.ins().stack_addr(ctx.pointer_ty, raw_pos_slot, 0);
-    let nrm_addr = ctx.bd.ins().stack_addr(ctx.pointer_ty, raw_nrm_slot, 0);
-    let tex_addr = ctx.bd.ins().stack_addr(ctx.pointer_ty, raw_tex_slot, 0);
-    let mtx_addr = ctx.bd.ins().stack_addr(ctx.pointer_ty, tex_mtx_slot, 0);
+    let num_texgens = ctx
+        .bd
+        .ins()
+        .load(ir::types::I32, MEMFLAGS_RO, ctx.xf_mem_ptr, xf_byte_off(XF_NUM_TEXGENS));
 
-    let out_tc_addr = ctx.bd.ins().iadd_imm(ctx.out_ptr, offset::TEXCOORDS as i64);
-
-    let mask = ctx.bd.ins().iconst(ir::types::I32, present_mask as i64);
-
-    let mut sig = ir::Signature::new(ctx.isa.default_call_conv());
-    sig.params.push(ir::AbiParam::new(ctx.pointer_ty)); // gp
-    sig.params.push(ir::AbiParam::new(ctx.pointer_ty)); // position
-    sig.params.push(ir::AbiParam::new(ctx.pointer_ty)); // normal
-    sig.params.push(ir::AbiParam::new(ctx.pointer_ty)); // raw_tex
-    sig.params.push(ir::AbiParam::new(ir::types::I32)); // present_mask
-    sig.params.push(ir::AbiParam::new(ctx.pointer_ty)); // tex_mtx
-    sig.params.push(ir::AbiParam::new(ctx.pointer_ty)); // out_texcoords
-
-    let sig_ref = ctx.bd.import_signature(sig);
-
-    let target = super::runtime::gecko_gx_jit_apply_texgens as *const () as usize as i64;
-    let target = ctx.bd.ins().iconst(ctx.pointer_ty, target);
-
-    ctx.bd.ins().call_indirect(
-        sig_ref,
-        target,
-        &[ctx.gp_ptr, pos_addr, nrm_addr, tex_addr, mask, mtx_addr, out_tc_addr],
+    let dual_cell = ctx.bd.ins().load(
+        ir::types::I32,
+        MEMFLAGS_RO,
+        ctx.xf_mem_ptr,
+        xf_byte_off(XF_DUAL_TEX_ENABLE),
     );
+    let dual_en = ctx.bd.ins().icmp_imm(ir::condcodes::IntCC::NotEqual, dual_cell, 0);
+
+    for tg in 0..8 {
+        let active = ctx.bd.create_block();
+        let passthru = ctx.bd.create_block();
+        let done = ctx.bd.create_block();
+        ctx.bd.append_block_param(done, ir::types::F32);
+        ctx.bd.append_block_param(done, ir::types::F32);
+        ctx.bd.append_block_param(done, ir::types::F32);
+
+        // active when tg < num_texgens; the 8-slot unroll enforces .min(8)
+        let tg_const = ctx.bd.ins().iconst(ir::types::I32, tg as i64);
+        let cond = ctx
+            .bd
+            .ins()
+            .icmp(ir::condcodes::IntCC::UnsignedLessThan, tg_const, num_texgens);
+        ctx.bd.ins().brif(cond, active, &[], passthru, &[]);
+
+        ctx.bd.switch_to_block(active);
+        ctx.bd.seal_block(active);
+        let a = self::emit_texgen_active(ctx, tg, pos, nrm, tex_mtx_idx, raw_st, dual_en);
+        ctx.bd.ins().jump(
+            done,
+            &[
+                ir::BlockArg::Value(a[0]),
+                ir::BlockArg::Value(a[1]),
+                ir::BlockArg::Value(a[2]),
+            ],
+        );
+
+        // passthrough: present ? [s, t, 1] : [0, 0, 1]
+        ctx.bd.switch_to_block(passthru);
+        ctx.bd.seal_block(passthru);
+        let one = ctx.bd.ins().f32const(1.0);
+        let (ps, pt) = match raw_st[tg] {
+            Some(st) => (st[0], st[1]),
+            None => {
+                let z = ctx.bd.ins().f32const(0.0);
+                (z, z)
+            }
+        };
+        ctx.bd.ins().jump(
+            done,
+            &[
+                ir::BlockArg::Value(ps),
+                ir::BlockArg::Value(pt),
+                ir::BlockArg::Value(one),
+            ],
+        );
+
+        ctx.bd.switch_to_block(done);
+        ctx.bd.seal_block(done);
+        let d = ctx.bd.block_params(done);
+        let out = [d[0], d[1], d[2]];
+        store_vec3(ctx.bd, ctx.out_ptr, offset::TEXCOORDS + (tg as i32) * 12, &out);
+    }
+}
+
+fn emit_texgen_active(
+    ctx: &mut AttrCtx,
+    tg: usize,
+    pos: &[ir::Value; 3],
+    nrm: &[ir::Value; 3],
+    tex_mtx_idx: &[ir::Value; 8],
+    raw_st: &[Option<[ir::Value; 2]>; 8],
+    dual_en: ir::Value,
+) -> [ir::Value; 3] {
+    let one = ctx.bd.ins().f32const(1.0);
+
+    let tg_cell = ctx.bd.ins().load(
+        ir::types::I32,
+        MEMFLAGS_RO,
+        ctx.xf_mem_ptr,
+        xf_byte_off(XF_TEXGEN_BASE + tg),
+    );
+
+    let src_shift = ctx.bd.ins().ushr_imm(tg_cell, 7);
+    let src_row = ctx.bd.ins().band_imm(src_shift, 0x1F);
+    let src = self::texgen_source(ctx, src_row, pos, nrm, raw_st);
+
+    // input = input_form == Abc1 ? [s0, s1, s2, 1] : [s0, s1, 1, 1]
+    let is_abc1 = self::flag(ctx, tg_cell, 2);
+    let input2 = ctx.bd.ins().select(is_abc1, src[2], one);
+    let input = [src[0], src[1], input2, one];
+
+    let base_addr = self::pos_mtx_base_addr(ctx, tex_mtx_idx[tg]);
+    let m = self::load_matrix12(ctx, base_addr);
+
+    let s = self::dot4(ctx, [m[0], m[1], m[2], m[3]], input);
+    let t = self::dot4(ctx, [m[4], m[5], m[6], m[7]], input);
+
+    // projection St -> q = 1.0, Stq -> q = row2 . input
+    let is_stq = self::flag(ctx, tg_cell, 1);
+    let q_stq = self::dot4(ctx, [m[8], m[9], m[10], m[11]], input);
+    let q = ctx.bd.ins().select(is_stq, q_stq, one);
+
+    let (s, t, q) = self::emit_dual(ctx, tg, s, t, q, dual_en);
+
+    self::emit_q_clamp(ctx, s, t, q)
+}
+
+// Pick the source row exactly as TexGenSrc::from_raw + select_texgen_source:
+// 0->pos, 1->nrm, 2..=4->[0,0,1], 5..=12->tex[k-5], 13..=31->tex7.
+fn texgen_source(
+    ctx: &mut AttrCtx,
+    src_row: ir::Value,
+    pos: &[ir::Value; 3],
+    nrm: &[ir::Value; 3],
+    raw_st: &[Option<[ir::Value; 2]>; 8],
+) -> [ir::Value; 3] {
+    use ir::condcodes::IntCC;
+
+    let zero = ctx.bd.ins().f32const(0.0);
+    let one = ctx.bd.ins().f32const(1.0);
+
+    let is0 = ctx.bd.ins().icmp_imm(IntCC::Equal, src_row, 0);
+    let is1 = ctx.bd.ins().icmp_imm(IntCC::Equal, src_row, 1);
+    let ge2 = ctx.bd.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, src_row, 2);
+    let le4 = ctx.bd.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, src_row, 4);
+    let is_dead = ctx.bd.ins().band(ge2, le4);
+
+    let mut is_tex = [is0; 8];
+    for k in 0..8 {
+        is_tex[k] = ctx.bd.ins().icmp_imm(IntCC::Equal, src_row, (5 + k) as i64);
+    }
+
+    // one tex component: present ? (i<2 ? s/t : 1) : (i<2 ? 0 : 1)
+    let tex_comp = |i: usize, k: usize| match raw_st[k] {
+        Some(st) if i < 2 => st[i],
+        _ if i < 2 => zero,
+        _ => one,
+    };
+
+    let mut out = [zero; 3];
+    for i in 0..3 {
+        let mut acc = tex_comp(i, 7); // default: src_row >= 13 aliases to tex7
+        for k in 0..8 {
+            let tc = tex_comp(i, k);
+            acc = ctx.bd.ins().select(is_tex[k], tc, acc);
+        }
+        let dead_c = if i < 2 { zero } else { one };
+        acc = ctx.bd.ins().select(is_dead, dead_c, acc);
+        acc = ctx.bd.ins().select(is1, nrm[i], acc);
+        acc = ctx.bd.ins().select(is0, pos[i], acc);
+        out[i] = acc;
+    }
+    out
+}
+
+// Test a single config bit: (word >> shift) & 1 != 0.
+fn flag(ctx: &mut AttrCtx, word: ir::Value, shift: i64) -> ir::Value {
+    let shifted = ctx.bd.ins().ushr_imm(word, shift);
+    let bit = ctx.bd.ins().band_imm(shifted, 1);
+    ctx.bd.ins().icmp_imm(ir::condcodes::IntCC::NotEqual, bit, 0)
+}
+
+// Base address of a 3x4 matrix in xf_mem, indexed by a matrix index (cells of
+// XF_POS_MTX_STRIDE each). Shared by the position transform and texgen.
+fn pos_mtx_base_addr(ctx: &mut AttrCtx, idx: ir::Value) -> ir::Value {
+    let off = ctx.bd.ins().imul_imm(idx, (XF_POS_MTX_STRIDE * 4) as i64);
+    let off = ctx.bd.ins().uextend(ctx.pointer_ty, off);
+    ctx.bd.ins().iadd(ctx.xf_mem_ptr, off)
+}
+
+// Load the 12 f32 cells of a 3x4 matrix.
+fn load_matrix12(ctx: &mut AttrCtx, base_addr: ir::Value) -> [ir::Value; 12] {
+    std::array::from_fn(|i| {
+        ctx.bd
+            .ins()
+            .load(ir::types::F32, MEMFLAGS_RO, base_addr, (i * 4) as i32)
+    })
+}
+
+// (m0*v0 + m1*v1) + m2*v2 + m3*v3, no fma.
+fn dot4(ctx: &mut AttrCtx, m: [ir::Value; 4], v: [ir::Value; 4]) -> ir::Value {
+    let p0 = ctx.bd.ins().fmul(m[0], v[0]);
+    let p1 = ctx.bd.ins().fmul(m[1], v[1]);
+    let p2 = ctx.bd.ins().fmul(m[2], v[2]);
+    let p3 = ctx.bd.ins().fmul(m[3], v[3]);
+    let a = ctx.bd.ins().fadd(p0, p1);
+    let b = ctx.bd.ins().fadd(a, p2);
+    ctx.bd.ins().fadd(b, p3)
+}
+
+// (m0*v0 + m1*v1) + m2*v2 + m3: the affine row form, translate in m3.
+fn dot3_affine(ctx: &mut AttrCtx, m: [ir::Value; 4], v: [ir::Value; 3]) -> ir::Value {
+    let p0 = ctx.bd.ins().fmul(m[0], v[0]);
+    let p1 = ctx.bd.ins().fmul(m[1], v[1]);
+    let p2 = ctx.bd.ins().fmul(m[2], v[2]);
+    let a = ctx.bd.ins().fadd(p0, p1);
+    let b = ctx.bd.ins().fadd(a, p2);
+    ctx.bd.ins().fadd(b, m[3])
+}
+
+fn emit_dual(
+    ctx: &mut AttrCtx,
+    tg: usize,
+    s: ir::Value,
+    t: ir::Value,
+    q: ir::Value,
+    dual_en: ir::Value,
+) -> (ir::Value, ir::Value, ir::Value) {
+    let dual_on = ctx.bd.create_block();
+    let dual_done = ctx.bd.create_block();
+    ctx.bd.append_block_param(dual_done, ir::types::F32);
+    ctx.bd.append_block_param(dual_done, ir::types::F32);
+    ctx.bd.append_block_param(dual_done, ir::types::F32);
+
+    ctx.bd.ins().brif(
+        dual_en,
+        dual_on,
+        &[],
+        dual_done,
+        &[ir::BlockArg::Value(s), ir::BlockArg::Value(t), ir::BlockArg::Value(q)],
+    );
+
+    ctx.bd.switch_to_block(dual_on);
+    ctx.bd.seal_block(dual_on);
+
+    let one = ctx.bd.ins().f32const(1.0);
+    let eps = ctx.bd.ins().f32const(f32::EPSILON);
+
+    let dt_cell = ctx.bd.ins().load(
+        ir::types::I32,
+        MEMFLAGS_RO,
+        ctx.xf_mem_ptr,
+        xf_byte_off(XF_DUALTEX_BASE + tg),
+    );
+    let norm = self::flag(ctx, dt_cell, 6);
+    let post_idx = ctx.bd.ins().band_imm(dt_cell, 0x3F);
+
+    // inv_q = q.abs() > EPSILON ? 1/q : 1.0 (1/q always computed; fdiv cannot trap)
+    let absq = ctx.bd.ins().fabs(q);
+    let big = ctx.bd.ins().fcmp(ir::condcodes::FloatCC::GreaterThan, absq, eps);
+    let recip = ctx.bd.ins().fdiv(one, q);
+    let inv_q = ctx.bd.ins().select(big, recip, one);
+
+    let s_n = ctx.bd.ins().fmul(s, inv_q);
+    let t_n = ctx.bd.ins().fmul(t, inv_q);
+    let ns = ctx.bd.ins().select(norm, s_n, s);
+    let nt = ctx.bd.ins().select(norm, t_n, t);
+    let nq = ctx.bd.ins().select(norm, inv_q, q);
+
+    // post matrix at base = (XF_POST_MTX_BASE + post_idx * 4) cells, in bytes
+    let post_bytes = ctx.bd.ins().imul_imm(post_idx, 16);
+    let post_bytes = ctx.bd.ins().iadd_imm(post_bytes, (XF_POST_MTX_BASE * 4) as i64);
+    let post_bytes = ctx.bd.ins().uextend(ctx.pointer_ty, post_bytes);
+    let post_addr = ctx.bd.ins().iadd(ctx.xf_mem_ptr, post_bytes);
+    let pm = self::load_matrix12(ctx, post_addr);
+
+    let nsv = [ns, nt, nq];
+    let ps = self::dot3_affine(ctx, [pm[0], pm[1], pm[2], pm[3]], nsv);
+    let pt = self::dot3_affine(ctx, [pm[4], pm[5], pm[6], pm[7]], nsv);
+    let pq = self::dot3_affine(ctx, [pm[8], pm[9], pm[10], pm[11]], nsv);
+
+    ctx.bd.ins().jump(
+        dual_done,
+        &[
+            ir::BlockArg::Value(ps),
+            ir::BlockArg::Value(pt),
+            ir::BlockArg::Value(pq),
+        ],
+    );
+
+    ctx.bd.switch_to_block(dual_done);
+    ctx.bd.seal_block(dual_done);
+    let d = ctx.bd.block_params(dual_done);
+    (d[0], d[1], d[2])
+}
+
+// q ~= 0 special case: clamp(xy/2, -1, 1) with q forced to 0, else pass (s,t,q).
+fn emit_q_clamp(ctx: &mut AttrCtx, s: ir::Value, t: ir::Value, q: ir::Value) -> [ir::Value; 3] {
+    use ir::condcodes::FloatCC;
+
+    let zero = ctx.bd.ins().f32const(0.0);
+    let two = ctx.bd.ins().f32const(2.0);
+    let eps = ctx.bd.ins().f32const(f32::EPSILON);
+
+    let absq = ctx.bd.ins().fabs(q);
+    let is_zero = ctx.bd.ins().fcmp(FloatCC::LessThan, absq, eps);
+
+    let s_half = ctx.bd.ins().fdiv(s, two);
+    let t_half = ctx.bd.ins().fdiv(t, two);
+    let s_c = self::clamp_unit(ctx, s_half);
+    let t_c = self::clamp_unit(ctx, t_half);
+
+    let out_s = ctx.bd.ins().select(is_zero, s_c, s);
+    let out_t = ctx.bd.ins().select(is_zero, t_c, t);
+    let out_q = ctx.bd.ins().select(is_zero, zero, q);
+    [out_s, out_t, out_q]
+}
+
+// Motherucker.
+fn clamp_unit(ctx: &mut AttrCtx, x: ir::Value) -> ir::Value {
+    use ir::condcodes::FloatCC;
+
+    let neg1 = ctx.bd.ins().f32const(-1.0);
+    let pos1 = ctx.bd.ins().f32const(1.0);
+
+    let lt = ctx.bd.ins().fcmp(FloatCC::LessThan, x, neg1);
+    let x1 = ctx.bd.ins().select(lt, neg1, x);
+    let gt = ctx.bd.ins().fcmp(FloatCC::GreaterThan, x1, pos1);
+    ctx.bd.ins().select(gt, pos1, x1)
 }
 
 #[inline(always)]

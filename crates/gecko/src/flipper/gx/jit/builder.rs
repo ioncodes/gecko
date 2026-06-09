@@ -1,8 +1,6 @@
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{self, InstBuilder};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use cranelift_jit::JITModule;
-use cranelift_module::Module;
 use std::mem::offset_of;
 
 use super::attr::{self, AttrCtx};
@@ -12,14 +10,7 @@ use crate::host::DrawVertex;
 pub(crate) const MEMFLAGS: ir::MemFlagsData = ir::MemFlagsData::new().with_notrap();
 pub(crate) const MEMFLAGS_RO: ir::MemFlagsData = ir::MemFlagsData::new().with_notrap().with_readonly();
 
-pub fn build_parser(
-    ctx: &mut Context,
-    fn_ctx: &mut FunctionBuilderContext,
-    module: &mut JITModule,
-    pointer_ty: ir::Type,
-    key: VtxKey,
-) {
-    let isa = module.isa();
+pub fn build_parser(ctx: &mut Context, fn_ctx: &mut FunctionBuilderContext, pointer_ty: ir::Type, key: VtxKey) {
     let mut bd = FunctionBuilder::new(&mut ctx.func, fn_ctx);
 
     let entry = bd.create_block();
@@ -36,12 +27,11 @@ pub fn build_parser(
     bd.seal_block(entry);
 
     let params = bd.block_params(entry);
-    let gp_ptr = params[0];
-    let xf_mem_ptr = params[1];
-    let arrays_ptr = params[2];
-    let init_data_ptr = params[3];
-    let init_out_ptr = params[4];
-    let count = params[5];
+    let xf_mem_ptr = params[0];
+    let arrays_ptr = params[1];
+    let init_data_ptr = params[2];
+    let init_out_ptr = params[3];
+    let count = params[4];
 
     let zero = bd.ins().iconst(ir::types::I32, 0);
     bd.ins().jump(
@@ -67,8 +57,6 @@ pub fn build_parser(
 
     let mut actx = AttrCtx {
         bd: &mut bd,
-        isa,
-        gp_ptr,
         xf_mem_ptr,
         arrays_ptr,
         data_ptr,
