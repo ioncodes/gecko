@@ -5,6 +5,7 @@ mod game;
 mod library;
 mod player;
 mod theme;
+mod update;
 mod widgets;
 
 #[global_allocator]

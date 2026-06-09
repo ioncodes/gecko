@@ -10,13 +10,15 @@ use iced::{Background, Border, Color, Element, Length, Padding, Subscription, Ta
 
 use crate::cache::{self, LibraryCache};
 use crate::config::{self, Config};
-use crate::game::{CpuMode, Game, Platform, ThemePreference};
+use crate::game::{CpuMode, Format, Game, Platform, ThemePreference};
 use crate::library::{self, ScanProgress};
 use crate::player::{self, PlayerState, PlayerStatus};
 use crate::theme::{self, Palette};
+use crate::update::{self, Outcome};
 use crate::widgets::{game_row, menubar, search_bar, statusbar};
 
 const REPO_URL: &str = "https://github.com/ioncodes/gecko";
+pub(crate) const ISSUE_URL: &str = "https://github.com/ioncodes/gecko/issues/new?template=bug_report.md";
 const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
 const TOAST_DURATION: Duration = Duration::from_secs(3);
 
@@ -32,6 +34,9 @@ pub enum Message {
     ScanProgress(ScanProgress),
     SearchChanged(String),
     MenuChooseLibrary(Platform),
+    MenuOpenGame,
+    GameFilePicked(Option<PathBuf>),
+    GameFileLoaded(Result<Box<Game>, String>),
     MenuRescan,
     MenuQuit,
     MenuToggleCpu(CpuMode),
@@ -39,7 +44,9 @@ pub enum Message {
     MenuSetTheme(ThemePreference),
     MenuAbout,
     AboutClose,
-    OpenRepo,
+    OpenUrl(String),
+    CheckForUpdates,
+    UpdateChecked(Outcome),
     GameClicked(usize),
     LaunchPlayer(usize),
     SystemThemeLoaded(Mode),
@@ -48,6 +55,16 @@ pub enum Message {
     PlayerToggleOverlay(window::Id),
     PlayerToggleUncapped(window::Id),
     PlayerScreenshot(window::Id),
+}
+
+#[derive(Debug, Clone)]
+pub enum UpdateState {
+    Idle,
+    Checking,
+    UpToDate,
+    Available(String),
+    Unpublished,
+    Failed,
 }
 
 pub struct Toast {
@@ -89,6 +106,7 @@ pub struct App {
     last_click: Option<(usize, Instant)>,
     library_window: Option<window::Id>,
     players: HashMap<window::Id, PlayerWindow>,
+    update: UpdateState,
 }
 
 impl App {
@@ -118,6 +136,7 @@ impl App {
             last_click: None,
             library_window: None,
             players: HashMap::new(),
+            update: UpdateState::Idle,
         };
 
         let (_, open_lib) = window::open(window::Settings {
@@ -266,6 +285,41 @@ impl App {
                     move |opt| Message::LibraryPicked(platform, opt),
                 )
             }
+            Message::MenuOpenGame => Task::perform(
+                async move {
+                    rfd::AsyncFileDialog::new()
+                        .set_title("Open game")
+                        .add_filter("Disc images", &["iso", "rvz", "zip"])
+                        .pick_file()
+                        .await
+                        .map(|h| h.path().to_path_buf())
+                },
+                Message::GameFilePicked,
+            ),
+            Message::GameFilePicked(None) => Task::none(),
+            Message::GameFilePicked(Some(path)) => {
+                let Some(format) = Format::from_path(&path) else {
+                    tracing::warn!(path = %path.display(), "unsupported file type");
+                    return Task::none();
+                };
+
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || library::load_one(&path, format).map(Box::new))
+                            .await
+                            .unwrap_or_else(|err| Err(err.to_string()))
+                    },
+                    Message::GameFileLoaded,
+                )
+            }
+            Message::GameFileLoaded(Err(err)) => {
+                tracing::warn!(%err, "failed to load picked game");
+                Task::none()
+            }
+            Message::GameFileLoaded(Ok(game)) => {
+                tracing::info!(path = %game.path.display(), title = %game.title, "launching picked game");
+                self.launch_game(*game)
+            }
             Message::MenuRescan => {
                 if self.effective_library_roots().is_empty() {
                     Task::done(Message::MenuChooseLibrary(Platform::Gcn))
@@ -298,10 +352,33 @@ impl App {
                 self.about_open = false;
                 Task::none()
             }
-            Message::OpenRepo => {
-                if let Err(err) = webbrowser::open(REPO_URL) {
-                    tracing::warn!(%err, url = REPO_URL, "failed to open repo URL");
+            Message::OpenUrl(url) => {
+                if let Err(err) = webbrowser::open(&url) {
+                    tracing::warn!(%err, %url, "failed to open URL");
                 }
+                Task::none()
+            }
+            Message::CheckForUpdates => {
+                if matches!(self.update, UpdateState::Checking) {
+                    return Task::none();
+                }
+
+                self.update = UpdateState::Checking;
+                Task::perform(update::check(), Message::UpdateChecked)
+            }
+            Message::UpdateChecked(outcome) => {
+                self.update = match outcome {
+                    Outcome::UpToDate => UpdateState::UpToDate,
+                    Outcome::Available(url) => {
+                        tracing::info!(%url, "update available");
+                        UpdateState::Available(url)
+                    }
+                    Outcome::Unpublished => UpdateState::Unpublished,
+                    Outcome::Failed(err) => {
+                        tracing::warn!(%err, "update check failed");
+                        UpdateState::Failed
+                    }
+                };
                 Task::none()
             }
             Message::GameClicked(idx) => {
@@ -326,13 +403,7 @@ impl App {
                     return Task::none();
                 };
 
-                let state = PlayerState::new(&game, &self.config);
-                let (_, open) = window::open(window::Settings {
-                    size: iced::Size::new(960.0, 720.0),
-                    ..window::Settings::default()
-                });
-
-                open.map(move |id| Message::PlayerWindowOpened(id, Box::new(game.clone()), state.clone()))
+                self.launch_game(game)
             }
             Message::SystemThemeLoaded(mode) | Message::SystemThemeChanged(mode) => {
                 self.system_mode = mode;
@@ -411,9 +482,9 @@ impl App {
 
         let body: Element<'_, Message> = if self.games.is_empty() {
             let (msg, hint) = if self.scanning {
-                ("Scanning…", "Reading disc headers")
+                ("Scanning...", "Reading disc headers")
             } else if self.effective_library_roots().is_empty() {
-                ("No libraries set", "File → Set GameCube / Wii Folder…")
+                ("No libraries set", "File → Set GameCube / Wii Folder...")
             } else {
                 ("No games found", "Drop ISO, RVZ, or ZIP files into the library folder")
             };
@@ -435,7 +506,13 @@ impl App {
             menubar::menubar(palette, self.config.cpu_mode, self.config.theme, self.config.skip_ipl),
             search_bar::search_bar(palette, &self.search),
             body,
-            statusbar::statusbar(palette, self.config.cpu_mode, self.games.len(), self.scanning),
+            statusbar::statusbar(
+                palette,
+                self.config.cpu_mode,
+                self.games.len(),
+                self.scanning,
+                &self.update
+            ),
         ];
 
         let root = container(main)
@@ -547,6 +624,26 @@ impl App {
 
     fn refresh_palette(&mut self) {
         self.palette = self::resolve_palette(self.config.theme, self.system_mode);
+    }
+
+    fn launch_game(&self, game: Game) -> Task<Message> {
+        let state = PlayerState::new(&game, &self.config);
+        let (_, open) = window::open(window::Settings {
+            size: iced::Size::new(960.0, 720.0),
+            ..window::Settings::default()
+        });
+
+        open.map(move |id| Message::PlayerWindowOpened(id, Box::new(game.clone()), state.clone()))
+    }
+}
+
+fn version_label() -> String {
+    let hash = env!("GECKO_GIT_HASH");
+    let channel = env!("GECKO_CHANNEL");
+    if channel.is_empty() {
+        hash.to_owned()
+    } else {
+        format!("{hash}-{channel}")
     }
 }
 
@@ -686,7 +783,7 @@ fn about_overlay(palette: &Palette) -> Element<'static, Message> {
     };
 
     let link_button = button(text(REPO_URL).size(12).color(link_color))
-        .on_press(Message::OpenRepo)
+        .on_press(Message::OpenUrl(REPO_URL.to_owned()))
         .padding(Padding::from([2, 4]))
         .style(move |_: &Theme, status| {
             let bg = match status {
@@ -731,7 +828,7 @@ fn about_overlay(palette: &Palette) -> Element<'static, Message> {
             ]
             .spacing(2)
             .align_x(iced::Alignment::Center),
-            text("v0.1.0").size(11).color(mute),
+            text(self::version_label()).size(11).color(mute),
             button(text("Close").size(13))
                 .on_press(Message::AboutClose)
                 .padding(Padding::from([6, 14]))

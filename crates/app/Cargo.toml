@@ -31,3 +31,4 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 clap = { version = "4.6.1", features = ["derive"] }
 anyhow = "1.0.102"
 webbrowser = "1.0.5"
+reqwest = { version = "0.13.4", features = ["json"] }

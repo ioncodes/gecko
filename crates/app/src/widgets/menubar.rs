@@ -6,6 +6,9 @@ use crate::app::Message;
 use crate::game::{CpuMode, Platform, ThemePreference};
 use crate::theme::Palette;
 
+const WII_DB_URL: &str = "https://emu.layle.dev/gecko-wii";
+const GC_DB_URL: &str = "https://emu.layle.dev/gecko-gc";
+
 pub fn menubar(
     palette: &Palette,
     cpu: CpuMode,
@@ -21,6 +24,10 @@ pub fn menubar(
         Item::with_menu(
             self::top_label(palette, "Settings"),
             self::settings_menu(palette, cpu, theme_pref, skip_ipl),
+        ),
+        Item::with_menu(
+            self::top_label(palette, "Compatibility"),
+            self::compatibility_menu(palette),
         ),
         Item::with_menu(self::top_label(palette, "About"), self::about_menu(palette)),
     ])
@@ -174,15 +181,17 @@ fn section_header(palette: &Palette, label: &'static str) -> Element<'static, Me
 
 fn file_menu(palette: &Palette) -> Menu<'static, Message, iced::Theme, iced::Renderer> {
     Menu::new(vec![
+        Item::new(self::menu_item(palette, "Open Game", Message::MenuOpenGame, None)),
+        Item::new(self::separator(palette)),
         Item::new(self::menu_item(
             palette,
-            "Set GameCube Folder…",
+            "Set GameCube Folder",
             Message::MenuChooseLibrary(Platform::Gcn),
             None,
         )),
         Item::new(self::menu_item(
             palette,
-            "Set Wii Folder…",
+            "Set Wii Folder",
             Message::MenuChooseLibrary(Platform::Wii),
             None,
         )),
@@ -249,13 +258,43 @@ fn settings_menu(
     .spacing(2.0)
 }
 
+fn compatibility_menu(palette: &Palette) -> Menu<'static, Message, iced::Theme, iced::Renderer> {
+    Menu::new(vec![
+        Item::new(self::menu_item(
+            palette,
+            "Wii Database",
+            Message::OpenUrl(WII_DB_URL.to_owned()),
+            None,
+        )),
+        Item::new(self::menu_item(
+            palette,
+            "GameCube Database",
+            Message::OpenUrl(GC_DB_URL.to_owned()),
+            None,
+        )),
+    ])
+    .max_width(220.0)
+    .offset(4.0)
+    .spacing(2.0)
+}
+
 fn about_menu(palette: &Palette) -> Menu<'static, Message, iced::Theme, iced::Renderer> {
-    Menu::new(vec![Item::new(self::menu_item(
-        palette,
-        "About Gecko",
-        Message::MenuAbout,
-        None,
-    ))])
+    Menu::new(vec![
+        Item::new(self::menu_item(palette, "About Gecko", Message::MenuAbout, None)),
+        Item::new(self::menu_item(
+            palette,
+            "Check for Updates",
+            Message::CheckForUpdates,
+            None,
+        )),
+        Item::new(self::separator(palette)),
+        Item::new(self::menu_item(
+            palette,
+            "Report an Issue",
+            Message::OpenUrl(crate::app::ISSUE_URL.to_owned()),
+            None,
+        )),
+    ])
     .max_width(200.0)
     .offset(4.0)
     .spacing(2.0)

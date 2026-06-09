@@ -136,7 +136,7 @@ fn enumerate_many(roots: &[PathBuf]) -> Result<Vec<(PathBuf, Format, FileFingerp
     Ok(out)
 }
 
-fn load_one(path: &Path, format: Format) -> Result<Game, String> {
+pub fn load_one(path: &Path, format: Format) -> Result<Game, String> {
     let data = std::fs::read(path).map_err(|e| e.to_string())?;
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let dvd = image::load_dvd(data);
