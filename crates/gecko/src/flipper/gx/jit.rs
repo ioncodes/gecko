@@ -85,6 +85,9 @@ unsafe impl Send for ResolvedArray {}
 /// 12 array slots: pos, nrm, clr0, clr1, tex0..tex7.
 pub const RESOLVED_ARRAY_COUNT: usize = 12;
 
+/// Slack every buffer keeps past its last byte so the JITs vector loads can run off the data without faulting.
+pub const VEC_OVERREAD_BYTES: usize = 16;
+
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub struct ResolvedArrays(pub [ResolvedArray; RESOLVED_ARRAY_COUNT]);
@@ -453,7 +456,7 @@ pub fn resolve_arrays_for_draw(
         };
         let max_byte_off = max_idx
             .saturating_mul(r.stride as u64)
-            .saturating_add(attr_data_size[slot] as u64);
+            .saturating_add(attr_data_size[slot].max(VEC_OVERREAD_BYTES) as u64);
         let remaining = bank_remaining_from(r.host_base) as u64;
         if max_byte_off > remaining {
             return false;

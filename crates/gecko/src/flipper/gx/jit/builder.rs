@@ -7,7 +7,6 @@ use std::mem::offset_of;
 
 use super::attr::{self, AttrCtx};
 use super::{ResolvedArray, VtxKey};
-use crate::flipper::gx::regs::{AttributeType, NrmCount};
 use crate::host::DrawVertex;
 
 pub(crate) const MEMFLAGS: ir::MemFlagsData = ir::MemFlagsData::new().with_notrap();
@@ -20,7 +19,7 @@ pub fn build_parser(
     pointer_ty: ir::Type,
     key: VtxKey,
 ) -> bool {
-    if !is_supported(key) {
+    if !self::is_supported() {
         return false;
     }
 
@@ -110,22 +109,8 @@ pub fn build_parser(
     true
 }
 
-fn is_supported(key: VtxKey) -> bool {
-    if std::env::var("GECKO_VTX_JIT_OFF").is_ok() {
-        return false;
-    }
-
-    let vcd_lo = key.vcd_lo();
-    let vat_a = key.vat_a();
-
-    if matches!(vcd_lo.normal(), AttributeType::Index8 | AttributeType::Index16)
-        && vat_a.nrm_index3()
-        && vat_a.nrm_cnt() == NrmCount::Nbt
-    {
-        return false;
-    }
-
-    true
+fn is_supported() -> bool {
+    std::env::var("GECKO_VTX_JIT_OFF").is_err()
 }
 
 pub mod offset {

@@ -10,6 +10,9 @@ impl GraphicsProcessor {
     pub fn drain_fifo<const SYSTEM: SystemId>(&mut self, mmio: &mut Mmio<SYSTEM>, renderer: &mut dyn RenderSink) {
         let mut fifo = std::mem::take(&mut self.fifo);
 
+        #[cfg(feature = "jit")]
+        fifo.reserve(crate::flipper::gx::jit::VEC_OVERREAD_BYTES);
+
         let pos = self::drain_buf::<SYSTEM>(self, mmio, renderer, &fifo);
         if pos > 0 {
             fifo.drain(..pos);
@@ -123,6 +126,10 @@ fn drain_buf<const SYSTEM: SystemId>(
                         let mut buf = std::mem::take(&mut gp.dl_scratch);
                         buf.clear();
                         buf.extend_from_slice(slice);
+
+                        #[cfg(feature = "jit")]
+                        buf.reserve(crate::flipper::gx::jit::VEC_OVERREAD_BYTES);
+
                         buf
                     }
                     None => {

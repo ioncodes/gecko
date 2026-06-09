@@ -5,7 +5,7 @@ use cranelift_frontend::FunctionBuilder;
 use super::VtxKey;
 use super::builder::{MEMFLAGS, MEMFLAGS_RO, array_offset, offset, xf_byte_off};
 use crate::flipper::gx::constants::*;
-use crate::flipper::gx::regs::{AttributeType, ColorCount, ColorFormat, ComponentFormat, PosCount, TexCount};
+use crate::flipper::gx::regs::{AttributeType, ColorCount, ColorFormat, ComponentFormat, NrmCount, PosCount, TexCount};
 
 pub struct AttrCtx<'a, 'f> {
     pub bd: &'a mut FunctionBuilder<'f>,
@@ -205,7 +205,13 @@ fn read_tex_mtx_indices(ctx: &mut AttrCtx, vcd_lo: crate::flipper::gx::regs::Vcd
     })
 }
 
-fn attr_ptr_and_advance(ctx: &mut AttrCtx, attr: AttributeType, array_idx: usize, direct_size: usize) -> ir::Value {
+fn attr_ptr_and_advance(
+    ctx: &mut AttrCtx,
+    attr: AttributeType,
+    array_idx: usize,
+    direct_size: usize,
+    extra_index_slots: i64,
+) -> ir::Value {
     match attr {
         AttributeType::Direct => {
             let p = ctx.data_ptr;
@@ -215,14 +221,14 @@ fn attr_ptr_and_advance(ctx: &mut AttrCtx, attr: AttributeType, array_idx: usize
         AttributeType::Index8 => {
             let raw = ctx.bd.ins().load(ir::types::I8, MEMFLAGS_RO, ctx.data_ptr, 0);
             let idx = ctx.bd.ins().uextend(ir::types::I32, raw);
-            ctx.data_ptr = ctx.bd.ins().iadd_imm(ctx.data_ptr, 1);
+            ctx.data_ptr = ctx.bd.ins().iadd_imm(ctx.data_ptr, 1 + extra_index_slots);
             indexed_addr(ctx, array_idx, idx)
         }
         AttributeType::Index16 => {
             let raw = ctx.bd.ins().load(ir::types::I16, MEMFLAGS_RO, ctx.data_ptr, 0);
             let raw = ctx.bd.ins().bswap(raw);
             let idx = ctx.bd.ins().uextend(ir::types::I32, raw);
-            ctx.data_ptr = ctx.bd.ins().iadd_imm(ctx.data_ptr, 2);
+            ctx.data_ptr = ctx.bd.ins().iadd_imm(ctx.data_ptr, 2 * (1 + extra_index_slots));
             indexed_addr(ctx, array_idx, idx)
         }
         AttributeType::None => ctx.data_ptr,
@@ -299,29 +305,123 @@ fn decode_component_at(
     }
 }
 
+const LITTLE: ir::MemFlagsData = ir::MemFlagsData::new().with_endianness(ir::Endianness::Little);
+
+const ZERO_LANE: u8 = 0xFF;
+
+const SWZ_S16_VEC2: [u8; 16] = [
+    ZERO_LANE, ZERO_LANE, 1, 0, ZERO_LANE, ZERO_LANE, 3, 2, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE,
+    ZERO_LANE, ZERO_LANE, ZERO_LANE,
+];
+const SWZ_S16_VEC3: [u8; 16] = [
+    ZERO_LANE, ZERO_LANE, 1, 0, ZERO_LANE, ZERO_LANE, 3, 2, ZERO_LANE, ZERO_LANE, 5, 4, ZERO_LANE, ZERO_LANE,
+    ZERO_LANE, ZERO_LANE,
+];
+const SWZ_U16_VEC2: [u8; 16] = [
+    1, 0, ZERO_LANE, ZERO_LANE, 3, 2, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE,
+    ZERO_LANE, ZERO_LANE, ZERO_LANE,
+];
+const SWZ_U16_VEC3: [u8; 16] = [
+    1, 0, ZERO_LANE, ZERO_LANE, 3, 2, ZERO_LANE, ZERO_LANE, 5, 4, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE,
+    ZERO_LANE, ZERO_LANE,
+];
+const SWZ_S8_VEC2: [u8; 16] = [
+    ZERO_LANE, ZERO_LANE, ZERO_LANE, 0, ZERO_LANE, ZERO_LANE, ZERO_LANE, 1, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE,
+    ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE,
+];
+const SWZ_S8_VEC3: [u8; 16] = [
+    ZERO_LANE, ZERO_LANE, ZERO_LANE, 0, ZERO_LANE, ZERO_LANE, ZERO_LANE, 1, ZERO_LANE, ZERO_LANE, ZERO_LANE, 2,
+    ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE,
+];
+const SWZ_U8_VEC2: [u8; 16] = [
+    0, ZERO_LANE, ZERO_LANE, ZERO_LANE, 1, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE,
+    ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE,
+];
+const SWZ_U8_VEC3: [u8; 16] = [
+    0, ZERO_LANE, ZERO_LANE, ZERO_LANE, 1, ZERO_LANE, ZERO_LANE, ZERO_LANE, 2, ZERO_LANE, ZERO_LANE, ZERO_LANE,
+    ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE,
+];
+const SWZ_F32_VEC2: [u8; 16] = [
+    3, 2, 1, 0, 7, 6, 5, 4, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE,
+];
+const SWZ_F32_VEC3: [u8; 16] = [
+    3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, ZERO_LANE, ZERO_LANE, ZERO_LANE, ZERO_LANE,
+];
+
+fn swizzle_const(ctx: &mut AttrCtx, mask: &[u8; 16]) -> ir::Value {
+    let handle = ctx.bd.func.dfg.constants.insert(ir::ConstantData::from(&mask[..]));
+    ctx.bd.ins().vconst(ir::types::I8X16, handle)
+}
+
+fn extract3(ctx: &mut AttrCtx, v: ir::Value) -> [ir::Value; 3] {
+    let x = ctx.bd.ins().extractlane(v, 0);
+    let y = ctx.bd.ins().extractlane(v, 1);
+    let z = ctx.bd.ins().extractlane(v, 2);
+
+    [x, y, z]
+}
+
+fn decode_vec_simd(ctx: &mut AttrCtx, ptr: ir::Value, fmt: ComponentFormat, triplet: bool, recip: f32) -> ir::Value {
+    if matches!(fmt, ComponentFormat::F32) {
+        // swappedy swap swap swap
+        let raw = ctx.bd.ins().load(ir::types::I32X4, MEMFLAGS_RO, ptr, 0);
+        let bytes = ctx.bd.ins().bitcast(ir::types::I8X16, LITTLE, raw);
+
+        let mask = if triplet { &SWZ_F32_VEC3 } else { &SWZ_F32_VEC2 };
+        let mask = self::swizzle_const(ctx, mask);
+        let shuffled = ctx.bd.ins().swizzle(bytes, mask);
+
+        return ctx.bd.ins().bitcast(ir::types::F32X4, LITTLE, shuffled);
+    }
+
+    let signed = matches!(fmt, ComponentFormat::S8 | ComponentFormat::S16);
+    let wide16 = matches!(fmt, ComponentFormat::U16 | ComponentFormat::S16);
+
+    let mask = match (wide16, signed, triplet) {
+        (true, true, true) => &SWZ_S16_VEC3,
+        (true, true, false) => &SWZ_S16_VEC2,
+        (true, false, true) => &SWZ_U16_VEC3,
+        (true, false, false) => &SWZ_U16_VEC2,
+        (false, true, true) => &SWZ_S8_VEC3,
+        (false, true, false) => &SWZ_S8_VEC2,
+        (false, false, true) => &SWZ_U8_VEC3,
+        (false, false, false) => &SWZ_U8_VEC2,
+    };
+
+    let bytes = ctx.bd.ins().load(ir::types::I8X16, MEMFLAGS_RO, ptr, 0);
+    let mask = self::swizzle_const(ctx, mask);
+    let shuffled = ctx.bd.ins().swizzle(bytes, mask);
+    let lanes = ctx.bd.ins().bitcast(ir::types::I32X4, LITTLE, shuffled);
+
+    let floats = if signed {
+        let bits = if wide16 { 16 } else { 8 };
+        let ext = ctx.bd.ins().sshr_imm(lanes, 32 - bits);
+        ctx.bd.ins().fcvt_from_sint(ir::types::F32X4, ext)
+    } else {
+        ctx.bd.ins().fcvt_from_uint(ir::types::F32X4, lanes)
+    };
+
+    let scale = ctx.bd.ins().f32const(recip);
+    let scale = ctx.bd.ins().splat(ir::types::F32X4, scale);
+    ctx.bd.ins().fmul(floats, scale)
+}
+
 fn decode_position(ctx: &mut AttrCtx, attr: AttributeType, vat_a: crate::flipper::gx::regs::VatA) -> [ir::Value; 3] {
     if matches!(attr, AttributeType::None) {
         let z = ctx.bd.ins().f32const(0.0);
         return [z, z, z];
     }
 
-    let count = vat_a.pos_cnt().components();
+    let triplet = matches!(vat_a.pos_cnt(), PosCount::Xyz);
     let fmt = vat_a.pos_fmt();
     let direct = vat_a.pos_data_size();
     let recip = 1.0f32 / ((1u32 << vat_a.pos_shift()) as f32);
-    let ptr = attr_ptr_and_advance(ctx, attr, ARRAY_POS, direct);
-    let comp_size = fmt.size() as i32;
-    let mut out = [ctx.bd.ins().f32const(0.0); 3];
 
-    for i in 0..count {
-        out[i] = decode_component_at(ctx, ptr, (i as i32) * comp_size, fmt, recip);
-    }
+    let ptr = attr_ptr_and_advance(ctx, attr, ARRAY_POS, direct, 0);
 
-    if matches!(vat_a.pos_cnt(), PosCount::Xy) {
-        out[2] = ctx.bd.ins().f32const(0.0);
-    }
+    let vector = self::decode_vec_simd(ctx, ptr, fmt, triplet, recip);
 
-    out
+    self::extract3(ctx, vector)
 }
 
 fn decode_normal(ctx: &mut AttrCtx, attr: AttributeType, vat_a: crate::flipper::gx::regs::VatA) -> [ir::Value; 3] {
@@ -330,7 +430,6 @@ fn decode_normal(ctx: &mut AttrCtx, attr: AttributeType, vat_a: crate::flipper::
         let one = ctx.bd.ins().f32const(1.0);
         return [z, z, one];
     }
-    let cnt = vat_a.nrm_cnt().components().min(3);
     let fmt = vat_a.nrm_fmt();
 
     let direct = vat_a.nrm_data_size();
@@ -340,15 +439,16 @@ fn decode_normal(ctx: &mut AttrCtx, attr: AttributeType, vat_a: crate::flipper::
         ComponentFormat::F32 => 1.0f32,
     };
 
-    let ptr = attr_ptr_and_advance(ctx, attr, ARRAY_NRM, direct);
-    let comp_size = fmt.size() as i32;
-    let mut out = [ctx.bd.ins().f32const(0.0); 3];
+    let extra_index_slots = if vat_a.nrm_index3() && matches!(vat_a.nrm_cnt(), NrmCount::Nbt) {
+        2
+    } else {
+        0
+    };
+    let ptr = attr_ptr_and_advance(ctx, attr, ARRAY_NRM, direct, extra_index_slots);
 
-    for i in 0..cnt {
-        out[i] = decode_component_at(ctx, ptr, (i as i32) * comp_size, fmt, recip);
-    }
+    let vector = self::decode_vec_simd(ctx, ptr, fmt, true, recip);
 
-    out
+    self::extract3(ctx, vector)
 }
 
 fn decode_color(
@@ -364,7 +464,7 @@ fn decode_color(
     }
 
     let direct = fmt.data_size(cnt);
-    let ptr = attr_ptr_and_advance(ctx, attr, array_idx, direct);
+    let ptr = attr_ptr_and_advance(ctx, attr, array_idx, direct, 0);
     decode_color_bytes(ctx, ptr, fmt, cnt)
 }
 
@@ -464,16 +564,21 @@ fn decode_texcoord(
     array_idx: usize,
 ) -> [ir::Value; 2] {
     let count = cnt.components();
-    let comp_size = fmt.size() as i32;
     let direct = count * fmt.size();
     let recip = 1.0f32 / ((1u32 << shift) as f32);
-    let ptr = attr_ptr_and_advance(ctx, attr, array_idx, direct);
-    let zero = ctx.bd.ins().f32const(0.0);
-    let mut out = [zero, zero];
-    for i in 0..count {
-        out[i] = decode_component_at(ctx, ptr, (i as i32) * comp_size, fmt, recip);
+    let ptr = attr_ptr_and_advance(ctx, attr, array_idx, direct, 0);
+
+    if count == 2 {
+        let vector = self::decode_vec_simd(ctx, ptr, fmt, false, recip);
+        let s = ctx.bd.ins().extractlane(vector, 0);
+        let t = ctx.bd.ins().extractlane(vector, 1);
+        return [s, t];
     }
-    out
+
+    let s = decode_component_at(ctx, ptr, 0, fmt, recip);
+    let t = ctx.bd.ins().f32const(0.0);
+
+    [s, t]
 }
 
 fn xf_transform_3x4(ctx: &mut AttrCtx, pos_mtx_idx: ir::Value, pos: &[ir::Value; 3]) -> [ir::Value; 3] {
