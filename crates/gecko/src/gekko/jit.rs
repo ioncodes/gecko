@@ -1,6 +1,5 @@
 pub mod abi;
 pub mod block;
-pub mod dense_arena;
 pub mod handlers;
 pub mod idle;
 pub mod insn;
@@ -314,7 +313,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             jit_builder.symbol(name, addr);
         }
 
-        let arena = dense_arena::DenseArena::new(512 << 20).expect("reserve JIT code arena");
+        let arena = crate::jit::arena::DenseArena::new(512 << 20).expect("reserve JIT code arena");
         jit_builder.memory_provider(Box::new(arena));
 
         let mut module = JITModule::new(jit_builder);
@@ -550,15 +549,15 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         }
     }
 
-    pub fn cached_blocks(&self) -> Vec<crate::jit_cache::CachedBlockPpc> {
+    pub fn cached_blocks(&self) -> Vec<crate::jit::cache::CachedBlockPpc> {
         self.cache
             .keys()
             .filter_map(|&pc| {
                 let spec = self.block_specs.get(&pc)?;
-                Some(crate::jit_cache::CachedBlockPpc {
+                Some(crate::jit::cache::CachedBlockPpc {
                     pc,
                     instr_count: spec.instrs.len() as u16,
-                    hash: crate::jit_cache::hash_words(spec.instrs.iter().copied()),
+                    hash: crate::jit::cache::hash_words(spec.instrs.iter().copied()),
                 })
             })
             .collect()
@@ -567,7 +566,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
     pub fn precompile_blocks(
         &mut self,
         sys: &mut System<SYSTEM>,
-        blocks: &[crate::jit_cache::CachedBlockPpc],
+        blocks: &[crate::jit::cache::CachedBlockPpc],
     ) -> (usize, usize) {
         let mut compiled = 0usize;
         let mut skipped = 0usize;
@@ -589,7 +588,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
                 buf.push(sys.mmio.fetch_instruction(instr_pc));
             }
 
-            let actual = crate::jit_cache::hash_words(buf.into_iter());
+            let actual = crate::jit::cache::hash_words(buf.into_iter());
             if actual != b.hash {
                 skipped += 1;
                 continue;

@@ -246,6 +246,10 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
     #[cfg(feature = "jit")]
     pub fn load_jit_cache(&mut self, game_id: &str) -> (usize, usize, usize, usize, usize, usize) {
+        if self.execution_mode != ExecutionMode::Jit {
+            return (0, 0, 0, 0, 0, 0);
+        }
+
         let mut ppc_compiled = 0;
         let mut ppc_skipped = 0;
         let mut dsp_compiled = 0;
@@ -253,8 +257,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         let mut vtx_compiled = 0;
         let mut vtx_skipped = 0;
 
-        let ppc_path = crate::jit_cache::ppc_cache_path(game_id);
-        if let Ok(blocks) = crate::jit_cache::load_ppc_blocks(&ppc_path) {
+        let ppc_path = crate::jit::cache::ppc_cache_path(game_id);
+        if let Ok(blocks) = crate::jit::cache::load_ppc_blocks(&ppc_path) {
             tracing::info!(count = blocks.len(), "loaded PPC JIT block cache");
 
             if self.jit.is_none() {
@@ -269,8 +273,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             self.jit = Some(jit);
         }
 
-        let dsp_path = crate::jit_cache::dsp_cache_path(game_id);
-        if let Ok(blocks) = crate::jit_cache::load_dsp_blocks(&dsp_path) {
+        let dsp_path = crate::jit::cache::dsp_cache_path(game_id);
+        if let Ok(blocks) = crate::jit::cache::load_dsp_blocks(&dsp_path) {
             tracing::info!(count = blocks.len(), "loaded DSP JIT block cache");
 
             if self.dsp.jit.is_none() {
@@ -289,8 +293,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             dsp_skipped = s;
         }
 
-        let vtx_path = crate::jit_cache::vtx_cache_path(game_id);
-        if let Ok(keys) = crate::jit_cache::load_vtx_keys(&vtx_path) {
+        let vtx_path = crate::jit::cache::vtx_cache_path(game_id);
+        if let Ok(keys) = crate::jit::cache::load_vtx_keys(&vtx_path) {
             tracing::info!(count = keys.len(), "loaded vertex JIT key cache");
             let (c, s) = self.gx.jit_vtx.precompile_keys(&keys);
             vtx_compiled = c;
@@ -310,9 +314,9 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[cfg(feature = "jit")]
     pub fn save_jit_cache(&self, game_id: &str) -> std::io::Result<(usize, usize, usize)> {
         let cached_system = if SYSTEM == WII {
-            crate::jit_cache::CachedSystem::Wii
+            crate::jit::cache::CachedSystem::Wii
         } else {
-            crate::jit_cache::CachedSystem::Gc
+            crate::jit::cache::CachedSystem::Gc
         };
 
         let mut ppc_count = 0;
@@ -321,18 +325,18 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         if let Some(jit) = self.jit.as_ref() {
             let blocks = jit.cached_blocks();
             ppc_count = blocks.len();
-            crate::jit_cache::save_ppc_blocks(&crate::jit_cache::ppc_cache_path(game_id), cached_system, &blocks)?;
+            crate::jit::cache::save_ppc_blocks(&crate::jit::cache::ppc_cache_path(game_id), cached_system, &blocks)?;
         }
 
         if let Some(jit) = self.dsp.jit.as_ref() {
             let blocks = jit.cached_blocks();
             dsp_count = blocks.len();
-            crate::jit_cache::save_dsp_blocks(&crate::jit_cache::dsp_cache_path(game_id), cached_system, &blocks)?;
+            crate::jit::cache::save_dsp_blocks(&crate::jit::cache::dsp_cache_path(game_id), cached_system, &blocks)?;
         }
 
         let keys = self.gx.jit_vtx.cached_keys();
         let vtx_count = keys.len();
-        crate::jit_cache::save_vtx_keys(&crate::jit_cache::vtx_cache_path(game_id), cached_system, &keys)?;
+        crate::jit::cache::save_vtx_keys(&crate::jit::cache::vtx_cache_path(game_id), cached_system, &keys)?;
 
         Ok((ppc_count, dsp_count, vtx_count))
     }

@@ -190,6 +190,9 @@ impl JitVertexEngine {
             runtime::gecko_gx_jit_apply_texgens as *const u8,
         );
 
+        let arena = crate::jit::arena::DenseArena::new(64 << 20).expect("reserve VTX JIT code arena");
+        jit_builder.memory_provider(Box::new(arena));
+
         let module = JITModule::new(jit_builder);
         let ptr = module.target_config().pointer_type();
         let host_cc = module.target_config().default_call_conv;
@@ -209,10 +212,10 @@ impl JitVertexEngine {
         }
     }
 
-    pub fn cached_keys(&self) -> Vec<crate::jit_cache::CachedVtxKey> {
+    pub fn cached_keys(&self) -> Vec<crate::jit::cache::CachedVtxKey> {
         self.cache
             .keys()
-            .map(|k| crate::jit_cache::CachedVtxKey {
+            .map(|k| crate::jit::cache::CachedVtxKey {
                 vcd_lo: k.vcd_lo,
                 vcd_hi: k.vcd_hi,
                 vat_a: k.vat_a,
@@ -222,7 +225,7 @@ impl JitVertexEngine {
             .collect()
     }
 
-    pub fn precompile_keys(&mut self, keys: &[crate::jit_cache::CachedVtxKey]) -> (usize, usize) {
+    pub fn precompile_keys(&mut self, keys: &[crate::jit::cache::CachedVtxKey]) -> (usize, usize) {
         let mut compiled = 0;
         let mut skipped = 0;
         for k in keys {

@@ -36,6 +36,7 @@ const CHAIN_DEPTH_HISTOGRAM_LEN: usize = super::DSP_JIT_CHAIN_BUDGET as usize + 
 
 pub struct JitEngine<const SYSTEM: SystemId> {
     module: JITModule,
+    arena: crate::jit::arena::DenseArena,
     ctx: Context,
     builder_ctx: FunctionBuilderContext,
     cache: FxHashMap<u16, BlockEntry>,
@@ -108,6 +109,9 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         jit_builder.symbol(syms.read_reg_full.0, syms.read_reg_full.1);
         jit_builder.symbol(syms.write_reg_full.0, syms.write_reg_full.1);
 
+        let arena = crate::jit::arena::DenseArena::new(256 << 20).expect("reserve DSP JIT code arena");
+        jit_builder.memory_provider(Box::new(arena.clone()));
+
         let mut module = JITModule::new(jit_builder);
 
         let pointer_type = module.target_config().pointer_type();
@@ -141,6 +145,8 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
 
         let trampoline_fn = build_trampoline(&mut module, host_cc, pointer_type, &block_sig);
 
+        arena.set_floor();
+
         let table = vec![
             DspBlockLookupSlot {
                 pc: 0,
@@ -154,6 +160,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
 
         Self {
             module,
+            arena,
             ctx: Context::new(),
             builder_ctx: FunctionBuilderContext::new(),
             cache: FxHashMap::default(),
@@ -288,15 +295,15 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         entry
     }
 
-    pub fn cached_blocks(&self) -> Vec<crate::jit_cache::CachedBlockDsp> {
+    pub fn cached_blocks(&self) -> Vec<crate::jit::cache::CachedBlockDsp> {
         self.cache
             .keys()
             .filter_map(|&pc| {
                 let spec = self.block_specs.get(&pc)?;
-                Some(crate::jit_cache::CachedBlockDsp {
+                Some(crate::jit::cache::CachedBlockDsp {
                     pc,
                     instr_count: spec.instrs.len() as u16,
-                    hash: crate::jit_cache::hash_words(spec.instrs.iter().map(|e| e.raw)),
+                    hash: crate::jit::cache::hash_words(spec.instrs.iter().map(|e| e.raw)),
                 })
             })
             .collect()
@@ -306,7 +313,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         &mut self,
         iram: &[u8],
         irom: &[u8],
-        blocks: &[crate::jit_cache::CachedBlockDsp],
+        blocks: &[crate::jit::cache::CachedBlockDsp],
     ) -> (usize, usize) {
         let mut compiled = 0usize;
         let mut skipped = 0usize;
@@ -327,7 +334,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
                 continue;
             }
 
-            let actual = crate::jit_cache::hash_words(spec.instrs.iter().map(|e| e.raw));
+            let actual = crate::jit::cache::hash_words(spec.instrs.iter().map(|e| e.raw));
             if actual != b.hash {
                 skipped += 1;
                 continue;
@@ -429,6 +436,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         self.loop_end_table_built = false;
 
         self.clear_lookup_table();
+        self.arena.reset();
     }
 
     #[cfg_attr(feature = "hotpath", hotpath::measure(label = "dsp_jit_run_block"))]
