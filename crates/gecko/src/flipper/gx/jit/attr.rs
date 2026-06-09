@@ -62,10 +62,10 @@ pub fn emit_vertex(ctx: &mut AttrCtx) {
     ctx.bd.ins().stack_store(nrm_xyz[2], raw_nrm_slot, 8);
 
     let color0 = decode_color(ctx, vcd_lo.color0(), vat_a.clr0_fmt(), vat_a.clr0_cnt(), 2);
-    store_vec4(ctx.bd, ctx.out_ptr, offset::COLOR0, &color0);
+    ctx.bd.ins().store(MEMFLAGS, color0, ctx.out_ptr, offset::COLOR0);
 
     let color1 = decode_color(ctx, vcd_lo.color1(), vat_a.clr1_fmt(), vat_a.clr1_cnt(), 3);
-    store_vec4(ctx.bd, ctx.out_ptr, offset::COLOR1, &color1);
+    ctx.bd.ins().store(MEMFLAGS, color1, ctx.out_ptr, offset::COLOR1);
 
     let mut present_mask: u32 = 0;
     let tex_attrs = [
@@ -364,14 +364,10 @@ fn extract3(ctx: &mut AttrCtx, v: ir::Value) -> [ir::Value; 3] {
 fn decode_vec_simd(ctx: &mut AttrCtx, ptr: ir::Value, fmt: ComponentFormat, triplet: bool, recip: f32) -> ir::Value {
     if matches!(fmt, ComponentFormat::F32) {
         // swappedy swap swap swap
-        let raw = ctx.bd.ins().load(ir::types::I32X4, MEMFLAGS_RO, ptr, 0);
-        let bytes = ctx.bd.ins().bitcast(ir::types::I8X16, LITTLE, raw);
-
         let mask = if triplet { &SWZ_F32_VEC3 } else { &SWZ_F32_VEC2 };
-        let mask = self::swizzle_const(ctx, mask);
-        let shuffled = ctx.bd.ins().swizzle(bytes, mask);
+        let lanes = self::shuffle_to_i32x4(ctx, ptr, mask);
 
-        return ctx.bd.ins().bitcast(ir::types::F32X4, LITTLE, shuffled);
+        return ctx.bd.ins().bitcast(ir::types::F32X4, LITTLE, lanes);
     }
 
     let signed = matches!(fmt, ComponentFormat::S8 | ComponentFormat::S16);
@@ -388,10 +384,7 @@ fn decode_vec_simd(ctx: &mut AttrCtx, ptr: ir::Value, fmt: ComponentFormat, trip
         (false, false, false) => &SWZ_U8_VEC2,
     };
 
-    let bytes = ctx.bd.ins().load(ir::types::I8X16, MEMFLAGS_RO, ptr, 0);
-    let mask = self::swizzle_const(ctx, mask);
-    let shuffled = ctx.bd.ins().swizzle(bytes, mask);
-    let lanes = ctx.bd.ins().bitcast(ir::types::I32X4, LITTLE, shuffled);
+    let lanes = self::shuffle_to_i32x4(ctx, ptr, mask);
 
     let floats = if signed {
         let bits = if wide16 { 16 } else { 8 };
@@ -401,8 +394,7 @@ fn decode_vec_simd(ctx: &mut AttrCtx, ptr: ir::Value, fmt: ComponentFormat, trip
         ctx.bd.ins().fcvt_from_uint(ir::types::F32X4, lanes)
     };
 
-    let scale = ctx.bd.ins().f32const(recip);
-    let scale = ctx.bd.ins().splat(ir::types::F32X4, scale);
+    let scale = self::splat_f32x4(ctx, recip);
     ctx.bd.ins().fmul(floats, scale)
 }
 
@@ -451,108 +443,111 @@ fn decode_normal(ctx: &mut AttrCtx, attr: AttributeType, vat_a: crate::flipper::
     self::extract3(ctx, vector)
 }
 
+const SWZ_COLOR_BYTES: [u8; 16] = [
+    0, ZERO_LANE, ZERO_LANE, ZERO_LANE, 1, ZERO_LANE, ZERO_LANE, ZERO_LANE, 2, ZERO_LANE, ZERO_LANE, ZERO_LANE, 3,
+    ZERO_LANE, ZERO_LANE, ZERO_LANE,
+];
+const SWZ_COLOR_U16: [u8; 16] = [
+    1, 0, ZERO_LANE, ZERO_LANE, 1, 0, ZERO_LANE, ZERO_LANE, 1, 0, ZERO_LANE, ZERO_LANE, 1, 0, ZERO_LANE, ZERO_LANE,
+];
+const SWZ_COLOR_U24: [u8; 16] = [
+    2, 1, 0, ZERO_LANE, 2, 1, 0, ZERO_LANE, 2, 1, 0, ZERO_LANE, 2, 1, 0, ZERO_LANE,
+];
+
+fn vconst_i32x4(ctx: &mut AttrCtx, lanes: [u32; 4]) -> ir::Value {
+    let mut bytes = [0u8; 16];
+    for (i, v) in lanes.iter().enumerate() {
+        bytes[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    let handle = ctx.bd.func.dfg.constants.insert(ir::ConstantData::from(&bytes[..]));
+    ctx.bd.ins().vconst(ir::types::I32X4, handle)
+}
+
+fn vconst_f32x4(ctx: &mut AttrCtx, lanes: [f32; 4]) -> ir::Value {
+    let mut bytes = [0u8; 16];
+    for (i, v) in lanes.iter().enumerate() {
+        bytes[i * 4..i * 4 + 4].copy_from_slice(&v.to_bits().to_le_bytes());
+    }
+    let handle = ctx.bd.func.dfg.constants.insert(ir::ConstantData::from(&bytes[..]));
+    ctx.bd.ins().vconst(ir::types::F32X4, handle)
+}
+
+fn splat_f32x4(ctx: &mut AttrCtx, v: f32) -> ir::Value {
+    let c = ctx.bd.ins().f32const(v);
+    ctx.bd.ins().splat(ir::types::F32X4, c)
+}
+
+fn shuffle_to_i32x4(ctx: &mut AttrCtx, ptr: ir::Value, mask: &[u8; 16]) -> ir::Value {
+    let bytes = ctx.bd.ins().load(ir::types::I8X16, MEMFLAGS_RO, ptr, 0);
+    let mask = self::swizzle_const(ctx, mask);
+    let shuffled = ctx.bd.ins().swizzle(bytes, mask);
+    ctx.bd.ins().bitcast(ir::types::I32X4, LITTLE, shuffled)
+}
+
+fn unpack_fields(ctx: &mut AttrCtx, lanes: ir::Value, mul: [u32; 4], shift: i64, and: [u32; 4]) -> ir::Value {
+    let mul = self::vconst_i32x4(ctx, mul);
+    let v = ctx.bd.ins().imul(lanes, mul);
+    let v = ctx.bd.ins().ushr_imm(v, shift);
+    let and = self::vconst_i32x4(ctx, and);
+    ctx.bd.ins().band(v, and)
+}
+
 fn decode_color(
     ctx: &mut AttrCtx,
     attr: AttributeType,
     fmt: ColorFormat,
     cnt: ColorCount,
     array_idx: usize,
-) -> [ir::Value; 4] {
-    let one = ctx.bd.ins().f32const(1.0);
+) -> ir::Value {
     if matches!(attr, AttributeType::None) {
-        return [one, one, one, one];
+        return self::splat_f32x4(ctx, 1.0);
     }
 
     let direct = fmt.data_size(cnt);
     let ptr = attr_ptr_and_advance(ctx, attr, array_idx, direct, 0);
-    decode_color_bytes(ctx, ptr, fmt, cnt)
+
+    self::decode_color_bytes(ctx, ptr, fmt, cnt)
 }
 
-fn decode_color_bytes(ctx: &mut AttrCtx, ptr: ir::Value, fmt: ColorFormat, cnt: ColorCount) -> [ir::Value; 4] {
-    let one = ctx.bd.ins().f32const(1.0);
+fn decode_color_bytes(ctx: &mut AttrCtx, ptr: ir::Value, fmt: ColorFormat, cnt: ColorCount) -> ir::Value {
     let has_alpha = matches!(cnt, ColorCount::Rgba);
 
-    match fmt {
+    let (lanes, div, force_alpha_one) = match fmt {
         ColorFormat::Rgb565 => {
-            let raw = ctx.bd.ins().load(ir::types::I16, MEMFLAGS_RO, ptr, 0);
-            let raw = ctx.bd.ins().bswap(raw);
-            let raw = ctx.bd.ins().uextend(ir::types::I32, raw);
-            let r = unpack_norm(ctx, raw, 11, 0x1F, 31.0);
-            let g = unpack_norm(ctx, raw, 5, 0x3F, 63.0);
-            let b = unpack_norm(ctx, raw, 0, 0x1F, 31.0);
-            [r, g, b, one]
-        }
-        ColorFormat::Rgb8 | ColorFormat::Rgbx8 => {
-            let r = byte_norm(ctx, ptr, 0, 255.0);
-            let g = byte_norm(ctx, ptr, 1, 255.0);
-            let b = byte_norm(ctx, ptr, 2, 255.0);
-            [r, g, b, one]
+            let l = self::shuffle_to_i32x4(ctx, ptr, &SWZ_COLOR_U16);
+            let l = self::unpack_fields(ctx, l, [1, 64, 2048, 0], 11, [0x1F, 0x3F, 0x1F, 0]);
+            let d = self::vconst_f32x4(ctx, [31.0, 63.0, 31.0, 1.0]);
+            (l, d, true)
         }
         ColorFormat::Rgba4 => {
-            let raw = ctx.bd.ins().load(ir::types::I16, MEMFLAGS_RO, ptr, 0);
-            let raw = ctx.bd.ins().bswap(raw);
-            let raw = ctx.bd.ins().uextend(ir::types::I32, raw);
-            let r = unpack_norm(ctx, raw, 12, 0xF, 15.0);
-            let g = unpack_norm(ctx, raw, 8, 0xF, 15.0);
-            let b = unpack_norm(ctx, raw, 4, 0xF, 15.0);
-            let a = if has_alpha {
-                unpack_norm(ctx, raw, 0, 0xF, 15.0)
-            } else {
-                one
-            };
-            [r, g, b, a]
+            let l = self::shuffle_to_i32x4(ctx, ptr, &SWZ_COLOR_U16);
+            let l = self::unpack_fields(ctx, l, [1, 16, 256, 4096], 12, [0xF, 0xF, 0xF, 0xF]);
+            (l, self::splat_f32x4(ctx, 15.0), !has_alpha)
         }
         ColorFormat::Rgba6 => {
-            let b0 = ctx.bd.ins().load(ir::types::I8, MEMFLAGS_RO, ptr, 0);
-            let b1 = ctx.bd.ins().load(ir::types::I8, MEMFLAGS_RO, ptr, 1);
-            let b2 = ctx.bd.ins().load(ir::types::I8, MEMFLAGS_RO, ptr, 2);
-            let b0 = ctx.bd.ins().uextend(ir::types::I32, b0);
-            let b1 = ctx.bd.ins().uextend(ir::types::I32, b1);
-            let b2 = ctx.bd.ins().uextend(ir::types::I32, b2);
-            let s0 = ctx.bd.ins().ishl_imm(b0, 16);
-            let s1 = ctx.bd.ins().ishl_imm(b1, 8);
-            let raw = ctx.bd.ins().bor(s0, s1);
-            let raw = ctx.bd.ins().bor(raw, b2);
-            let r = unpack_norm(ctx, raw, 18, 0x3F, 63.0);
-            let g = unpack_norm(ctx, raw, 12, 0x3F, 63.0);
-            let b = unpack_norm(ctx, raw, 6, 0x3F, 63.0);
-            let a = if has_alpha {
-                unpack_norm(ctx, raw, 0, 0x3F, 63.0)
-            } else {
-                one
-            };
-            [r, g, b, a]
+            let l = self::shuffle_to_i32x4(ctx, ptr, &SWZ_COLOR_U24);
+            let l = self::unpack_fields(ctx, l, [1, 64, 4096, 262144], 18, [0x3F, 0x3F, 0x3F, 0x3F]);
+            (l, self::splat_f32x4(ctx, 63.0), !has_alpha)
+        }
+        ColorFormat::Rgb8 | ColorFormat::Rgbx8 => {
+            let l = self::shuffle_to_i32x4(ctx, ptr, &SWZ_COLOR_BYTES);
+            (l, self::splat_f32x4(ctx, 255.0), true)
         }
         ColorFormat::Rgba8 => {
-            let r = byte_norm(ctx, ptr, 0, 255.0);
-            let g = byte_norm(ctx, ptr, 1, 255.0);
-            let b = byte_norm(ctx, ptr, 2, 255.0);
-            let a = if has_alpha { byte_norm(ctx, ptr, 3, 255.0) } else { one };
-            [r, g, b, a]
+            let l = self::shuffle_to_i32x4(ctx, ptr, &SWZ_COLOR_BYTES);
+            (l, self::splat_f32x4(ctx, 255.0), !has_alpha)
         }
-    }
-}
-
-#[inline(always)]
-fn byte_norm(ctx: &mut AttrCtx, ptr: ir::Value, off: i32, divisor: f32) -> ir::Value {
-    let raw = ctx.bd.ins().load(ir::types::I8, MEMFLAGS_RO, ptr, off);
-    let raw = ctx.bd.ins().uextend(ir::types::I32, raw);
-    let f = ctx.bd.ins().fcvt_from_uint(ir::types::F32, raw);
-    let d = ctx.bd.ins().f32const(divisor);
-    ctx.bd.ins().fdiv(f, d)
-}
-
-#[inline(always)]
-fn unpack_norm(ctx: &mut AttrCtx, raw: ir::Value, shift: i64, mask: i64, divisor: f32) -> ir::Value {
-    let shifted = if shift > 0 {
-        ctx.bd.ins().ushr_imm(raw, shift)
-    } else {
-        raw
     };
-    let masked = ctx.bd.ins().band_imm(shifted, mask);
-    let f = ctx.bd.ins().fcvt_from_uint(ir::types::F32, masked);
-    let d = ctx.bd.ins().f32const(divisor);
-    ctx.bd.ins().fdiv(f, d)
+
+    let f = ctx.bd.ins().fcvt_from_uint(ir::types::F32X4, lanes);
+    let rgba = ctx.bd.ins().fdiv(f, div);
+
+    if force_alpha_one {
+        let one = ctx.bd.ins().f32const(1.0);
+        return ctx.bd.ins().insertlane(rgba, one, 3);
+    }
+
+    rgba
 }
 
 fn decode_texcoord(
@@ -705,12 +700,4 @@ fn store_vec3(bd: &mut FunctionBuilder, base: ir::Value, off: i32, v: &[ir::Valu
     bd.ins().store(MEMFLAGS, v[0], base, off);
     bd.ins().store(MEMFLAGS, v[1], base, off + 4);
     bd.ins().store(MEMFLAGS, v[2], base, off + 8);
-}
-
-#[inline(always)]
-fn store_vec4(bd: &mut FunctionBuilder, base: ir::Value, off: i32, v: &[ir::Value; 4]) {
-    bd.ins().store(MEMFLAGS, v[0], base, off);
-    bd.ins().store(MEMFLAGS, v[1], base, off + 4);
-    bd.ins().store(MEMFLAGS, v[2], base, off + 8);
-    bd.ins().store(MEMFLAGS, v[3], base, off + 12);
 }
