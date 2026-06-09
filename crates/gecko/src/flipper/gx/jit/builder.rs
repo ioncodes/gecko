@@ -9,6 +9,7 @@ use crate::host::DrawVertex;
 
 pub(crate) const MEMFLAGS: ir::MemFlagsData = ir::MemFlagsData::new().with_notrap();
 pub(crate) const MEMFLAGS_RO: ir::MemFlagsData = ir::MemFlagsData::new().with_notrap().with_readonly();
+pub(crate) const MEMFLAGS_RO_MOVABLE: ir::MemFlagsData = MEMFLAGS_RO.with_can_move();
 
 pub fn build_parser(ctx: &mut Context, fn_ctx: &mut FunctionBuilderContext, pointer_ty: ir::Type, key: VtxKey) {
     let mut bd = FunctionBuilder::new(&mut ctx.func, fn_ctx);

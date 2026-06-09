@@ -2,7 +2,7 @@ use cranelift_codegen::ir::{self, InstBuilder};
 use cranelift_frontend::FunctionBuilder;
 
 use super::VtxKey;
-use super::builder::{MEMFLAGS, MEMFLAGS_RO, array_offset, offset, xf_byte_off};
+use super::builder::{MEMFLAGS, MEMFLAGS_RO, MEMFLAGS_RO_MOVABLE, array_offset, offset, xf_byte_off};
 use crate::flipper::gx::constants::*;
 use crate::flipper::gx::regs::{AttributeType, ColorCount, ColorFormat, ComponentFormat, NrmCount, PosCount, TexCount};
 
@@ -113,7 +113,7 @@ fn read_pos_mtx_idx(ctx: &mut AttrCtx, vcd_lo: crate::flipper::gx::regs::VcdLo) 
         // xf_mem[XF_MATRIX_INDEX_A].pos_mtx_idx() -> bits 0..=5
         let cell = ctx.bd.ins().load(
             ir::types::I32,
-            MEMFLAGS_RO,
+            MEMFLAGS_RO_MOVABLE,
             ctx.xf_mem_ptr,
             xf_byte_off(XF_MATRIX_INDEX_A),
         );
@@ -136,13 +136,13 @@ fn read_tex_mtx_indices(ctx: &mut AttrCtx, vcd_lo: crate::flipper::gx::regs::Vcd
     // starting at bit 6) and XF_MATRIX_INDEX_B (tex4..tex7).
     let cell_a = ctx.bd.ins().load(
         ir::types::I32,
-        MEMFLAGS_RO,
+        MEMFLAGS_RO_MOVABLE,
         ctx.xf_mem_ptr,
         xf_byte_off(XF_MATRIX_INDEX_A),
     );
     let cell_b = ctx.bd.ins().load(
         ir::types::I32,
-        MEMFLAGS_RO,
+        MEMFLAGS_RO_MOVABLE,
         ctx.xf_mem_ptr,
         xf_byte_off(XF_MATRIX_INDEX_B),
     );
@@ -546,7 +546,7 @@ fn decode_texcoord(
 
 fn xf_transform_3x4(ctx: &mut AttrCtx, pos_mtx_idx: ir::Value, pos: &[ir::Value; 3]) -> [ir::Value; 3] {
     let base_addr = self::pos_mtx_base_addr(ctx, pos_mtx_idx);
-    let m = self::load_matrix12(ctx, base_addr);
+    let m = self::load_matrix12(ctx, base_addr, MEMFLAGS_RO_MOVABLE);
 
     let r0 = self::dot3_affine(ctx, [m[0], m[1], m[2], m[3]], *pos);
     let r1 = self::dot3_affine(ctx, [m[4], m[5], m[6], m[7]], *pos);
@@ -562,9 +562,12 @@ fn transform_and_normalize_normal(ctx: &mut AttrCtx, pos_mtx_idx: ir::Value, nrm
     let base = ctx.bd.ins().iadd(ctx.xf_mem_ptr, cell_off);
 
     let nm = std::array::from_fn::<ir::Value, 9, _>(|i| {
-        ctx.bd
-            .ins()
-            .load(ir::types::F32, MEMFLAGS_RO, base, (XF_NRM_MTX_BASE * 4 + i * 4) as i32)
+        ctx.bd.ins().load(
+            ir::types::F32,
+            MEMFLAGS_RO_MOVABLE,
+            base,
+            (XF_NRM_MTX_BASE * 4 + i * 4) as i32,
+        )
     });
 
     let row = |i: usize, ctx: &mut AttrCtx| -> ir::Value {
@@ -611,14 +614,16 @@ fn emit_texgens(
     tex_mtx_idx: &[ir::Value; 8],
     raw_st: &[Option<[ir::Value; 2]>; 8],
 ) {
-    let num_texgens = ctx
-        .bd
-        .ins()
-        .load(ir::types::I32, MEMFLAGS_RO, ctx.xf_mem_ptr, xf_byte_off(XF_NUM_TEXGENS));
+    let num_texgens = ctx.bd.ins().load(
+        ir::types::I32,
+        MEMFLAGS_RO_MOVABLE,
+        ctx.xf_mem_ptr,
+        xf_byte_off(XF_NUM_TEXGENS),
+    );
 
     let dual_cell = ctx.bd.ins().load(
         ir::types::I32,
-        MEMFLAGS_RO,
+        MEMFLAGS_RO_MOVABLE,
         ctx.xf_mem_ptr,
         xf_byte_off(XF_DUAL_TEX_ENABLE),
     );
@@ -693,7 +698,7 @@ fn emit_texgen_active(
 
     let tg_cell = ctx.bd.ins().load(
         ir::types::I32,
-        MEMFLAGS_RO,
+        MEMFLAGS_RO_MOVABLE,
         ctx.xf_mem_ptr,
         xf_byte_off(XF_TEXGEN_BASE + tg),
     );
@@ -708,7 +713,7 @@ fn emit_texgen_active(
     let input = [src[0], src[1], input2, one];
 
     let base_addr = self::pos_mtx_base_addr(ctx, tex_mtx_idx[tg]);
-    let m = self::load_matrix12(ctx, base_addr);
+    let m = self::load_matrix12(ctx, base_addr, MEMFLAGS_RO_MOVABLE);
 
     let s = self::dot4(ctx, [m[0], m[1], m[2], m[3]], input);
     let t = self::dot4(ctx, [m[4], m[5], m[6], m[7]], input);
@@ -732,43 +737,74 @@ fn texgen_source(
     nrm: &[ir::Value; 3],
     raw_st: &[Option<[ir::Value; 2]>; 8],
 ) -> [ir::Value; 3] {
-    use ir::condcodes::IntCC;
+    use cranelift_frontend::Switch;
 
     let zero = ctx.bd.ins().f32const(0.0);
     let one = ctx.bd.ins().f32const(1.0);
 
-    let is0 = ctx.bd.ins().icmp_imm(IntCC::Equal, src_row, 0);
-    let is1 = ctx.bd.ins().icmp_imm(IntCC::Equal, src_row, 1);
-    let ge2 = ctx.bd.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, src_row, 2);
-    let le4 = ctx.bd.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, src_row, 4);
-    let is_dead = ctx.bd.ins().band(ge2, le4);
+    let merge = ctx.bd.create_block();
+    ctx.bd.append_block_param(merge, ir::types::F32);
+    ctx.bd.append_block_param(merge, ir::types::F32);
+    ctx.bd.append_block_param(merge, ir::types::F32);
 
-    let mut is_tex = [is0; 8];
+    let pos_blk = ctx.bd.create_block();
+    let nrm_blk = ctx.bd.create_block();
+    let dead_blk = ctx.bd.create_block();
+    let tex_blk: [ir::Block; 8] = std::array::from_fn(|k| {
+        if raw_st[k].is_some() {
+            ctx.bd.create_block()
+        } else {
+            dead_blk
+        }
+    });
+
+    let mut switch = Switch::new();
+    switch.set_entry(0, pos_blk);
+    switch.set_entry(1, nrm_blk);
+    switch.set_entry(2, dead_blk);
+    switch.set_entry(3, dead_blk);
+    switch.set_entry(4, dead_blk);
     for k in 0..8 {
-        is_tex[k] = ctx.bd.ins().icmp_imm(IntCC::Equal, src_row, (5 + k) as i64);
+        switch.set_entry((5 + k) as u128, tex_blk[k]);
     }
+    // src_row >= 13 aliases to tex7 (TexGenSrc::from_raw last-variant fallback).
+    switch.emit(ctx.bd, src_row, tex_blk[7]);
 
-    // one tex component: present ? (i<2 ? s/t : 1) : (i<2 ? 0 : 1)
-    let tex_comp = |i: usize, k: usize| match raw_st[k] {
-        Some(st) if i < 2 => st[i],
-        _ if i < 2 => zero,
-        _ => one,
+    let jump3 = |ctx: &mut AttrCtx, blk: ir::Block, v: [ir::Value; 3]| {
+        ctx.bd.ins().jump(
+            blk,
+            &[
+                ir::BlockArg::Value(v[0]),
+                ir::BlockArg::Value(v[1]),
+                ir::BlockArg::Value(v[2]),
+            ],
+        );
     };
 
-    let mut out = [zero; 3];
-    for i in 0..3 {
-        let mut acc = tex_comp(i, 7); // default: src_row >= 13 aliases to tex7
-        for k in 0..8 {
-            let tc = tex_comp(i, k);
-            acc = ctx.bd.ins().select(is_tex[k], tc, acc);
+    ctx.bd.switch_to_block(pos_blk);
+    ctx.bd.seal_block(pos_blk);
+    jump3(ctx, merge, *pos);
+
+    ctx.bd.switch_to_block(nrm_blk);
+    ctx.bd.seal_block(nrm_blk);
+    jump3(ctx, merge, *nrm);
+
+    ctx.bd.switch_to_block(dead_blk);
+    ctx.bd.seal_block(dead_blk);
+    jump3(ctx, merge, [zero, zero, one]);
+
+    for k in 0..8 {
+        if let Some(st) = raw_st[k] {
+            ctx.bd.switch_to_block(tex_blk[k]);
+            ctx.bd.seal_block(tex_blk[k]);
+            jump3(ctx, merge, [st[0], st[1], one]);
         }
-        let dead_c = if i < 2 { zero } else { one };
-        acc = ctx.bd.ins().select(is_dead, dead_c, acc);
-        acc = ctx.bd.ins().select(is1, nrm[i], acc);
-        acc = ctx.bd.ins().select(is0, pos[i], acc);
-        out[i] = acc;
     }
-    out
+
+    ctx.bd.switch_to_block(merge);
+    ctx.bd.seal_block(merge);
+    let p = ctx.bd.block_params(merge);
+    [p[0], p[1], p[2]]
 }
 
 // Test a single config bit: (word >> shift) & 1 != 0.
@@ -787,12 +823,8 @@ fn pos_mtx_base_addr(ctx: &mut AttrCtx, idx: ir::Value) -> ir::Value {
 }
 
 // Load the 12 f32 cells of a 3x4 matrix.
-fn load_matrix12(ctx: &mut AttrCtx, base_addr: ir::Value) -> [ir::Value; 12] {
-    std::array::from_fn(|i| {
-        ctx.bd
-            .ins()
-            .load(ir::types::F32, MEMFLAGS_RO, base_addr, (i * 4) as i32)
-    })
+fn load_matrix12(ctx: &mut AttrCtx, base_addr: ir::Value, flags: ir::MemFlagsData) -> [ir::Value; 12] {
+    std::array::from_fn(|i| ctx.bd.ins().load(ir::types::F32, flags, base_addr, (i * 4) as i32))
 }
 
 // (m0*v0 + m1*v1) + m2*v2 + m3*v3, no fma.
@@ -870,7 +902,7 @@ fn emit_dual(
     let post_bytes = ctx.bd.ins().iadd_imm(post_bytes, (XF_POST_MTX_BASE * 4) as i64);
     let post_bytes = ctx.bd.ins().uextend(ctx.pointer_ty, post_bytes);
     let post_addr = ctx.bd.ins().iadd(ctx.xf_mem_ptr, post_bytes);
-    let pm = self::load_matrix12(ctx, post_addr);
+    let pm = self::load_matrix12(ctx, post_addr, MEMFLAGS_RO);
 
     let nsv = [ns, nt, nq];
     let ps = self::dot3_affine(ctx, [pm[0], pm[1], pm[2], pm[3]], nsv);
