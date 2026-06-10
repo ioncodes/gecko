@@ -93,10 +93,13 @@ pub fn emit_vertex(ctx: &mut AttrCtx) {
         }
     }
 
-    let pos_view = xf_transform_3x4(ctx, pos_mtx_idx, &pos_xyz);
+    // The matrix is loop-invariant unless the per-vertex matrix index is streamed.
+    let mtx_invariant = !vcd_lo.pos_nrm_mtx_idx();
+
+    let pos_view = xf_transform_3x4(ctx, pos_mtx_idx, &pos_xyz, mtx_invariant);
     store_vec3(ctx.bd, ctx.out_ptr, offset::POS_VIEW, &pos_view);
 
-    let nrm_view = transform_and_normalize_normal(ctx, pos_mtx_idx, &nrm_xyz);
+    let nrm_view = transform_and_normalize_normal(ctx, pos_mtx_idx, &nrm_xyz, mtx_invariant);
     store_vec3(ctx.bd, ctx.out_ptr, offset::NORMAL, &nrm_view);
 
     self::emit_texgens(ctx, &pos_xyz, &nrm_xyz, &tex_mtx_idx, &raw_st);
@@ -544,17 +547,37 @@ fn decode_texcoord(
     [s, t]
 }
 
-fn xf_transform_3x4(ctx: &mut AttrCtx, pos_mtx_idx: ir::Value, pos: &[ir::Value; 3]) -> [ir::Value; 3] {
+fn xf_transform_3x4(
+    ctx: &mut AttrCtx,
+    pos_mtx_idx: ir::Value,
+    pos: &[ir::Value; 3],
+    invariant: bool,
+) -> [ir::Value; 3] {
     let base_addr = self::pos_mtx_base_addr(ctx, pos_mtx_idx);
     let m = self::load_matrix12(ctx, base_addr, MEMFLAGS_RO_MOVABLE);
 
-    let r0 = self::dot3_affine(ctx, [m[0], m[1], m[2], m[3]], *pos);
-    let r1 = self::dot3_affine(ctx, [m[4], m[5], m[6], m[7]], *pos);
-    let r2 = self::dot3_affine(ctx, [m[8], m[9], m[10], m[11]], *pos);
-    [r0, r1, r2]
+    if !invariant {
+        // Streamed per-vertex matrix: the columns can't hoist(?), so scalar rows
+        // are cheaper than building them every vertex.
+        let r0 = self::dot3_affine(ctx, [m[0], m[1], m[2], m[3]], *pos);
+        let r1 = self::dot3_affine(ctx, [m[4], m[5], m[6], m[7]], *pos);
+        let r2 = self::dot3_affine(ctx, [m[8], m[9], m[10], m[11]], *pos);
+        return [r0, r1, r2];
+    }
+
+    let col0 = self::make_col(ctx, [m[0], m[4], m[8]]);
+    let col1 = self::make_col(ctx, [m[1], m[5], m[9]]);
+    let col2 = self::make_col(ctx, [m[2], m[6], m[10]]);
+    let col3 = self::make_col(ctx, [m[3], m[7], m[11]]);
+    self::mat_vec_simd(ctx, [col0, col1, col2], Some(col3), *pos)
 }
 
-fn transform_and_normalize_normal(ctx: &mut AttrCtx, pos_mtx_idx: ir::Value, nrm: &[ir::Value; 3]) -> [ir::Value; 3] {
+fn transform_and_normalize_normal(
+    ctx: &mut AttrCtx,
+    pos_mtx_idx: ir::Value,
+    nrm: &[ir::Value; 3],
+    invariant: bool,
+) -> [ir::Value; 3] {
     // nrm_mtx_base = XF_NRM_MTX_BASE + (pos_mtx_idx & 31) * 3 cells
     let masked = ctx.bd.ins().band_imm(pos_mtx_idx, 31);
     let cell_off = ctx.bd.ins().imul_imm(masked, 3 * 4);
@@ -570,20 +593,17 @@ fn transform_and_normalize_normal(ctx: &mut AttrCtx, pos_mtx_idx: ir::Value, nrm
         )
     });
 
-    let row = |i: usize, ctx: &mut AttrCtx| -> ir::Value {
-        let m0 = nm[i * 3 + 0];
-        let m1 = nm[i * 3 + 1];
-        let m2 = nm[i * 3 + 2];
-        let p0 = ctx.bd.ins().fmul(m0, nrm[0]);
-        let p1 = ctx.bd.ins().fmul(m1, nrm[1]);
-        let p2 = ctx.bd.ins().fmul(m2, nrm[2]);
-        let s = ctx.bd.ins().fadd(p0, p1);
-        ctx.bd.ins().fadd(s, p2)
+    let [nx, ny, nz] = if invariant {
+        let col0 = self::make_col(ctx, [nm[0], nm[3], nm[6]]);
+        let col1 = self::make_col(ctx, [nm[1], nm[4], nm[7]]);
+        let col2 = self::make_col(ctx, [nm[2], nm[5], nm[8]]);
+        self::mat_vec_simd(ctx, [col0, col1, col2], None, *nrm)
+    } else {
+        let r0 = self::dot3_linear(ctx, [nm[0], nm[1], nm[2]], *nrm);
+        let r1 = self::dot3_linear(ctx, [nm[3], nm[4], nm[5]], *nrm);
+        let r2 = self::dot3_linear(ctx, [nm[6], nm[7], nm[8]], *nrm);
+        [r0, r1, r2]
     };
-
-    let nx = row(0, ctx);
-    let ny = row(1, ctx);
-    let nz = row(2, ctx);
 
     // length = sqrt(nx*nx + ny*ny + nz*nz)
     let nx2 = ctx.bd.ins().fmul(nx, nx);
@@ -846,6 +866,46 @@ fn dot3_affine(ctx: &mut AttrCtx, m: [ir::Value; 4], v: [ir::Value; 3]) -> ir::V
     let a = ctx.bd.ins().fadd(p0, p1);
     let b = ctx.bd.ins().fadd(a, p2);
     ctx.bd.ins().fadd(b, m[3])
+}
+
+// (m0*v0 + m1*v1) + m2*v2, the linear 3x3 row (no translate).
+fn dot3_linear(ctx: &mut AttrCtx, m: [ir::Value; 3], v: [ir::Value; 3]) -> ir::Value {
+    let p0 = ctx.bd.ins().fmul(m[0], v[0]);
+    let p1 = ctx.bd.ins().fmul(m[1], v[1]);
+    let p2 = ctx.bd.ins().fmul(m[2], v[2]);
+    let a = ctx.bd.ins().fadd(p0, p1);
+    ctx.bd.ins().fadd(a, p2)
+}
+
+// Pack 3 scalars into the low lanes of an F32X4 (a matrix column).
+fn make_col(ctx: &mut AttrCtx, c: [ir::Value; 3]) -> ir::Value {
+    let v = ctx.bd.ins().scalar_to_vector(ir::types::F32X4, c[0]);
+    let v = ctx.bd.ins().insertlane(v, c[1], 1);
+    ctx.bd.ins().insertlane(v, c[2], 2)
+}
+
+// All three output rows at once: cols[0]*x + cols[1]*y + cols[2]*z (+ translate).
+fn mat_vec_simd(
+    ctx: &mut AttrCtx,
+    cols: [ir::Value; 3],
+    translate: Option<ir::Value>,
+    v: [ir::Value; 3],
+) -> [ir::Value; 3] {
+    let sx = ctx.bd.ins().splat(ir::types::F32X4, v[0]);
+    let sy = ctx.bd.ins().splat(ir::types::F32X4, v[1]);
+    let sz = ctx.bd.ins().splat(ir::types::F32X4, v[2]);
+
+    let acc = ctx.bd.ins().fmul(cols[0], sx);
+    let p1 = ctx.bd.ins().fmul(cols[1], sy);
+    let acc = ctx.bd.ins().fadd(acc, p1);
+    let p2 = ctx.bd.ins().fmul(cols[2], sz);
+    let acc = ctx.bd.ins().fadd(acc, p2);
+    let acc = match translate {
+        Some(c3) => ctx.bd.ins().fadd(acc, c3),
+        None => acc,
+    };
+
+    self::extract3(ctx, acc)
 }
 
 fn emit_dual(
