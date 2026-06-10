@@ -6,6 +6,7 @@ use crate::app::Message;
 use crate::game::{CpuMode, Platform, ThemePreference};
 use crate::theme::Palette;
 
+const COMMUNITY_COMPAT_URL: &str = "https://gecko.layle.dev/compat";
 const WII_DB_URL: &str = "https://emu.layle.dev/gecko-wii";
 const GC_DB_URL: &str = "https://emu.layle.dev/gecko-gc";
 
@@ -262,13 +263,20 @@ fn compatibility_menu(palette: &Palette) -> Menu<'static, Message, iced::Theme, 
     Menu::new(vec![
         Item::new(self::menu_item(
             palette,
-            "Wii Database",
+            "Community Compatibility List",
+            Message::OpenUrl(COMMUNITY_COMPAT_URL.to_owned()),
+            None,
+        )),
+        Item::new(self::separator(palette)),
+        Item::new(self::menu_item(
+            palette,
+            "Wii Screenshots Database",
             Message::OpenUrl(WII_DB_URL.to_owned()),
             None,
         )),
         Item::new(self::menu_item(
             palette,
-            "GameCube Database",
+            "GameCube Screenshots Database",
             Message::OpenUrl(GC_DB_URL.to_owned()),
             None,
         )),
