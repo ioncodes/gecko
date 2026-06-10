@@ -14,10 +14,13 @@ A cross-platform GameCube/Wii emulator and debugger written in Rust.
 ## Status
 
 Gecko is still in development. While many games work well, most will likely have varying degrees of visual glitches or will be outright broken. Refer to the screenshot databases to gauge compatiblity:
-- [GameCube](https://emu.layle.dev/gecko-gc/4ad1a63/)
-- [Wii](https://emu.layle.dev/gecko-wii/4ad1a63/)
+- [GameCube](https://emu.layle.dev/gecko-gc)
+- [Wii](https://emu.layle.dev/gecko-wii)
 
-Note: Only NTSC games are tracked. The screenshot service makes a best effort attempt to enter games by pressing random buttons. Just because a game doesn't go ingame, doesn't mean it actually doesn't.
+> [!NOTE]
+> Only NTSC games are tracked. The screenshot service makes a best effort attempt to enter games by pressing random buttons. Just because a game doesn't go ingame, doesn't mean it actually doesn't.
+
+Gecko now also has a [**community driven** compatibility database](https://gecko.layle.dev/compat)! Feel free to leave a vote when trying out games. The database is still new, so please take the ratings with a grain of salt!
 
 ## Features
 
