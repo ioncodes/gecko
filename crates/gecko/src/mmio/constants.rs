@@ -18,7 +18,7 @@ pub const PE_BASE: u32 = 0x0C00_1000;
 pub const PE_END: u32 = 0x0C00_10FF;
 
 pub const VI_BASE: u32 = 0x0C00_2000;
-pub const VI_END: u32 = 0x0C00_27FF;
+pub const VI_END: u32 = 0x0C00_20FF;
 
 pub const PI_BASE: u32 = 0x0C00_3000;
 pub const PI_END: u32 = 0x0C00_3FFF;
