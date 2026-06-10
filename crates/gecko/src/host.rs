@@ -78,9 +78,8 @@ pub enum GxAction {
     /// TEV/lighting snapshot carried here.
     Draw(Box<DrawData>),
 
-    /// Copy the EFB source region to a temporary texture identified by `id`.
-    /// The renderer stores this until the next [`PresentXfb`] composites it
-    /// into the output framebuffer.
+    /// Copy the EFB source region to a persistent texture keyed by `id` (the
+    /// guest XFB address). [`PresentXfb`] composites the latest snapshots.
     CopyXfb {
         id: Address,
         src_x: u32,
@@ -98,9 +97,9 @@ pub enum GxAction {
         alpha_supported: bool,
     },
 
-    /// Composite all XFB copies from this frame into the output framebuffer.
-    /// Emitted once per vblank by `present_xfb()`. Each [`XfbPart`]
-    /// identifies a copy by `id` and places it at `(offset_x, offset_y)`.
+    /// Composite the scanned buffer's XFB regions into the output
+    /// framebuffer. Emitted by `present_xfb()` at the end of each field's
+    /// active video. Later parts win overlapping rows.
     PresentXfb {
         width: u32,
         height: u32,

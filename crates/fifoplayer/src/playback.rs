@@ -166,19 +166,26 @@ impl<const SYSTEM: SystemId> Playback<SYSTEM> {
     pub fn present(&mut self, sink: &mut PlayerSink) -> bool {
         let heights = std::mem::take(&mut sink.xfb_heights);
 
-        if self.gx.xfb_copies.is_empty() {
+        if !self.gx.xfb_dirty {
             return false;
         }
+        self.gx.xfb_dirty = false;
 
-        let bytes_per_row = self.gx.xfb_copies[0].dest_stride.max(2);
+        let bytes_per_row = self
+            .gx
+            .xfb_regions
+            .values()
+            .max_by_key(|r| r.copy_seq)
+            .map(|r| r.stride.max(2))
+            .unwrap();
         let stride_px = bytes_per_row / 2;
-        let min_base = self.gx.xfb_copies.iter().map(|c| c.dest_addr).min().unwrap();
+        let min_base = self.gx.xfb_regions.keys().min().copied().unwrap();
 
-        let mut parts: Vec<XfbPart> = Vec::new();
+        let mut parts: Vec<(u64, XfbPart)> = Vec::new();
         let mut frame_h = 0u32;
 
-        for copy in &self.gx.xfb_copies {
-            let delta_px = (copy.dest_addr - min_base) / 2;
+        for (&addr, region) in self.gx.xfb_regions.iter() {
+            let delta_px = (addr - min_base) / 2;
             let offset_x = delta_px % stride_px;
             let offset_y = delta_px / stride_px;
 
@@ -189,22 +196,26 @@ impl<const SYSTEM: SystemId> Playback<SYSTEM> {
             let dst_h = heights
                 .iter()
                 .rev()
-                .find(|(id, _)| *id == copy.dest_addr)
+                .find(|(id, _)| *id == addr)
                 .map(|(_, h)| *h)
-                .unwrap_or(copy.src_h);
+                .unwrap_or(0);
 
             frame_h = frame_h.max(offset_y + dst_h);
 
-            if !parts.iter().any(|p| p.id == copy.dest_addr) {
-                parts.push(XfbPart {
-                    id: copy.dest_addr,
+            parts.push((
+                region.first_seq,
+                XfbPart {
+                    id: addr,
                     offset_x: 0,
                     offset_y,
-                });
-            }
+                },
+            ));
         }
 
-        self.gx.xfb_copies.clear();
+        self.gx.xfb_regions.clear();
+
+        parts.sort_by_key(|(first_seq, _)| *first_seq);
+        let parts: Vec<XfbPart> = parts.into_iter().map(|(_, p)| p).collect();
 
         if parts.is_empty() || frame_h == 0 {
             return false;
