@@ -1,6 +1,20 @@
 use crate::flipper::si::pad;
 use crate::hollywood::ipc::usb;
 use crate::{GC, SystemId, WII};
+use std::sync::{Arc, Mutex};
+
+/// Live host input the emulator pulls from. The Wiimote report tick samples
+/// this every report interval, so implementations should return the freshest
+/// state available.
+pub trait InputSink: Send {
+    fn sample(&mut self) -> HostInput;
+}
+
+impl InputSink for Arc<Mutex<HostInput>> {
+    fn sample(&mut self) -> HostInput {
+        *self.lock().unwrap()
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum HostInput {

@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 pub use wiimote::{
     BTN_A, BTN_B, BTN_DOWN, BTN_HOME, BTN_LEFT, BTN_MINUS, BTN_ONE, BTN_PLUS, BTN_RIGHT, BTN_TWO, BTN_UP,
     IR_CAMERA_HEIGHT, IR_CAMERA_WIDTH, NUNCHUK_BTN_C, NUNCHUK_BTN_Z, NUNCHUK_STICK_CENTER, NUNCHUK_STICK_MAX,
-    NUNCHUK_STICK_MIN,
+    NUNCHUK_STICK_MIN, REPORT_HZ,
 };
 
 const USB_CTRL: u32 = 0;
@@ -73,6 +73,10 @@ impl IosDevice for Bluetooth {
 
     fn set_ir_pointer(&mut self, pointer: Option<(u16, u16)>) -> bool {
         Bluetooth::set_ir_pointer(self, pointer)
+    }
+
+    fn tick_input_report(&mut self) {
+        Bluetooth::tick_input_report(self)
     }
 }
 
@@ -172,24 +176,11 @@ impl Bluetooth {
             tracing::debug!(buttons = format!("{buttons:#06x}"), "Wiimote button state changed");
         }
 
-        if self.host_hid_interrupt_cid.is_none() {
-            return changed;
-        }
-
-        let report = self.wiimote.make_input_report();
-        self.queue_hid_input_report(report);
-
         changed
     }
 
     fn set_wiimote_shake(&mut self, active: bool) {
-        let report_needed = self.wiimote.tick_shake(active);
-        if !report_needed || self.host_hid_interrupt_cid.is_none() {
-            return;
-        }
-
-        let report = self.wiimote.make_input_report();
-        self.queue_hid_input_report(report);
+        self.wiimote.set_shake(active);
     }
 
     fn set_nunchuk(&mut self, buttons: u8, stick_x: u8, stick_y: u8) -> bool {
@@ -204,13 +195,6 @@ impl Bluetooth {
             );
         }
 
-        if self.host_hid_interrupt_cid.is_none() {
-            return changed;
-        }
-
-        let report = self.wiimote.make_input_report();
-        self.queue_hid_input_report(report);
-
         changed
     }
 
@@ -221,14 +205,22 @@ impl Bluetooth {
             tracing::debug!(pointer = ?pointer, "IR pointer state changed");
         }
 
+        changed
+    }
+
+    fn tick_input_report(&mut self) {
         if self.host_hid_interrupt_cid.is_none() {
-            return changed;
+            return;
+        }
+
+        self.wiimote.tick_motion();
+
+        if !self.wiimote.report_due() {
+            return;
         }
 
         let report = self.wiimote.make_input_report();
         self.queue_hid_input_report(report);
-
-        changed
     }
 }
 

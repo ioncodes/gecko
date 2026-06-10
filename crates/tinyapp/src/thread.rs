@@ -30,6 +30,8 @@ pub fn emu_thread<const SYSTEM: SystemId>(
         emulator.gx.recorder = Some(Box::new(FifoRecorder::new()));
     }
 
+    emulator.set_input_sink(Box::new(input.clone()));
+
     while !shutdown.load(Ordering::Relaxed) {
         while throttle && emulator.audio_sink.should_throttle() {
             if shutdown.load(Ordering::Relaxed) {

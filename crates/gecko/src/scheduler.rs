@@ -156,6 +156,12 @@ impl<const SYSTEM: SystemId> Scheduler<SYSTEM> {
             crate::flipper::cp::PUMP_INTERVAL_CYCLES,
             crate::flipper::cp::pump_handler::<SYSTEM>,
         );
+        if SYSTEM == system::WII {
+            s.schedule_at(
+                self::wiimote_report_interval(SYSTEM),
+                self::wiimote_report_handler::<SYSTEM>,
+            );
+        }
         #[cfg(feature = "fps-counter")]
         s.schedule_at(self::cpu_clock(SYSTEM), crate::fps::fps_handler::<SYSTEM>);
         s
@@ -184,6 +190,24 @@ pub fn reseed_vsync<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     sys.scheduler.cancel(self::vsync_handler::<SYSTEM>);
     sys.scheduler
         .schedule_in(rate.cycles_per_frame(SYSTEM), self::vsync_handler::<SYSTEM>);
+}
+
+#[inline(always)]
+pub const fn wiimote_report_interval(system: SystemId) -> u64 {
+    self::cpu_clock(system) / crate::hollywood::ipc::usb::REPORT_HZ
+}
+
+/// Reschedules itself at the Wiimote's 200Hz (TODO VERIFY) report rate. Samples
+/// fresh host input and emits one HID input report per tick (continuous
+/// mode) or only on change (non continuous).
+pub fn wiimote_report_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    sys.sample_host_input();
+    sys.starlet.tick_wiimote();
+
+    sys.scheduler.schedule_in(
+        self::wiimote_report_interval(SYSTEM),
+        self::wiimote_report_handler::<SYSTEM>,
+    );
 }
 
 #[inline(always)]

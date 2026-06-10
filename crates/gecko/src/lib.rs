@@ -20,7 +20,7 @@ pub mod system;
 pub mod wii;
 
 pub use gamecube::GameCube;
-pub use input::HostInput;
+pub use input::{HostInput, InputSink};
 pub use system::{ExecutionMode, GC, System, SystemId, WII};
 pub use wii::Wii;
 

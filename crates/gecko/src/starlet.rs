@@ -131,6 +131,12 @@ impl Starlet {
             .is_some_and(|dev| dev.set_ir_pointer(pointer))
     }
 
+    pub fn tick_wiimote(&mut self) {
+        if let Some(dev) = self.devices.get_mut(WIIMOTE_DEVICE_PATH) {
+            dev.tick_input_report();
+        }
+    }
+
     /// Drop an fd. Calls `close` on the underlying device first; for owned
     /// fds the device is dropped after close.
     pub fn close_fd(&mut self, fd: i32, ctx: &mut DeviceContext<'_>) -> i32 {

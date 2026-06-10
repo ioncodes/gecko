@@ -1,3 +1,4 @@
+use crate::input::InputSink;
 use crate::HostInput;
 use crate::audio::{AudioSink, EmptyAudioSink};
 use crate::dvd::DvdInterface;
@@ -65,6 +66,9 @@ pub struct System<const SYSTEM: SystemId> {
     /// AID DMA pushes 8-frame stereo s16 blocks here.
     pub audio_sink: Box<dyn AudioSink>,
 
+    /// Controller input is sampled from here FOR WII ONLY.
+    pub input_sink: Option<Box<dyn InputSink>>,
+
     #[cfg(feature = "hooks")]
     pub hook_host: Option<Box<dyn Host<SYSTEM> + Send>>,
     #[cfg(feature = "hooks")]
@@ -117,6 +121,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
             render_sink: Box::new(EmptyRenderSink::default()),
             audio_sink: Box::new(EmptyAudioSink),
+            input_sink: None,
 
             #[cfg(feature = "hooks")]
             hook_host: None,
@@ -645,6 +650,20 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     pub fn frame_size(&self) -> (usize, usize) {
         let fmt = self.vi.dcr.video_format();
         (fmt.columns(), fmt.lines())
+    }
+
+    pub fn set_input_sink(&mut self, sink: Box<dyn InputSink>) {
+        self.input_sink = Some(sink);
+    }
+
+    pub fn sample_host_input(&mut self) {
+        let Some(sink) = self.input_sink.as_mut() else {
+            return;
+        };
+
+        let input = sink.sample();
+
+        self.apply_host_input(&input);
     }
 
     pub fn apply_host_input(&mut self, input: &HostInput) {

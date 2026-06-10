@@ -15,6 +15,8 @@ pub fn run<const SYSTEM: SystemId>(
     let sleeper = SpinSleeper::default();
     let throttle_step = Duration::from_micros(5);
 
+    emulator.set_input_sink(Box::new(input.clone()));
+
     while !shutdown.load(Ordering::Relaxed) {
         while throttle.load(Ordering::Relaxed) && emulator.audio_sink.should_throttle() {
             if shutdown.load(Ordering::Relaxed) {

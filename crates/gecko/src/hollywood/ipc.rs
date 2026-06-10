@@ -106,6 +106,8 @@ pub trait IosDevice: Send {
     fn set_ir_pointer(&mut self, _pointer: Option<(u16, u16)>) -> bool {
         false
     }
+
+    fn tick_input_report(&mut self) {}
 }
 
 pub struct Ipc {
