@@ -310,7 +310,7 @@ fn run_windowed<const SYSTEM: gecko::SystemId>(file: dff::DffFile, start: usize,
     let surface_format = wgpu::TextureFormat::Bgra8Unorm;
     let target_aspect = TargetAspect::from_arg(aspect, file.is_wii);
     let (renderer, sink) =
-        backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect);
+        backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect, 1);
 
     let mut player_sink = PlayerSink::new(Box::new(sink));
     let mut playback = Playback::<SYSTEM>::new();

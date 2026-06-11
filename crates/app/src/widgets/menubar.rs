@@ -15,6 +15,7 @@ pub fn menubar(
     cpu: CpuMode,
     theme_pref: ThemePreference,
     skip_ipl: bool,
+    upscale: u32,
 ) -> Element<'static, Message> {
     let bar_bg = palette.bg_2;
     let border = palette.border;
@@ -24,7 +25,7 @@ pub fn menubar(
         Item::with_menu(self::top_label(palette, "File"), self::file_menu(palette)),
         Item::with_menu(
             self::top_label(palette, "Settings"),
-            self::settings_menu(palette, cpu, theme_pref, skip_ipl),
+            self::settings_menu(palette, cpu, theme_pref, skip_ipl, upscale),
         ),
         Item::with_menu(
             self::top_label(palette, "Compatibility"),
@@ -210,6 +211,7 @@ fn settings_menu(
     cpu: CpuMode,
     theme_pref: ThemePreference,
     skip_ipl: bool,
+    upscale: u32,
 ) -> Menu<'static, Message, iced::Theme, iced::Renderer> {
     Menu::new(vec![
         Item::new(self::section_header(palette, "Execution Engine")),
@@ -232,6 +234,32 @@ fn settings_menu(
             "Skip IPL (GameCube)",
             Message::MenuToggleSkipIpl,
             Some(skip_ipl),
+        )),
+        Item::new(self::separator(palette)),
+        Item::new(self::section_header(palette, "Internal Resolution")),
+        Item::new(self::menu_item(
+            palette,
+            "1x (Native)",
+            Message::MenuSetUpscale(1),
+            Some(upscale == 1),
+        )),
+        Item::new(self::menu_item(
+            palette,
+            "2x",
+            Message::MenuSetUpscale(2),
+            Some(upscale == 2),
+        )),
+        Item::new(self::menu_item(
+            palette,
+            "3x",
+            Message::MenuSetUpscale(3),
+            Some(upscale == 3),
+        )),
+        Item::new(self::menu_item(
+            palette,
+            "4x",
+            Message::MenuSetUpscale(4),
+            Some(upscale == 4),
         )),
         Item::new(self::separator(palette)),
         Item::new(self::section_header(palette, "Theme")),

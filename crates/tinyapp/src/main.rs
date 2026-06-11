@@ -109,6 +109,10 @@ struct Args {
     #[arg(long, default_value = "auto")]
     aspect: String,
 
+    /// Integer internal resolution multiplier: 1 (native) to 4
+    #[arg(long, default_value_t = 1)]
+    upscale: u32,
+
     /// Disable audio output
     #[arg(long)]
     no_audio: bool,
@@ -338,8 +342,13 @@ fn run<const SYSTEM: SystemId>(
 
     let surface_format = wgpu::TextureFormat::Bgra8Unorm;
 
-    let (renderer, sink) =
-        backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect);
+    let (renderer, sink) = backend_wgpu::sink::Renderer::new(
+        device.clone(),
+        queue.clone(),
+        surface_format,
+        target_aspect,
+        args.upscale,
+    );
 
     emulator.render_sink = Box::new(sink);
 

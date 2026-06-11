@@ -43,6 +43,7 @@ pub enum Message {
     MenuToggleCpu(CpuMode),
     MenuToggleSkipIpl,
     MenuSetTheme(ThemePreference),
+    MenuSetUpscale(u32),
     MenuAbout,
     AboutClose,
     MenuInputSettings,
@@ -370,6 +371,11 @@ impl App {
                 self.refresh_palette();
                 Task::none()
             }
+            Message::MenuSetUpscale(scale) => {
+                self.config.upscale = scale;
+                self.persist_config();
+                Task::none()
+            }
             Message::MenuAbout => {
                 self.about_open = true;
                 Task::none()
@@ -609,7 +615,13 @@ impl App {
         let bg = palette.bg;
         let text_color = palette.text;
         let main = column![
-            menubar::menubar(palette, self.config.cpu_mode, self.config.theme, self.config.skip_ipl),
+            menubar::menubar(
+                palette,
+                self.config.cpu_mode,
+                self.config.theme,
+                self.config.skip_ipl,
+                self.config.upscale,
+            ),
             search_bar::search_bar(palette, &self.search),
             body,
             statusbar::statusbar(

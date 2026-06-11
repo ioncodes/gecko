@@ -165,6 +165,12 @@ impl GxRenderer {
             return;
         }
 
+        let scaled_src_x = self.scaled(src_x);
+        let scaled_src_y = self.scaled(src_y);
+        let scaled_w = self.scaled(width);
+        let scaled_h = self.scaled(height);
+        let scaled_dst_h = self.scaled(dst_h);
+
         let needs_shader_copy = dst_h != height || (gamma - 1.0).abs() > f32::EPSILON;
         if needs_shader_copy && self.xfb_copy_uniform_write_pending {
             self.submit_pending(queue);
@@ -173,12 +179,12 @@ impl GxRenderer {
         let mut encoder = self.take_or_create_encoder(device);
 
         let entry = self.xfb_copies.entry(id).or_insert_with(|| {
-            let texture_label = format!("xfb_copy_tmp id={id} size={width}x{dst_h}");
+            let texture_label = format!("xfb_copy_tmp id={id} size={scaled_w}x{scaled_dst_h}");
             let tex = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(&texture_label),
                 size: wgpu::Extent3d {
-                    width,
-                    height: dst_h,
+                    width: scaled_w,
+                    height: scaled_dst_h,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
@@ -196,13 +202,13 @@ impl GxRenderer {
 
         // Recreate if size changed.
         let existing_size = entry.0.size();
-        if existing_size.width != width || existing_size.height != dst_h {
-            let texture_label = format!("xfb_copy_tmp id={id} size={width}x{dst_h}");
+        if existing_size.width != scaled_w || existing_size.height != scaled_dst_h {
+            let texture_label = format!("xfb_copy_tmp id={id} size={scaled_w}x{scaled_dst_h}");
             let tex = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(&texture_label),
                 size: wgpu::Extent3d {
-                    width,
-                    height: dst_h,
+                    width: scaled_w,
+                    height: scaled_dst_h,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
@@ -226,31 +232,17 @@ impl GxRenderer {
         if needs_shader_copy {
             encoder.insert_debug_marker("CopyXfb path: shader copy for scale/gamma");
             let uniforms = XfbCopyUniforms {
-                src_rect: [src_x as f32, src_y as f32, width as f32, height as f32],
-                dst_size: [width as f32, dst_h as f32],
+                src_rect: [
+                    scaled_src_x as f32,
+                    scaled_src_y as f32,
+                    scaled_w as f32,
+                    scaled_h as f32,
+                ],
+                dst_size: [scaled_w as f32, scaled_dst_h as f32],
                 gamma,
                 filter_mode: 0,
             };
             queue.write_buffer(&self.xfb_copy_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("xfb_copy_bg"),
-                layout: &self.xfb_copy_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.xfb_copy_uniform_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&self.efb_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&self.xfb_copy_sampler),
-                    },
-                ],
-            });
 
             {
                 let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -270,7 +262,7 @@ impl GxRenderer {
                     multiview_mask: None,
                 });
                 rpass.set_pipeline(&self.xfb_copy_pipeline);
-                rpass.set_bind_group(0, &bind_group, &[]);
+                rpass.set_bind_group(0, &self.xfb_copy_bind_group, &[]);
                 let marker = format!(
                     "XFB shader uniforms: src=({src_x},{src_y} {width}x{height}) dst={width}x{dst_h} gamma={gamma:.3}"
                 );
@@ -289,8 +281,8 @@ impl GxRenderer {
                     texture: &self.efb_texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d {
-                        x: src_x,
-                        y: src_y,
+                        x: scaled_src_x,
+                        y: scaled_src_y,
                         z: 0,
                     },
                     aspect: wgpu::TextureAspect::default(),
@@ -302,8 +294,8 @@ impl GxRenderer {
                     aspect: wgpu::TextureAspect::default(),
                 },
                 wgpu::Extent3d {
-                    width,
-                    height,
+                    width: scaled_w,
+                    height: scaled_h,
                     depth_or_array_layers: 1,
                 },
             );
@@ -367,6 +359,8 @@ impl GxRenderer {
         let divisor = if half { 2 } else { 1 };
         let dst_w = (width / divisor).max(1);
         let dst_h = (height / divisor).max(1);
+        let scaled_dst_w = self.scaled(dst_w);
+        let scaled_dst_h = self.scaled(dst_h);
 
         if let Some(entry) = self.efb_copy_cache.remove(&dest_addr) {
             self.return_to_pool(entry.texture, entry.view);
@@ -376,15 +370,16 @@ impl GxRenderer {
 
         let (tex, view) = self
             .efb_copy_pool
-            .get_mut(&(dst_w, dst_h))
+            .get_mut(&(scaled_dst_w, scaled_dst_h))
             .and_then(Vec::pop)
             .unwrap_or_else(|| {
-                let label = format!("efb_copy addr={dest_addr:#010x} size={dst_w}x{dst_h} fmt={copy_format:?}");
+                let label =
+                    format!("efb_copy addr={dest_addr:#010x} size={scaled_dst_w}x{scaled_dst_h} fmt={copy_format:?}");
                 let tex = device.create_texture(&wgpu::TextureDescriptor {
                     label: Some(&label),
                     size: wgpu::Extent3d {
-                        width: dst_w,
-                        height: dst_h,
+                        width: scaled_dst_w,
+                        height: scaled_dst_h,
                         depth_or_array_layers: 1,
                     },
                     mip_level_count: 1,
@@ -406,31 +401,12 @@ impl GxRenderer {
         }
 
         let uniforms = XfbCopyUniforms {
-            src_rect: [src_x as f32, src_y as f32, width as f32, height as f32],
-            dst_size: [dst_w as f32, dst_h as f32],
+            src_rect: self.scaled_src_rect(src_x, src_y, width, height),
+            dst_size: [scaled_dst_w as f32, scaled_dst_h as f32],
             gamma: 1.0,
             filter_mode: 0,
         };
         queue.write_buffer(&self.xfb_copy_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("efb_pack_bg"),
-            layout: &self.xfb_copy_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.xfb_copy_uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&self.efb_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.xfb_copy_sampler),
-                },
-            ],
-        });
 
         let group_label = format!(
             "CopyEfbToTexture addr={dest_addr:#010x} src=({src_x},{src_y} {width}x{height}) dst={dst_w}x{dst_h} fmt={copy_format:?}"
@@ -455,7 +431,7 @@ impl GxRenderer {
                 multiview_mask: None,
             });
             rpass.set_pipeline(self.efb_pack_pipelines.for_color(copy_format, is_intensity).unwrap());
-            rpass.set_bind_group(0, &bind_group, &[]);
+            rpass.set_bind_group(0, &self.xfb_copy_bind_group, &[]);
             rpass.insert_debug_marker("EFB copy: per-format pack into cache");
             rpass.draw(0..3, 0..1);
         }
@@ -467,6 +443,8 @@ impl GxRenderer {
             dest_addr,
             crate::EfbCopyEntry {
                 format: copy_format,
+                native_w: dst_w,
+                native_h: dst_h,
                 texture: tex,
                 view,
             },
@@ -508,8 +486,8 @@ impl GxRenderer {
         height: u32,
         parts: &[XfbPart],
     ) {
-        let width = width.max(1);
-        let height = height.max(1);
+        let width = self.scaled(width.max(1));
+        let height = self.scaled(height.max(1));
 
         // Resize the XFB output texture if the frame dimensions changed.
         let cur = self.xfb_texture.size();
@@ -553,18 +531,22 @@ impl GxRenderer {
                 encoder.insert_debug_marker(&marker);
                 continue;
             };
+
             let src_size = tex.size();
-            let width = src_size.width.min(xfb_size.width.saturating_sub(part.offset_x));
-            let height = src_size.height.min(xfb_size.height.saturating_sub(part.offset_y));
+            let offset_x = self.scaled(part.offset_x);
+            let offset_y = self.scaled(part.offset_y);
+            let width = src_size.width.min(xfb_size.width.saturating_sub(offset_x));
+            let height = src_size.height.min(xfb_size.height.saturating_sub(offset_y));
             if width == 0 || height == 0 {
                 tracing::warn!(id = part.id, "present_xfb: zero-area XFB part after clamping, skipping");
                 let marker = format!("PresentXfb skip: zero-area part id={}", part.id);
                 encoder.insert_debug_marker(&marker);
                 continue;
             }
+
             let marker = format!(
                 "XFB part id={} dst=({},{} {}x{})",
-                part.id, part.offset_x, part.offset_y, width, height
+                part.id, offset_x, offset_y, width, height
             );
             encoder.insert_debug_marker(&marker);
             encoder.copy_texture_to_texture(
@@ -578,8 +560,8 @@ impl GxRenderer {
                     texture: &self.xfb_texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d {
-                        x: part.offset_x,
-                        y: part.offset_y,
+                        x: offset_x,
+                        y: offset_y,
                         z: 0,
                     },
                     aspect: wgpu::TextureAspect::default(),
@@ -680,17 +662,81 @@ impl GxRenderer {
         let group_label = format!(
             "CopyEfbToTexture addr={dest_addr:#010x} src=({src_x},{src_y} {width}x{height}) fmt={copy_format_enum:?} mip={mipmap} stride={stride} depth={depth_copy}"
         );
+
+        if self.efb_scale > 1 {
+            if self.efb_color_readback_uniform_write_pending {
+                self.submit_pending(queue);
+            }
+
+            Self::ensure_writeback_target(
+                device,
+                &mut self.efb_color_readback_target,
+                width,
+                height,
+                self.surface_format,
+                "efb_color_readback_target",
+            );
+
+            let uniforms = XfbCopyUniforms {
+                src_rect: self.scaled_src_rect(src_x, src_y, width, height),
+                dst_size: [width as f32, height as f32],
+                gamma: 1.0,
+                filter_mode: 0,
+            };
+            queue.write_buffer(
+                &self.efb_color_readback_uniform_buffer,
+                0,
+                bytemuck::bytes_of(&uniforms),
+            );
+        }
+
         let mut encoder = self.take_or_create_encoder(device);
         encoder.push_debug_group(&group_label);
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.efb_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
+
+        let (src_texture, src_origin) = if self.efb_scale == 1 {
+            (
+                &self.efb_texture,
+                wgpu::Origin3d {
                     x: src_x,
                     y: src_y,
                     z: 0,
                 },
+            )
+        } else {
+            let (readback_tex, readback_view) = self.efb_color_readback_target.as_ref().unwrap();
+
+            {
+                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("efb_color_readback_downsample"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: readback_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                    multiview_mask: None,
+                });
+                rpass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
+                rpass.set_scissor_rect(0, 0, width, height);
+                rpass.set_pipeline(&self.xfb_copy_pipeline);
+                rpass.set_bind_group(0, &self.efb_color_readback_bind_group, &[]);
+                rpass.draw(0..3, 0..1);
+            }
+
+            (readback_tex, wgpu::Origin3d::ZERO)
+        };
+
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: src_texture,
+                mip_level: 0,
+                origin: src_origin,
                 aspect: wgpu::TextureAspect::default(),
             },
             wgpu::TexelCopyBufferInfo {
@@ -709,6 +755,10 @@ impl GxRenderer {
         );
         encoder.pop_debug_group();
         self.current_encoder = Some(encoder);
+
+        if self.efb_scale > 1 {
+            self.efb_color_readback_uniform_write_pending = true;
+        }
 
         let swap_bgra = matches!(
             self.surface_format,
@@ -746,38 +796,21 @@ impl GxRenderer {
         let encode_w = (width / divisor).max(1);
         let encode_h = (height / divisor).max(1);
 
-        let (target_w, target_h) = self
-            .efb_depth_writeback_target
-            .as_ref()
-            .map(|(t, _)| (t.size().width, t.size().height))
-            .unwrap_or((0, 0));
-        if self.efb_depth_writeback_target.is_none() || encode_w > target_w || encode_h > target_h {
-            let new_w = target_w.max(encode_w).max(64);
-            let new_h = target_h.max(encode_h).max(64);
-            let tex = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("efb_depth_writeback_target"),
-                size: wgpu::Extent3d {
-                    width: new_w,
-                    height: new_h,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            });
-            let view = tex.create_view(&Default::default());
-            self.efb_depth_writeback_target = Some((tex, view));
-        }
+        Self::ensure_writeback_target(
+            device,
+            &mut self.efb_depth_writeback_target,
+            encode_w,
+            encode_h,
+            wgpu::TextureFormat::Rgba8Unorm,
+            "efb_depth_writeback_target",
+        );
 
         if self.efb_depth_resolve_uniform_write_pending {
             self.submit_pending(queue);
         }
 
         let uniforms = XfbCopyUniforms {
-            src_rect: [src_x as f32, src_y as f32, width as f32, height as f32],
+            src_rect: self.scaled_src_rect(src_x, src_y, width, height),
             dst_size: [encode_w as f32, encode_h as f32],
             gamma: 1.0,
             filter_mode: 0,
@@ -870,6 +903,40 @@ impl GxRenderer {
             swap_bgra: false,
             box_filter_downsample: false,
         });
+    }
+
+    pub(crate) fn ensure_writeback_target(
+        device: &wgpu::Device,
+        slot: &mut Option<(wgpu::Texture, wgpu::TextureView)>,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+        label: &str,
+    ) {
+        let (target_w, target_h) = slot
+            .as_ref()
+            .map(|(t, _)| (t.size().width, t.size().height))
+            .unwrap_or((0, 0));
+        if slot.is_some() && width <= target_w && height <= target_h {
+            return;
+        }
+
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: target_w.max(width).max(64),
+                height: target_h.max(height).max(64),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = tex.create_view(&Default::default());
+        *slot = Some((tex, view));
     }
 
     pub(crate) fn acquire_readback_staging(&mut self, device: &wgpu::Device, staging_size: u64) -> (wgpu::Buffer, u64) {

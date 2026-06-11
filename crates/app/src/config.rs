@@ -17,11 +17,17 @@ pub struct Config {
     pub ipl: Option<PathBuf>,
     #[serde(default = "self::default_skip_ipl")]
     pub skip_ipl: bool,
+    #[serde(default = "self::default_upscale")]
+    pub upscale: u32,
     pub input: hostinput::InputConfig,
 }
 
 fn default_skip_ipl() -> bool {
     true
+}
+
+fn default_upscale() -> u32 {
+    1
 }
 
 impl Default for Config {
@@ -36,6 +42,7 @@ impl Default for Config {
             dsp_coef: None,
             ipl: None,
             skip_ipl: self::default_skip_ipl(),
+            upscale: self::default_upscale(),
             input: hostinput::InputConfig::default(),
         }
     }

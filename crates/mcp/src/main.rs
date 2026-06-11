@@ -89,7 +89,7 @@ fn main() -> Result<()> {
         .context("acquire wgpu device")?;
     let surface_format = wgpu::TextureFormat::Rgba8Unorm;
 
-    let gx = Arc::new(Mutex::new(GxRenderer::new(&device, &queue, surface_format)));
+    let gx = Arc::new(Mutex::new(GxRenderer::new(&device, &queue, surface_format, 1)));
     let introspect = Arc::new(Mutex::new(Introspection::default()));
 
     let shared = Arc::new(Shared {

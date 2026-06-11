@@ -251,7 +251,7 @@ impl InlineSink {
         queue: wgpu::Queue,
         surface_format: wgpu::TextureFormat,
     ) -> (Arc<Mutex<GxRenderer>>, Self) {
-        let gx = Arc::new(Mutex::new(GxRenderer::new(&device, &queue, surface_format)));
+        let gx = Arc::new(Mutex::new(GxRenderer::new(&device, &queue, surface_format, 1)));
         let sink = InlineSink {
             gx: gx.clone(),
             device,
@@ -328,8 +328,9 @@ impl Renderer {
         queue: wgpu::Queue,
         surface_format: wgpu::TextureFormat,
         target_aspect: TargetAspect,
+        efb_scale: u32,
     ) -> (Self, ThreadedSink) {
-        let mut gx = GxRenderer::new(&device, &queue, surface_format);
+        let mut gx = GxRenderer::new(&device, &queue, surface_format, efb_scale);
         gx.prewarm_pipeline_cache(&device);
 
         // Initial shared output: the XFB texture (black until first PresentXfb).
@@ -488,8 +489,8 @@ impl Renderer {
         self.target_aspect
     }
 
-    /// Read back the most recently presented XFB frame at native emulated
-    /// resolution. Blocks until the GPU copy completes.
+    /// Read back the most recently presented XFB frame at the emulated
+    /// resolution times the EFB scale. Blocks until the GPU copy completes.
     pub fn capture_xfb(&self) -> Option<crate::capture::CapturedFrame> {
         let texture = self.shared.output.lock().unwrap().clone();
         crate::capture::capture_texture(&self.device, &self.queue, &texture)

@@ -188,7 +188,7 @@ impl State {
         };
         surface.configure(&device, &surface_config);
 
-        let gx_renderer = backend_wgpu::GxRenderer::new(&device, &queue, surface_format);
+        let gx_renderer = backend_wgpu::GxRenderer::new(&device, &queue, surface_format, 1);
 
         // Blit pipeline (same as sink::Renderer)
         let blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {

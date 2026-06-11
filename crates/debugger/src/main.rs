@@ -513,7 +513,7 @@ fn main() {
 
     let target_aspect = TargetAspect::from_arg(&args.aspect, matches!(emulator, EmulatorVariant::Wii(_)));
     let (renderer, sink) =
-        backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect);
+        backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect, 1);
 
     emulator.install_render_sink(Box::new(sink));
 

@@ -125,6 +125,11 @@ const _: () = assert!(std::mem::size_of::<FrameUniforms>() == 1552);
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct DrawUniforms {
     pub mvp: glam::Mat4,
+    /// Guest texture dimensions for texmaps 0-7, two slots per
+    /// vector (slot i at `tex_dims[i / 2]`, xy for even i, zw for odd).
+    /// Indirect texturing needs these instead of `textureDimensions`
+    /// because scaled EFB copies bind a larger GPU texture.
+    pub tex_dims: [glam::UVec4; 4],
 }
 
 pub(crate) const DRAW_UNIFORMS_SIZE: NonZeroU64 = match NonZeroU64::new(std::mem::size_of::<DrawUniforms>() as u64) {
@@ -135,17 +140,21 @@ pub(crate) const DRAW_UNIFORMS_SIZE: NonZeroU64 = match NonZeroU64::new(std::mem
 pub const EFB_WIDTH: u32 = 640;
 pub const EFB_HEIGHT: u32 = 528;
 pub const EFB_SAMPLE_COUNT: u32 = 4;
+pub const MAX_EFB_SCALE: u32 = 4;
 
 pub(crate) struct EfbCopyEntry {
     pub(crate) format: gecko::flipper::gx::texture::CopyFormat,
+    /// Guest dimensions. The GPU texture itself is `efb_scale`
+    /// times larger.
+    pub(crate) native_w: u32,
+    pub(crate) native_h: u32,
     pub(crate) texture: wgpu::Texture,
     pub(crate) view: wgpu::TextureView,
 }
 
 impl EfbCopyEntry {
     pub(crate) fn matches(&self, fmt: TextureFormat, w: u32, h: u32) -> bool {
-        let size = self.texture.size();
-        self.format.base_texture_format() == fmt && size.width == w && size.height == h
+        self.format.base_texture_format() == fmt && self.native_w == w && self.native_h == h
     }
 }
 
@@ -177,6 +186,7 @@ pub struct GxRenderer {
     pub(crate) draw_uniform_stride: u64,
     pub(crate) draw_uniform_capacity: usize,
     pub(crate) scratch_indices: Vec<u32>,
+    pub(crate) efb_scale: u32,
     // EFB: resolved (1x) color used for CopyXfb reads + texture binding.
     pub(crate) efb_texture: wgpu::Texture,
     pub(crate) efb_view: wgpu::TextureView,
@@ -200,6 +210,9 @@ pub struct GxRenderer {
     /// Reusable Rgba8Unorm intermediate the Z24 pack writes into before
     /// being copied to staging for the deferred RAM writeback.
     pub(crate) efb_depth_writeback_target: Option<(wgpu::Texture, wgpu::TextureView)>,
+    /// Reusable native-resolution intermediate the scaled EFB is downsampled
+    /// into before color RAM readbacks when `efb_scale > 1`.
+    pub(crate) efb_color_readback_target: Option<(wgpu::Texture, wgpu::TextureView)>,
     pub(crate) fallback_view: wgpu::TextureView,
     pub(crate) scratch_vertices: Vec<GpuVertex>,
     pub(crate) scratch_draws: Vec<DrawRecord>,
@@ -240,9 +253,10 @@ pub struct GxRenderer {
     // Per-copy temporary textures stored by CopyXfb, composited by PresentXfb.
     pub(crate) xfb_copies: FxHashMap<u32, (wgpu::Texture, wgpu::TextureView)>,
     pub(crate) xfb_copy_pipeline: wgpu::RenderPipeline,
-    pub(crate) xfb_copy_bind_group_layout: wgpu::BindGroupLayout,
-    pub(crate) xfb_copy_sampler: wgpu::Sampler,
     pub(crate) xfb_copy_uniform_buffer: wgpu::Buffer,
+    pub(crate) xfb_copy_bind_group: wgpu::BindGroup,
+    pub(crate) efb_color_readback_uniform_buffer: wgpu::Buffer,
+    pub(crate) efb_color_readback_bind_group: wgpu::BindGroup,
     // Region-scoped EFB clear.
     pub(crate) efb_clear: clear::EfbClear,
     pub(crate) pending_command_buffers: Vec<wgpu::CommandBuffer>,
@@ -263,6 +277,7 @@ pub struct GxRenderer {
     pub(crate) current_encoder: Option<wgpu::CommandEncoder>,
     pub(crate) draw_bufs_write_pending: bool,
     pub(crate) xfb_copy_uniform_write_pending: bool,
+    pub(crate) efb_color_readback_uniform_write_pending: bool,
     pub(crate) efb_clear_uniform_write_pending: bool,
     pub(crate) efb_depth_resolve_uniform_write_pending: bool,
     pub(crate) efb_readback_staging_pool: FxHashMap<u64, Vec<wgpu::Buffer>>,
@@ -302,7 +317,22 @@ pub(crate) struct PendingWriteback {
 }
 
 impl GxRenderer {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, surface_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        efb_scale: u32,
+    ) -> Self {
+        let max_scale = (device.limits().max_texture_dimension_2d / EFB_WIDTH).max(1);
+        let requested_scale = efb_scale;
+        let efb_scale = efb_scale.clamp(1, MAX_EFB_SCALE).min(max_scale);
+        if efb_scale != requested_scale {
+            tracing::warn!(requested = requested_scale, effective = efb_scale, "EFB scale clamped");
+        }
+
+        let efb_w = EFB_WIDTH * efb_scale;
+        let efb_h = EFB_HEIGHT * efb_scale;
+
         let frame_uniform_size = FRAME_UNIFORMS_SIZE.get();
         let draw_uniform_size = DRAW_UNIFORMS_SIZE.get();
         let draw_uniform_stride = align_up(
@@ -337,7 +367,7 @@ impl GxRenderer {
             },
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: true,
@@ -452,8 +482,8 @@ impl GxRenderer {
         let efb_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("efb_color_resolved"),
             size: wgpu::Extent3d {
-                width: EFB_WIDTH,
-                height: EFB_HEIGHT,
+                width: efb_w,
+                height: efb_h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -471,8 +501,8 @@ impl GxRenderer {
         let efb_msaa_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("efb_color_msaa"),
             size: wgpu::Extent3d {
-                width: EFB_WIDTH,
-                height: EFB_HEIGHT,
+                width: efb_w,
+                height: efb_h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -488,8 +518,8 @@ impl GxRenderer {
         let efb_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("efb_depth"),
             size: wgpu::Extent3d {
-                width: EFB_WIDTH,
-                height: EFB_HEIGHT,
+                width: efb_w,
+                height: efb_h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -505,8 +535,8 @@ impl GxRenderer {
         let xfb_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("xfb_accum"),
             size: wgpu::Extent3d {
-                width: EFB_WIDTH,
-                height: EFB_HEIGHT,
+                width: efb_w,
+                height: efb_h,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -608,6 +638,37 @@ impl GxRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+
+        let efb_color_readback_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("efb_color_readback_uniforms"),
+            size: std::mem::size_of::<render::XfbCopyUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let make_efb_sample_bg = |label: &str, buffer: &wgpu::Buffer| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(label),
+                layout: &xfb_copy_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&efb_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&xfb_copy_sampler),
+                    },
+                ],
+            })
+        };
+        let xfb_copy_bind_group = make_efb_sample_bg("xfb_copy_bg", &xfb_copy_uniform_buffer);
+        let efb_color_readback_bind_group =
+            make_efb_sample_bg("efb_color_readback_bg", &efb_color_readback_uniform_buffer);
 
         let efb_depth_resolve_bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("efb_depth_resolve_bgl"),
@@ -736,6 +797,7 @@ impl GxRenderer {
             draw_uniform_stride,
             draw_uniform_capacity: initial_draw_slot_count as usize,
             scratch_indices: Vec::new(),
+            efb_scale,
             efb_texture,
             efb_view,
             _efb_msaa_texture: efb_msaa_texture,
@@ -791,9 +853,10 @@ impl GxRenderer {
             xfb_has_content: false,
             xfb_copies: FxHashMap::default(),
             xfb_copy_pipeline,
-            xfb_copy_bind_group_layout,
-            xfb_copy_sampler,
             xfb_copy_uniform_buffer,
+            xfb_copy_bind_group,
+            efb_color_readback_uniform_buffer,
+            efb_color_readback_bind_group,
             efb_clear,
             pending_command_buffers: Vec::with_capacity(8),
             texture_staging_buffer,
@@ -803,6 +866,7 @@ impl GxRenderer {
             current_encoder: None,
             draw_bufs_write_pending: false,
             xfb_copy_uniform_write_pending: false,
+            efb_color_readback_uniform_write_pending: false,
             efb_clear_uniform_write_pending: false,
             efb_depth_resolve_uniform_write_pending: false,
 
@@ -811,6 +875,7 @@ impl GxRenderer {
 
             efb_depth_writeback_pipeline,
             efb_depth_writeback_target: None,
+            efb_color_readback_target: None,
         }
     }
 
@@ -832,6 +897,19 @@ impl GxRenderer {
 
     pub fn efb_view(&self) -> &wgpu::TextureView {
         &self.efb_view
+    }
+
+    pub(crate) fn scaled(&self, v: u32) -> u32 {
+        v * self.efb_scale
+    }
+
+    pub(crate) fn scaled_src_rect(&self, x: u32, y: u32, w: u32, h: u32) -> [f32; 4] {
+        [
+            self.scaled(x) as f32,
+            self.scaled(y) as f32,
+            self.scaled(w) as f32,
+            self.scaled(h) as f32,
+        ]
     }
 
     pub(crate) fn submit_pending(&mut self, queue: &wgpu::Queue) {
@@ -862,6 +940,7 @@ impl GxRenderer {
 
         self.draw_bufs_write_pending = false;
         self.xfb_copy_uniform_write_pending = false;
+        self.efb_color_readback_uniform_write_pending = false;
         self.efb_clear_uniform_write_pending = false;
         self.efb_depth_resolve_uniform_write_pending = false;
     }
@@ -975,12 +1054,12 @@ impl GxRenderer {
             &self.efb_msaa_view,
             &self.efb_view,
             &self.efb_depth_view,
-            EFB_WIDTH,
-            EFB_HEIGHT,
-            x,
-            y,
-            w,
-            h,
+            self.scaled(EFB_WIDTH),
+            self.scaled(EFB_HEIGHT),
+            self.scaled(x),
+            self.scaled(y),
+            self.scaled(w),
+            self.scaled(h),
             color,
             depth,
             color_update,

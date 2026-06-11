@@ -38,6 +38,7 @@ pub struct PlayerState {
     shutdown: Arc<AtomicBool>,
     throttle: Arc<AtomicBool>,
     aspect: TargetAspect,
+    upscale: u32,
     input: Arc<Mutex<HostInput>>,
     platform: Platform,
     boot_error: Option<String>,
@@ -89,6 +90,7 @@ impl PlayerState {
             shutdown: Arc::new(AtomicBool::new(false)),
             throttle: Arc::new(AtomicBool::new(true)),
             aspect,
+            upscale: config.upscale,
             input: Arc::new(Mutex::new(neutral)),
             platform: game.platform,
             boot_error,
@@ -246,7 +248,7 @@ fn player_thread(
     let dvd = image::load_dvd(dvd_data);
     let game_id = dvd.header().game_id();
 
-    let (renderer, sink) = Renderer::new(device, queue, format, state.aspect);
+    let (renderer, sink) = Renderer::new(device, queue, format, state.aspect, state.upscale);
     {
         let first_frame = state.first_frame.clone();
         renderer.set_frame_ready_callback(move |_| {
