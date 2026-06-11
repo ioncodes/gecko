@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 image = { path = "../image" }
 gecko = { path = "../gecko", features = ["fps-counter"] }
+hostinput = { path = "../hostinput" }
 backend-wgpu = { path = "../backend-wgpu" }
 wgpu = "29.0.3"
 cpal = "0.17.3"

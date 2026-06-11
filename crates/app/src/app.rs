@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use backend_wgpu::capture;
 use iced::theme::Mode;
-use iced::widget::{Stack, button, column, container, mouse_area, scrollable, stack, text};
+use iced::widget::{Stack, button, column, container, scrollable, stack, text};
 use iced::{Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, window};
 
 use crate::cache::{self, LibraryCache};
@@ -15,7 +15,8 @@ use crate::library::{self, ScanProgress};
 use crate::player::{self, PlayerState, PlayerStatus};
 use crate::theme::{self, Palette};
 use crate::update::{self, Outcome};
-use crate::widgets::{game_row, menubar, search_bar, statusbar};
+use crate::widgets::input_settings::{self, BindTarget, InputTab, InvertTarget};
+use crate::widgets::{game_row, menubar, overlay, search_bar, statusbar};
 
 const REPO_URL: &str = "https://github.com/ioncodes/gecko";
 pub(crate) const ISSUE_URL: &str = "https://github.com/ioncodes/gecko/issues/new?template=bug_report.md";
@@ -44,6 +45,17 @@ pub enum Message {
     MenuSetTheme(ThemePreference),
     MenuAbout,
     AboutClose,
+    MenuInputSettings,
+    InputClose,
+    InputTab(InputTab),
+    InputCapture(BindTarget),
+    InputTick,
+    InputPointer(String),
+    InputSensitivity(f32),
+    InputToggleSideways,
+    InputToggleStickDpad,
+    InputToggleInvert(InvertTarget),
+    InputReset,
     OpenUrl(String),
     CheckForUpdates,
     UpdateChecked(Outcome),
@@ -101,6 +113,11 @@ pub struct App {
     search_lc: String,
     scanning: bool,
     about_open: bool,
+    input_open: bool,
+    input_tab: InputTab,
+    input_capture: Option<BindTarget>,
+    input_capture_baseline: u32,
+    input_pad_name: Option<String>,
     system_mode: Mode,
     palette: Palette,
     last_click: Option<(usize, Instant)>,
@@ -131,6 +148,11 @@ impl App {
             search_lc: String::new(),
             scanning: false,
             about_open: false,
+            input_open: false,
+            input_tab: InputTab::Gc,
+            input_capture: None,
+            input_capture_baseline: 0,
+            input_pad_name: None,
             system_mode: Mode::Light,
             palette,
             last_click: None,
@@ -176,6 +198,10 @@ impl App {
 
         if !self.players.is_empty() {
             subs.push(window::frames().map(|_| Message::PlayerTick));
+        }
+
+        if self.input_open {
+            subs.push(iced::time::every(Duration::from_millis(100)).map(|_| Message::InputTick));
         }
 
         Subscription::batch(subs)
@@ -346,6 +372,86 @@ impl App {
             }
             Message::MenuAbout => {
                 self.about_open = true;
+                Task::none()
+            }
+            Message::MenuInputSettings => {
+                self.input_open = true;
+                self.input_capture = None;
+                self.input_pad_name = self::pad_state().1;
+                Task::none()
+            }
+            Message::InputClose => {
+                self.input_open = false;
+                self.input_capture = None;
+                Task::none()
+            }
+            Message::InputTab(tab) => {
+                self.input_tab = tab;
+                self.input_capture = None;
+                Task::none()
+            }
+            Message::InputCapture(target) => {
+                if self.input_capture == Some(target) {
+                    self.input_capture = None;
+                } else {
+                    self.input_capture = Some(target);
+                    self.input_capture_baseline = self::pad_state().0.unwrap_or(0);
+                }
+                Task::none()
+            }
+            Message::InputTick => {
+                let (buttons, name) = self::pad_state();
+                self.input_pad_name = name;
+
+                if let Some(target) = self.input_capture
+                    && let Some(buttons) = buttons
+                {
+                    self.input_capture_baseline &= buttons;
+
+                    let fresh = buttons & !self.input_capture_baseline;
+                    if let Some(button) = input_settings::pressed_button(fresh) {
+                        *input_settings::field(&mut self.config.input, target) =
+                            Some(hostinput::config::button_name(button).to_owned());
+                        self.input_capture = None;
+                        self.persist_config();
+                    }
+                }
+
+                Task::none()
+            }
+            Message::InputPointer(source) => {
+                self.config.input.wii.pointer = Some(source);
+                self.persist_config();
+                Task::none()
+            }
+            Message::InputSensitivity(delta) => {
+                let current = self.config.input.wii.pointer_sensitivity.unwrap_or(1.0);
+                self.config.input.wii.pointer_sensitivity = Some((current + delta).clamp(0.25, 4.0));
+                self.persist_config();
+                Task::none()
+            }
+            Message::InputToggleSideways => {
+                let current = self.config.input.wii.sideways.unwrap_or(false);
+                self.config.input.wii.sideways = Some(!current);
+                self.persist_config();
+                Task::none()
+            }
+            Message::InputToggleStickDpad => {
+                let current = self.config.input.wii.stick_dpad.unwrap_or(true);
+                self.config.input.wii.stick_dpad = Some(!current);
+                self.persist_config();
+                Task::none()
+            }
+            Message::InputToggleInvert(target) => {
+                let field = input_settings::invert_field(&mut self.config.input, target);
+                *field = Some(!field.unwrap_or(false));
+                self.persist_config();
+                Task::none()
+            }
+            Message::InputReset => {
+                self.config.input = hostinput::InputConfig::default();
+                self.input_capture = None;
+                self.persist_config();
                 Task::none()
             }
             Message::AboutClose => {
@@ -524,12 +630,25 @@ impl App {
                 ..container::Style::default()
             });
 
-        let root_element: Element<'_, Message> = root.into();
+        let mut root_element: Element<'_, Message> = root.into();
         if self.about_open {
-            stack![root_element, self::about_overlay(palette)].into()
-        } else {
-            root_element
+            root_element = stack![root_element, self::about_overlay(palette)].into();
         }
+        if self.input_open {
+            root_element = stack![
+                root_element,
+                input_settings::overlay(
+                    palette,
+                    &self.config.input,
+                    self.input_tab,
+                    self.input_capture,
+                    self.input_pad_name.as_deref(),
+                )
+            ]
+            .into();
+        }
+
+        root_element
     }
 
     fn player_view<'a>(&'a self, window_id: window::Id, player: &'a PlayerWindow) -> Element<'a, Message> {
@@ -767,8 +886,16 @@ fn overlay_card(palette: &Palette, title: &str, detail: Option<&str>, error: boo
     stack![backdrop, centered].into()
 }
 
+fn pad_state() -> (Option<u32>, Option<String>) {
+    let service = hostinput::sdl::service();
+
+    let buttons = service.shared.lock().unwrap().map(|port| port.state.buttons);
+    let name = service.device.lock().unwrap().clone();
+
+    (buttons, name)
+}
+
 fn about_overlay(palette: &Palette) -> Element<'static, Message> {
-    let bg = palette.bg;
     let surface = palette.surface;
     let surface_2 = palette.surface_2;
     let border = palette.border;
@@ -777,10 +904,6 @@ fn about_overlay(palette: &Palette) -> Element<'static, Message> {
     let dim = palette.text_dim;
     let mute = palette.text_mute;
     let link_color = palette.accent;
-    let backdrop_color = Color {
-        a: 0.45,
-        ..(if palette.is_dark { Color::BLACK } else { palette.text })
-    };
 
     let link_button = button(text(REPO_URL).size(12).color(link_color))
         .on_press(Message::OpenUrl(REPO_URL.to_owned()))
@@ -801,88 +924,56 @@ fn about_overlay(palette: &Palette) -> Element<'static, Message> {
             }
         });
 
-    let card: Element<'static, Message> = container(
-        column![
-            text("Gecko").size(28).color(text_color),
-            text("GameCube / Wii emulator").size(13).color(dim),
-            link_button,
-            container(text(""))
-                .width(Length::Fill)
-                .height(1)
-                .style(move |_: &Theme| container::Style {
-                    background: Some(Background::Color(border)),
-                    ..container::Style::default()
-                }),
-            column![
-                text("Author").size(13).color(text_color),
-                text("Layle").size(12).color(dim),
-            ]
-            .spacing(2)
-            .align_x(iced::Alignment::Center),
-            column![
-                text("Acknowledgements").size(13).color(text_color),
-                text("zayd").size(12).color(dim),
-                text("vxpm").size(12).color(dim),
-                text("hazelwiss").size(12).color(dim),
-                text("Dolphin team").size(12).color(dim),
-            ]
-            .spacing(2)
-            .align_x(iced::Alignment::Center),
-            text(self::version_label()).size(11).color(mute),
-            button(text("Close").size(13))
-                .on_press(Message::AboutClose)
-                .padding(Padding::from([6, 14]))
-                .style(move |_: &Theme, status| {
-                    let button_bg = match status {
-                        button::Status::Hovered | button::Status::Pressed => surface_2,
-                        _ => surface,
-                    };
-                    button::Style {
-                        background: Some(Background::Color(button_bg)),
-                        text_color,
-                        border: Border {
-                            color: border_2,
-                            width: 1.0,
-                            radius: 6.0.into(),
-                        },
-                        ..button::Style::default()
-                    }
-                }),
-        ]
-        .spacing(8)
-        .align_x(iced::Alignment::Center),
-    )
-    .width(Length::Fixed(320.0))
-    .padding(24)
-    .style(move |_: &Theme| container::Style {
-        background: Some(Background::Color(bg)),
-        border: Border {
-            color: border_2,
-            width: 1.0,
-            radius: 12.0.into(),
-        },
-        ..container::Style::default()
-    })
-    .into();
-
-    let backdrop: Element<'static, Message> = mouse_area(
+    let content: Element<'static, Message> = column![
+        text("Gecko").size(28).color(text_color),
+        text("GameCube / Wii emulator").size(13).color(dim),
+        link_button,
         container(text(""))
             .width(Length::Fill)
-            .height(Length::Fill)
+            .height(1)
             .style(move |_: &Theme| container::Style {
-                background: Some(Background::Color(backdrop_color)),
+                background: Some(Background::Color(border)),
                 ..container::Style::default()
             }),
-    )
-    .on_press(Message::AboutClose)
+        column![
+            text("Author").size(13).color(text_color),
+            text("Layle").size(12).color(dim),
+        ]
+        .spacing(2)
+        .align_x(iced::Alignment::Center),
+        column![
+            text("Acknowledgements").size(13).color(text_color),
+            text("zayd").size(12).color(dim),
+            text("vxpm").size(12).color(dim),
+            text("hazelwiss").size(12).color(dim),
+            text("Dolphin team").size(12).color(dim),
+        ]
+        .spacing(2)
+        .align_x(iced::Alignment::Center),
+        text(self::version_label()).size(11).color(mute),
+        button(text("Close").size(13))
+            .on_press(Message::AboutClose)
+            .padding(Padding::from([6, 14]))
+            .style(move |_: &Theme, status| {
+                let button_bg = match status {
+                    button::Status::Hovered | button::Status::Pressed => surface_2,
+                    _ => surface,
+                };
+                button::Style {
+                    background: Some(Background::Color(button_bg)),
+                    text_color,
+                    border: Border {
+                        color: border_2,
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..button::Style::default()
+                }
+            }),
+    ]
+    .spacing(8)
+    .align_x(iced::Alignment::Center)
     .into();
 
-    let centered: Element<'static, Message> = container(card)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .into();
-
-    stack![backdrop, centered].into()
+    overlay::modal(palette, 320.0, 24.0, Message::AboutClose, content)
 }

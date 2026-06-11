@@ -17,6 +17,7 @@ pub struct Config {
     pub ipl: Option<PathBuf>,
     #[serde(default = "self::default_skip_ipl")]
     pub skip_ipl: bool,
+    pub input: hostinput::InputConfig,
 }
 
 fn default_skip_ipl() -> bool {
@@ -35,6 +36,7 @@ impl Default for Config {
             dsp_coef: None,
             ipl: None,
             skip_ipl: self::default_skip_ipl(),
+            input: hostinput::InputConfig::default(),
         }
     }
 }

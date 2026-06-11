@@ -160,8 +160,10 @@ pub(super) struct WiimoteState {
     nunchuk_cipher: Cipher,
     ir_pointer: Option<(u16, u16)>,
     accel: [u8; 3],
+    accel_override: Option<[u8; 3]>,
     shake_active: bool,
     shake_phase: f32,
+    rumble: bool,
     dirty: bool,
 }
 
@@ -193,8 +195,10 @@ impl Default for WiimoteState {
             nunchuk_cipher: Cipher::IDENTITY,
             ir_pointer: None,
             accel: ACCEL_REST,
+            accel_override: None,
             shake_active: false,
             shake_phase: 0.0,
+            rumble: false,
             dirty: false,
         }
     }
@@ -222,7 +226,26 @@ impl WiimoteState {
         self.shake_active = active;
     }
 
+    pub(super) fn rumble(&self) -> bool {
+        self.rumble
+    }
+
+    pub(super) fn set_accel(&mut self, accel: Option<[f32; 3]>) {
+        self.accel_override = accel.map(|g| [encode_wiimote_g(g[0]), encode_wiimote_g(g[1]), encode_wiimote_g(g[2])]);
+    }
+
     pub(super) fn tick_motion(&mut self) {
+        if let Some(accel) = self.accel_override {
+            self.shake_phase = 0.0;
+
+            if self.accel != accel {
+                self.accel = accel;
+                self.dirty = true;
+            }
+
+            return;
+        }
+
         if self.shake_active {
             self.shake_phase = (self.shake_phase + SHAKE_PHASE_STEP) % (2.0 * std::f32::consts::PI);
             let g = SHAKE_AMPLITUDE_G * self.shake_phase.sin();
@@ -351,6 +374,8 @@ impl WiimoteState {
         };
 
         tracing::debug!(report_id = ?report_id, "received Wiimote output report");
+
+        self.rumble = body.first().is_some_and(|b| b & 0x01 != 0);
 
         match report_id {
             OutputReportId::Rumble

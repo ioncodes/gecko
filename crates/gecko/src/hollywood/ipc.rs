@@ -99,6 +99,12 @@ pub trait IosDevice: Send {
 
     fn set_wiimote_shake(&mut self, _active: bool) {}
 
+    fn set_wiimote_accel(&mut self, _accel: Option<[f32; 3]>) {}
+
+    fn wiimote_rumble(&self) -> bool {
+        false
+    }
+
     fn set_nunchuk(&mut self, _buttons: u8, _stick_x: u8, _stick_y: u8) -> bool {
         false
     }

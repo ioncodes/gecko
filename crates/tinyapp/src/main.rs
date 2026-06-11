@@ -167,6 +167,10 @@ struct Args {
     #[arg(long)]
     wait: bool,
 
+    /// Wiimote pointer source: auto, gyro, stick, touchpad, or mouse
+    #[arg(long, default_value = "mouse")]
+    pointer: String,
+
     /// Force interpreter dispatch for CPU/DSP/Vertex (default: JIT)
     #[arg(long)]
     interpreter: bool,
@@ -404,6 +408,10 @@ fn run<const SYSTEM: SystemId>(
     let emu_start_gate = start_gate.clone();
     let emu_shutdown = shutdown_requested.clone();
     let fifo_record = args.fifo_record.clone();
+
+    let mut input_config = hostinput::InputConfig::default();
+    input_config.wii.pointer = Some(args.pointer.clone());
+
     drop(proxy);
     let emu_handle = std::thread::Builder::new()
         .name("emu".into())
@@ -411,6 +419,7 @@ fn run<const SYSTEM: SystemId>(
             thread::emu_thread::<SYSTEM>(
                 emulator,
                 emu_input,
+                input_config,
                 game_id,
                 throttle,
                 emu_start_gate,

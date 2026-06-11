@@ -20,6 +20,7 @@ hotpath-tui = ["hotpath", "hotpath/tui"]
 
 [dependencies]
 gecko = { path = "../gecko" }
+hostinput = { path = "../hostinput" }
 scripting = { path = "../scripting", optional = true }
 image = { path = "../image" }
 backend-wgpu = { path = "../backend-wgpu" }

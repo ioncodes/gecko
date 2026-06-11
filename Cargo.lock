@@ -2322,6 +2322,7 @@ dependencies = [
  "cpal",
  "futures",
  "gecko",
+ "hostinput",
  "iced",
  "iced_aw",
  "image 0.1.0",
@@ -2634,6 +2635,17 @@ name = "hexf-parse"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
+
+[[package]]
+name = "hostinput"
+version = "0.1.0"
+dependencies = [
+ "gecko",
+ "sdl3",
+ "serde",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "hotpath"
@@ -5580,6 +5592,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
+name = "rpkg-config"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a2d2f3481209a6b42eec2fbb49063fb4e8d35b57023401495d4fe0f85c817f0"
+
+[[package]]
 name = "rstest"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5837,6 +5855,100 @@ dependencies = [
  "memmap2 0.9.10",
  "smithay-client-toolkit 0.19.2",
  "tiny-skia",
+]
+
+[[package]]
+name = "sdl3"
+version = "0.18.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25bd22eb1bbc9137e914022b4994ed35591eea0884e9e3e98e6d9895cad6e1d2"
+dependencies = [
+ "bitflags 2.11.1",
+ "libc",
+ "sdl3-image-sys",
+ "sdl3-mixer-sys",
+ "sdl3-sys",
+ "sdl3-ttf-sys",
+]
+
+[[package]]
+name = "sdl3-image-src"
+version = "3.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe273101c7dab94551183212eee9adef1a7bf274d407f0b7bfe72482960ab25c"
+
+[[package]]
+name = "sdl3-image-sys"
+version = "0.6.4+SDL-image-3.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a445f781b39a1c1bc751f5f4612191e0402006e35ad5d02d9193281afad1cf4"
+dependencies = [
+ "cmake",
+ "pkg-config",
+ "rpkg-config",
+ "sdl3-image-src",
+ "sdl3-sys",
+ "vcpkg",
+]
+
+[[package]]
+name = "sdl3-mixer-src"
+version = "3.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cd815ae87084588c7dbd027c1667b0a5e21a6b5ae7b22ecb230bc21c7063eca"
+
+[[package]]
+name = "sdl3-mixer-sys"
+version = "0.6.3+SDL-mixer-3.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b5a157588924cf886bdc3a7c9d0e478cdad35d315740f26af00609a61e7c327"
+dependencies = [
+ "cmake",
+ "pkg-config",
+ "rpkg-config",
+ "sdl3-mixer-src",
+ "sdl3-sys",
+ "vcpkg",
+]
+
+[[package]]
+name = "sdl3-src"
+version = "3.4.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed4dcad85f1657d3424642ca2ed8f9f185212975baefda8972ac606494755a62"
+
+[[package]]
+name = "sdl3-sys"
+version = "0.6.6+SDL-3.4.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04e7f134def04ed72e6f55187c6c29c72f7dab5d359c4be0dd49c9b97fef59c7"
+dependencies = [
+ "cc",
+ "cmake",
+ "pkg-config",
+ "rpkg-config",
+ "sdl3-src",
+ "vcpkg",
+]
+
+[[package]]
+name = "sdl3-ttf-src"
+version = "3.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8deaa09c46d6aa8e8a81a601eb4685b2a57f2ce8a4ea3c59e8b623b526d1125"
+
+[[package]]
+name = "sdl3-ttf-sys"
+version = "0.6.1+SDL-ttf-3.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8137096072109d6c834d4cb30b8a617ded4f150c7766757eddc834108bbcefd2"
+dependencies = [
+ "cmake",
+ "pkg-config",
+ "rpkg-config",
+ "sdl3-sys",
+ "sdl3-ttf-src",
+ "vcpkg",
 ]
 
 [[package]]
@@ -6546,6 +6658,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "gecko",
+ "hostinput",
  "hotpath",
  "image 0.1.0",
  "mimalloc",
@@ -7004,6 +7117,12 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
+
+[[package]]
+name = "vcpkg"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "vello_common"

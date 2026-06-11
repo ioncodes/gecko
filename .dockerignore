@@ -26,3 +26,6 @@ perf.*
 !submodules/solstice/ipl/hle/
 !submodules/solstice/ipl/hle/ipl/
 !submodules/solstice/ipl/hle/ipl/gc_custom_ipl.bin
+
+docker/
+docker-build/

@@ -253,6 +253,14 @@ fn settings_menu(
             Message::MenuSetTheme(ThemePreference::Dark),
             Some(theme_pref == ThemePreference::Dark),
         )),
+        Item::new(self::separator(palette)),
+        Item::new(self::section_header(palette, "Input")),
+        Item::new(self::menu_item(
+            palette,
+            "Controller Bindings",
+            Message::MenuInputSettings,
+            None,
+        )),
     ])
     .max_width(240.0)
     .offset(4.0)

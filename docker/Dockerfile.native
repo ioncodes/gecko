@@ -1,21 +1,24 @@
-# Cross-compiles tinyapp, debugger and multitool for x86_64 Linux and Windows.
-# Produces a debug build and a release build separately. For the release build
-# only, all chipi bindings are switched from fn_ptr_lut to jump_table.
+# Cross-compiles tinyapp, debugger, multitool, gecko-app, fifoplayer and
+# input-probe for x86_64 Linux and Windows. Produces a debug build and a
+# release build separately. For the release build only, all chipi bindings are
+# switched from fn_ptr_lut to jump_table.
 #
 # Build:
 #   docker build -f Dockerfile.native --output type=local,dest=docker-build .
 #
 # Output:
-#   docker-build/debug/    {tinyapp, debugger, multitool}
-#   docker-build/release/  {tinyapp, debugger, multitool}
+#   docker-build/debug/    {tinyapp, debugger, multitool, gecko, fifoplayer, input-probe}
+#   docker-build/release/  {tinyapp, debugger, multitool, gecko, fifoplayer, input-probe}
 
 FROM rust:latest AS base
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         mingw-w64 \
+        cmake ninja-build \
         libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libxrandr-dev libxcursor-dev \
-        libasound2-dev \
+        libxss-dev libxtst-dev libxext-dev libxfixes-dev \
+        libasound2-dev libudev-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix \
@@ -26,6 +29,8 @@ ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
     CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++ \
     AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar
 
+RUN rustup target add x86_64-pc-windows-gnu
+
 WORKDIR /app
 COPY . .
 
@@ -33,18 +38,24 @@ COPY . .
 FROM base AS debug-build
 RUN cargo build --profile dev \
         --target x86_64-unknown-linux-gnu \
-        --package tinyapp --package debugger --package multitool \
+        --package tinyapp --package debugger --package multitool --package gecko-app --package fifoplayer --package hostinput \
  && cargo build --profile dev \
         --target x86_64-pc-windows-gnu \
-        --package tinyapp --package debugger --package multitool
+        --package tinyapp --package debugger --package multitool --package gecko-app --package fifoplayer --package hostinput
 
 RUN mkdir -p /out/debug \
  && cp target/x86_64-unknown-linux-gnu/debug/tinyapp /out/debug/ \
  && cp target/x86_64-unknown-linux-gnu/debug/debugger /out/debug/ \
  && cp target/x86_64-unknown-linux-gnu/debug/multitool /out/debug/ \
+ && cp target/x86_64-unknown-linux-gnu/debug/gecko /out/debug/ \
+ && cp target/x86_64-unknown-linux-gnu/debug/fifoplayer /out/debug/ \
+ && cp target/x86_64-unknown-linux-gnu/debug/input-probe /out/debug/ \
  && cp target/x86_64-pc-windows-gnu/debug/tinyapp.exe /out/debug/ \
  && cp target/x86_64-pc-windows-gnu/debug/debugger.exe /out/debug/ \
- && cp target/x86_64-pc-windows-gnu/debug/multitool.exe /out/debug/
+ && cp target/x86_64-pc-windows-gnu/debug/multitool.exe /out/debug/ \
+ && cp target/x86_64-pc-windows-gnu/debug/gecko.exe /out/debug/ \
+ && cp target/x86_64-pc-windows-gnu/debug/fifoplayer.exe /out/debug/ \
+ && cp target/x86_64-pc-windows-gnu/debug/input-probe.exe /out/debug/
 
 
 FROM base AS release-build
@@ -52,18 +63,24 @@ FROM base AS release-build
 
 RUN cargo build --release \
         --target x86_64-unknown-linux-gnu \
-        --package tinyapp --package debugger --package multitool \
+        --package tinyapp --package debugger --package multitool --package gecko-app --package fifoplayer --package hostinput \
  && cargo build --release \
         --target x86_64-pc-windows-gnu \
-        --package tinyapp --package debugger --package multitool
+        --package tinyapp --package debugger --package multitool --package gecko-app --package fifoplayer --package hostinput
 
 RUN mkdir -p /out/release \
  && cp target/x86_64-unknown-linux-gnu/release/tinyapp /out/release/ \
  && cp target/x86_64-unknown-linux-gnu/release/debugger /out/release/ \
  && cp target/x86_64-unknown-linux-gnu/release/multitool /out/release/ \
+ && cp target/x86_64-unknown-linux-gnu/release/gecko /out/release/ \
+ && cp target/x86_64-unknown-linux-gnu/release/fifoplayer /out/release/ \
+ && cp target/x86_64-unknown-linux-gnu/release/input-probe /out/release/ \
  && cp target/x86_64-pc-windows-gnu/release/tinyapp.exe /out/release/ \
  && cp target/x86_64-pc-windows-gnu/release/debugger.exe /out/release/ \
- && cp target/x86_64-pc-windows-gnu/release/multitool.exe /out/release/
+ && cp target/x86_64-pc-windows-gnu/release/multitool.exe /out/release/ \
+ && cp target/x86_64-pc-windows-gnu/release/gecko.exe /out/release/ \
+ && cp target/x86_64-pc-windows-gnu/release/fifoplayer.exe /out/release/ \
+ && cp target/x86_64-pc-windows-gnu/release/input-probe.exe /out/release/
 
 
 FROM scratch AS artifacts

@@ -67,6 +67,14 @@ impl IosDevice for Bluetooth {
         Bluetooth::set_wiimote_shake(self, active)
     }
 
+    fn set_wiimote_accel(&mut self, accel: Option<[f32; 3]>) {
+        self.wiimote.set_accel(accel);
+    }
+
+    fn wiimote_rumble(&self) -> bool {
+        self.wiimote.rumble()
+    }
+
     fn set_nunchuk(&mut self, buttons: u8, stick_x: u8, stick_y: u8) -> bool {
         Bluetooth::set_nunchuk(self, buttons, stick_x, stick_y)
     }

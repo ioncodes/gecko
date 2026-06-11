@@ -32,6 +32,7 @@ pub struct SerialInterface {
     pub exi_clock_count: u32,
     pub io_buffer: [u8; 128],
     pub pad_state: [PadStatus; NUM_CHANNELS],
+    pub rumble_motor: [u8; NUM_CHANNELS],
 }
 
 impl SerialInterface {
@@ -44,7 +45,13 @@ impl SerialInterface {
             exi_clock_count: 0,
             io_buffer: [0u8; 128],
             pad_state: [PadStatus::default(); NUM_CHANNELS],
+            rumble_motor: [0; NUM_CHANNELS],
         }
+    }
+
+    #[inline(always)]
+    pub fn rumble(&self, channel: usize) -> bool {
+        self.rumble_motor[channel] == 1
     }
 
     #[inline(always)]
@@ -120,6 +127,11 @@ impl SerialInterface {
             // EN0 is bit 7 of the 4-bit enable field, EN3 is bit 4
             let ch_enabled = (enable >> (3 - ch)) & 1 != 0;
             if ch_enabled && self.pad_state[ch].connected {
+                let out = self.channels[ch].out;
+                if (out >> 16) & 0xFF == 0x40 {
+                    self.rumble_motor[ch] = (out & 0x03) as u8;
+                }
+
                 self.channels[ch].in_hi = self.pad_state[ch].encode_hi();
                 self.channels[ch].in_lo = self.pad_state[ch].encode_lo();
                 self.set_rdst(ch);
@@ -147,6 +159,8 @@ impl SerialInterface {
                 }
                 // Return current pad data (8 bytes).
                 0x40 => {
+                    self.rumble_motor[channel] = self.io_buffer[2] & 0x03;
+
                     let hi = self.pad_state[channel].encode_hi();
                     let lo = self.pad_state[channel].encode_lo();
                     self.io_buffer[0..4].copy_from_slice(&hi.to_be_bytes());

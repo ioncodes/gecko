@@ -264,7 +264,7 @@ impl ApplicationHandler<UserEvent> for App {
                                 nunchuk_buttons,
                                 nunchuk_stick_x,
                                 nunchuk_stick_y,
-                                ir_pointer: _,
+                                ..
                             } => {
                                 update_wiimote_keys(wiimote_buttons, key, pressed);
                                 update_wiimote_motion_keys(wiimote_shake, key, pressed);

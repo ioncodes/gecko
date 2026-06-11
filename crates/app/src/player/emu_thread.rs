@@ -8,6 +8,7 @@ use std::time::Duration;
 pub fn run<const SYSTEM: SystemId>(
     mut emulator: System<SYSTEM>,
     input: Arc<Mutex<HostInput>>,
+    input_config: hostinput::InputConfig,
     game_id: Option<String>,
     throttle: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
@@ -15,7 +16,11 @@ pub fn run<const SYSTEM: SystemId>(
     let sleeper = SpinSleeper::default();
     let throttle_step = Duration::from_micros(5);
 
-    emulator.set_input_sink(Box::new(input.clone()));
+    emulator.set_input_sink(Box::new(hostinput::InputManager::new(
+        SYSTEM,
+        &input_config,
+        input.clone(),
+    )));
 
     while !shutdown.load(Ordering::Relaxed) {
         while throttle.load(Ordering::Relaxed) && emulator.audio_sink.should_throttle() {
@@ -25,8 +30,6 @@ pub fn run<const SYSTEM: SystemId>(
             sleeper.sleep(throttle_step);
         }
 
-        let input = *input.lock().unwrap();
-        emulator.apply_host_input(&input);
         emulator.run_until_vsync();
     }
 

@@ -595,6 +595,7 @@ impl McpServer {
                 .nunchuk_stick_y
                 .unwrap_or(gecko::hollywood::ipc::usb::NUNCHUK_STICK_CENTER),
             ir_pointer: args.ir_x.zip(args.ir_y),
+            accel: None,
         };
         let mut s = self.shared.state.lock().unwrap();
         s.backend.as_mut().unwrap().apply_host_input(&input);

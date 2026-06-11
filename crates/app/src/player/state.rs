@@ -24,6 +24,7 @@ struct BootParams {
     ipl_path: Option<PathBuf>,
     skip_ipl: bool,
     execution_mode: gecko::ExecutionMode,
+    input_config: hostinput::InputConfig,
 }
 
 struct Initialized {
@@ -82,6 +83,7 @@ impl PlayerState {
                 ipl_path: ipl,
                 skip_ipl: config.skip_ipl,
                 execution_mode: config.cpu_mode.into(),
+                input_config: config.input.clone(),
             })),
             initialized: OnceLock::new(),
             shutdown: Arc::new(AtomicBool::new(false)),
@@ -144,7 +146,7 @@ impl PlayerState {
                 nunchuk_buttons,
                 nunchuk_stick_x,
                 nunchuk_stick_y,
-                ir_pointer: _,
+                ..
             } => {
                 input::update_wiimote_keys(wiimote_buttons, key, pressed);
                 input::update_wiimote_motion_keys(wiimote_shake, key, pressed);
@@ -174,7 +176,7 @@ impl PlayerState {
         if self.platform != Platform::Wii {
             return;
         }
-        let (ir_x, ir_y) = self::aim_to_ir(aim_x, aim_y);
+        let (ir_x, ir_y) = gecko::input::aim_to_ir(aim_x, aim_y);
         let mut input_guard = self.input.lock().unwrap();
         if let HostInput::Wii { ir_pointer, .. } = &mut *input_guard {
             *ir_pointer = Some((ir_x, ir_y));
@@ -221,22 +223,6 @@ pub fn physical_to_code(physical: &Physical) -> Option<Code> {
     }
 }
 
-fn aim_to_ir(aim_x: f32, aim_y: f32) -> (u16, u16) {
-    const POINTER_SCALE_X: f64 = 0.44;
-    const POINTER_SCALE_Y: f64 = 0.66;
-    const POINTER_Y_OFFSET: f64 = 120.0;
-
-    let aim_x = (aim_x as f64).clamp(0.0, 1.0);
-    let aim_y = (aim_y as f64).clamp(0.0, 1.0);
-    let span_x = usb::IR_CAMERA_WIDTH as f64 * POINTER_SCALE_X;
-    let span_y = usb::IR_CAMERA_HEIGHT as f64 * POINTER_SCALE_Y;
-    let base_x = (usb::IR_CAMERA_WIDTH as f64 - span_x) / 2.0;
-    let base_y = (usb::IR_CAMERA_HEIGHT as f64 - span_y) / 2.0 + POINTER_Y_OFFSET;
-    let ir_x = (base_x + (1.0 - aim_x) * span_x) as u16;
-    let ir_y = (base_y + aim_y * span_y) as u16;
-    (ir_x, ir_y)
-}
-
 fn player_thread(
     state: Arc<PlayerState>,
     params: BootParams,
@@ -281,6 +267,7 @@ fn player_thread(
             emu_thread::run::<{ system::WII }>(
                 emu,
                 state.input.clone(),
+                params.input_config.clone(),
                 Some(game_id),
                 state.throttle.clone(),
                 shutdown,
@@ -296,6 +283,7 @@ fn player_thread(
             emu_thread::run::<{ system::GC }>(
                 emu,
                 state.input.clone(),
+                params.input_config.clone(),
                 Some(game_id),
                 state.throttle.clone(),
                 shutdown,

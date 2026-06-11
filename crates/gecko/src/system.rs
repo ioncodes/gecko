@@ -1,4 +1,3 @@
-use crate::input::InputSink;
 use crate::HostInput;
 use crate::audio::{AudioSink, EmptyAudioSink};
 use crate::dvd::DvdInterface;
@@ -19,6 +18,7 @@ use crate::hollywood::Hollywood;
 #[cfg(feature = "hooks")]
 use crate::hooks::{HookFilters, HookFlags, HookState, Host};
 use crate::host::{EmptyRenderSink, RenderSink};
+use crate::input::InputSink;
 use crate::mmio::Mmio;
 use crate::scheduler::Scheduler;
 use crate::starlet::Starlet;
@@ -664,6 +664,16 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         let input = sink.sample();
 
         self.apply_host_input(&input);
+
+        let rumble = if SYSTEM == WII {
+            self.starlet.wiimote_rumble()
+        } else {
+            self.si.rumble(0)
+        };
+
+        if let Some(sink) = self.input_sink.as_mut() {
+            sink.set_rumble(0, rumble);
+        }
     }
 
     pub fn apply_host_input(&mut self, input: &HostInput) {
@@ -678,12 +688,14 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 nunchuk_stick_x,
                 nunchuk_stick_y,
                 ir_pointer,
+                accel,
             } if SYSTEM == WII => {
                 self.starlet.set_wiimote_buttons(*wiimote_buttons);
                 self.starlet.set_wiimote_shake(*wiimote_shake);
                 self.starlet
                     .set_nunchuk(*nunchuk_buttons, *nunchuk_stick_x, *nunchuk_stick_y);
                 self.starlet.set_ir_pointer(*ir_pointer);
+                self.starlet.set_wiimote_accel(*accel);
             }
             _ => unreachable!("invalid host input for system"),
         }
