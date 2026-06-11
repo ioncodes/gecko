@@ -38,6 +38,7 @@ pub struct PlayerState {
     initialized: OnceLock<Initialized>,
     shutdown: Arc<AtomicBool>,
     throttle: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
     aspect: TargetAspect,
     upscale: u32,
     input: Arc<Mutex<HostInput>>,
@@ -91,6 +92,7 @@ impl PlayerState {
             initialized: OnceLock::new(),
             shutdown: Arc::new(AtomicBool::new(false)),
             throttle: Arc::new(AtomicBool::new(true)),
+            paused: Arc::new(AtomicBool::new(false)),
             aspect,
             upscale: config.upscale,
             input: Arc::new(Mutex::new(neutral)),
@@ -209,6 +211,14 @@ impl PlayerState {
         !self.throttle.fetch_xor(true, Ordering::Relaxed)
     }
 
+    pub fn toggle_pause(&self) {
+        self.paused.fetch_xor(true, Ordering::Relaxed);
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
+    }
+
     pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Relaxed);
     }
@@ -298,6 +308,7 @@ fn finish_boot<const S: gecko::system::SystemId>(
         params.input_config,
         Some(game_id),
         state.throttle.clone(),
+        state.paused.clone(),
         state.shutdown.clone(),
     );
 }

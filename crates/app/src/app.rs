@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use backend_wgpu::capture;
 use iced::theme::Mode;
-use iced::widget::{Stack, button, column, container, scrollable, stack, text};
+use iced::widget::{Stack, button, column, container, row, scrollable, stack, text};
 use iced::{Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, window};
 
 use crate::cache::{self, LibraryCache};
@@ -69,6 +69,7 @@ pub enum Message {
     PlayerToggleFullscreen(window::Id),
     PlayerToggleOverlay(window::Id),
     PlayerToggleUncapped(window::Id),
+    PlayerTogglePause(window::Id),
     PlayerScreenshot(window::Id),
 }
 
@@ -583,6 +584,12 @@ impl App {
                 player.toast = Some(Toast::new(title, detail));
                 Task::none()
             }
+            Message::PlayerTogglePause(id) => {
+                if let Some(player) = self.players.get(&id) {
+                    player.state.toggle_pause();
+                }
+                Task::none()
+            }
             Message::PlayerScreenshot(id) => {
                 let Some(player) = self.players.get_mut(&id) else {
                     return Task::none();
@@ -714,9 +721,10 @@ impl App {
         if let Some(ov) = overlay {
             layers.push(ov);
         }
-        if player.overlay {
-            let (fps, native_pct) = player.state.fps();
-            layers.push(self::stats_overlay(palette, fps, native_pct));
+        let paused = player.state.is_paused();
+        if player.overlay || paused {
+            let stats = player.overlay.then(|| player.state.fps());
+            layers.push(self::corner_overlay(palette, paused, stats));
         }
         if let Some(toast) = &player.toast {
             layers.push(self::toast_overlay(palette, toast));
@@ -837,17 +845,44 @@ fn corner_card<'a>(palette: &Palette, content: Element<'a, Message>) -> Element<
         .into()
 }
 
-fn stats_overlay(palette: &Palette, fps: f32, native_pct: f32) -> Element<'static, Message> {
-    let label = text(format!("{fps:.1} FPS  {native_pct:.0}%"))
-        .size(13)
-        .color(palette.text);
-    let card = self::corner_card(palette, label.into());
+fn corner_overlay(palette: &Palette, paused: bool, stats: Option<(f32, f32)>) -> Element<'static, Message> {
+    let mut cards = column![].spacing(8).align_x(iced::Alignment::End);
 
-    container(card)
+    if paused {
+        cards = cards.push(self::corner_card(palette, self::pause_icon(palette)));
+    }
+
+    if let Some((fps, native_pct)) = stats {
+        let label = text(format!("{fps:.1} FPS  {native_pct:.0}%"))
+            .size(13)
+            .color(palette.text);
+        cards = cards.push(self::corner_card(palette, label.into()));
+    }
+
+    container(cards)
         .width(Length::Fill)
         .align_x(iced::Alignment::End)
         .padding(12)
         .into()
+}
+
+fn pause_icon(palette: &Palette) -> Element<'static, Message> {
+    let bar_color = palette.text;
+    let bar = move || {
+        container(text(""))
+            .width(5)
+            .height(16)
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(bar_color)),
+                border: Border {
+                    radius: 1.5.into(),
+                    ..Border::default()
+                },
+                ..container::Style::default()
+            })
+    };
+
+    row![bar(), bar()].spacing(4).into()
 }
 
 fn toast_overlay<'a>(palette: &Palette, toast: &'a Toast) -> Element<'a, Message> {

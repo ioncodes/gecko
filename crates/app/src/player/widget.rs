@@ -38,8 +38,12 @@ impl Program<Message> for PlayerProgram {
     ) -> Option<shader::Action<Message>> {
         match event {
             iced::Event::Keyboard(kbd) => match kbd {
-                iced::keyboard::Event::KeyPressed { physical_key, .. } => {
+                iced::keyboard::Event::KeyPressed {
+                    physical_key, repeat, ..
+                } => {
                     let hotkey = match state::physical_to_code(physical_key) {
+                        Some(_) if *repeat => None,
+                        Some(Code::Space) => Some(Message::PlayerTogglePause(self.window)),
                         Some(Code::Tab) => Some(Message::PlayerToggleUncapped(self.window)),
                         Some(Code::F10) => Some(Message::PlayerToggleFullscreen(self.window)),
                         Some(Code::F11) => Some(Message::PlayerToggleOverlay(self.window)),

@@ -11,10 +11,12 @@ pub fn run<const SYSTEM: SystemId>(
     input_config: hostinput::InputConfig,
     game_id: Option<String>,
     throttle: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
 ) {
     let sleeper = SpinSleeper::default();
     let throttle_step = Duration::from_micros(5);
+    let pause_step = Duration::from_millis(10);
 
     emulator.set_input_sink(Box::new(hostinput::InputManager::new(
         SYSTEM,
@@ -23,6 +25,11 @@ pub fn run<const SYSTEM: SystemId>(
     )));
 
     while !shutdown.load(Ordering::Relaxed) {
+        if paused.load(Ordering::Relaxed) {
+            sleeper.sleep(pause_step);
+            continue;
+        }
+
         while throttle.load(Ordering::Relaxed) && emulator.audio_sink.should_throttle() {
             if shutdown.load(Ordering::Relaxed) {
                 break;
