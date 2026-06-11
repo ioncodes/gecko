@@ -53,14 +53,14 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ matrix.target }}-
+          key: ${{ matrix.os }}-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ matrix.os }}-${{ matrix.target }}-
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libxrandr-dev libxcursor-dev libasound2-dev
+          sudo apt-get install -y libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libxrandr-dev libxcursor-dev libxext-dev libxfixes-dev libxss-dev libxtst-dev libasound2-dev
 
       - name: Install mold linker
         if: runner.os == 'Linux'
@@ -127,6 +127,11 @@ jobs:
             target
           key: macos-universal-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: macos-universal-
+
+      - name: Configure macOS build environment
+        run: |
+          echo 'MACOSX_DEPLOYMENT_TARGET=11.0' >> $GITHUB_ENV
+          echo 'RUSTFLAGS=-C link-arg=-fapple-link-rtlib' >> $GITHUB_ENV
 
       - name: Patch Cargo.toml for CI builds
         shell: bash
