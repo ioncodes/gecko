@@ -140,11 +140,16 @@ impl Dsp {
     }
 
     pub fn rebuild_wait_table(&mut self) {
-        const OFFSETS: [i16; 3] = [0, -1, -3];
+        const SDK_OFFSETS: [i16; 3] = [0, -1, -3];
+        const IPL_OFFSETS: [i16; 5] = [0, -1, -2, -3, -5];
+
         for pc in 0u32..0x10000 {
             let pc = pc as u16;
-            let cpu = OFFSETS.iter().any(|&o| self.matches_cpu_mail_wait_at(pc, o));
-            let dsp = OFFSETS.iter().any(|&o| self.matches_dsp_mail_wait_at(pc, o));
+
+            let cpu = SDK_OFFSETS.iter().any(|&o| self.matches_cpu_mail_wait_at(pc, o))
+                || IPL_OFFSETS.iter().any(|&o| self.matches_ipl_cpu_mail_wait_at(pc, o));
+            let dsp = SDK_OFFSETS.iter().any(|&o| self.matches_dsp_mail_wait_at(pc, o));
+
             self.wait_table[pc as usize] = (cpu as u8) | ((dsp as u8) << 1);
         }
     }
@@ -157,6 +162,12 @@ impl Dsp {
         let pattern_c = [0x26FE, 0x02A0, 0x8000, 0x029D, start];
         let pattern_d = [0x27FE, 0x03A0, 0x8000, 0x029D, start];
         words == pattern_a || words == pattern_b || words == pattern_c || words == pattern_d
+    }
+
+    fn matches_ipl_cpu_mail_wait_at(&self, pc: u16, offset: i16) -> bool {
+        let start = pc.wrapping_add_signed(offset);
+        let words = self.read_imem_window::<7>(start);
+        words == [0x8100, 0x8900, 0x26FE, 0x02C0, 0x8000, 0x029C, start]
     }
 
     fn matches_dsp_mail_wait_at(&self, pc: u16, offset: i16) -> bool {
