@@ -36,7 +36,9 @@ pub enum Message {
     SearchChanged(String),
     MenuChooseLibrary(Platform),
     MenuOpenGame,
+    MenuOpenDol(Platform),
     GameFilePicked(Option<PathBuf>),
+    DolFilePicked(Platform, Option<PathBuf>),
     GameFileLoaded(Result<Box<Game>, String>),
     MenuRescan,
     MenuQuit,
@@ -323,6 +325,23 @@ impl App {
                 },
                 Message::GameFilePicked,
             ),
+            Message::MenuOpenDol(platform) => {
+                let title = match platform {
+                    Platform::Gcn => "Open GameCube DOL",
+                    Platform::Wii => "Open Wii DOL",
+                };
+                Task::perform(
+                    async move {
+                        rfd::AsyncFileDialog::new()
+                            .set_title(title)
+                            .add_filter("DOL executables", &["dol"])
+                            .pick_file()
+                            .await
+                            .map(|h| h.path().to_path_buf())
+                    },
+                    move |opt| Message::DolFilePicked(platform, opt),
+                )
+            }
             Message::GameFilePicked(None) => Task::none(),
             Message::GameFilePicked(Some(path)) => {
                 let Some(format) = Format::from_path(&path) else {
@@ -339,6 +358,15 @@ impl App {
                     Message::GameFileLoaded,
                 )
             }
+            Message::DolFilePicked(_, None) => Task::none(),
+            Message::DolFilePicked(platform, Some(path)) => Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || library::load_dol(&path, platform).map(Box::new))
+                        .await
+                        .unwrap_or_else(|err| Err(err.to_string()))
+                },
+                Message::GameFileLoaded,
+            ),
             Message::GameFileLoaded(Err(err)) => {
                 tracing::warn!(%err, "failed to load picked game");
                 Task::none()

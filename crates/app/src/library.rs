@@ -6,7 +6,7 @@ use futures::stream::Stream;
 use walkdir::WalkDir;
 
 use crate::cache::{CacheEntry, FileFingerprint, LibraryCache};
-use crate::game::{Format, Game};
+use crate::game::{Format, Game, Platform};
 
 #[derive(Debug, Clone)]
 pub enum ScanProgress {
@@ -143,4 +143,9 @@ pub fn load_one(path: &Path, format: Format) -> Result<Game, String> {
         Game::from_dvd(path, dvd.as_ref(), format)
     }));
     result.map_err(|_| "image::load_dvd panicked".to_owned())
+}
+
+pub fn load_dol(path: &Path, platform: Platform) -> Result<Game, String> {
+    let data = std::fs::read(path).map_err(|e| e.to_string())?;
+    Ok(Game::from_dol(path, &data, platform))
 }

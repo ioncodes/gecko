@@ -221,15 +221,17 @@ fn main() {
     //   --ipl [+ --dvd] : GameCube real IPL boot (with_ipl)
     //   --dvd <path>    : autodetect Wii vs GC, HLE boot via apploader
     if let Some(ref dol) = args.dol {
-        let dol = Dol::parse(std::fs::read(dol).expect("failed to read DOL"));
+        let data = std::fs::read(dol).expect("failed to read DOL");
+        let game_id = gecko::jit::cache::dol_cache_id(&data);
+        let dol = Dol::parse(data);
         if args.wii {
             let mut emulator = Wii::with_image(&dol);
             configure(&mut emulator, &args);
-            run(emulator, present_mode, &args, None);
+            run(emulator, present_mode, &args, Some(game_id));
         } else {
             let mut emulator = GameCube::with_image(&dol);
             configure(&mut emulator, &args);
-            run(emulator, present_mode, &args, None);
+            run(emulator, present_mode, &args, Some(game_id));
         }
     } else if let Some(ref ipl_path) = args.ipl {
         let ipl_data = std::fs::read(ipl_path).expect("failed to read IPL");

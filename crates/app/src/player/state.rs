@@ -14,11 +14,12 @@ use iced::keyboard::key::{Code, Physical};
 use iced::mouse::Button as MouseButton;
 
 use crate::config::{Config, DSP_COEF_FILE, DSP_ROM_FILE, IPL_FILE};
-use crate::game::{Game, Platform};
+use crate::game::{Format, Game, Platform};
 use crate::player::{audio, emu_thread, input};
 
 struct BootParams {
     disc_path: PathBuf,
+    format: Format,
     dsp_path: Option<PathBuf>,
     coef_path: Option<PathBuf>,
     ipl_path: Option<PathBuf>,
@@ -74,11 +75,12 @@ impl PlayerState {
         let dsp = Config::resolve_in_dir(&config.dsp_rom, &system_dir, DSP_ROM_FILE);
         let coef = Config::resolve_in_dir(&config.dsp_coef, &system_dir, DSP_COEF_FILE);
         let ipl = Config::resolve_in_dir(&config.ipl, &system_dir, IPL_FILE);
-        let boot_error = self::validate(game.platform, &dsp, &coef, &ipl, &system_dir);
+        let boot_error = self::validate(game.platform, game.format, &dsp, &coef, &ipl, &system_dir);
 
         Arc::new(Self {
             boot: Mutex::new(Some(BootParams {
                 disc_path: game.path.clone(),
+                format: game.format,
                 dsp_path: dsp,
                 coef_path: coef,
                 ipl_path: ipl,
@@ -232,66 +234,72 @@ fn player_thread(
     queue: wgpu::Queue,
     format: wgpu::TextureFormat,
 ) {
-    let shutdown = state.shutdown.clone();
     tracing::warn!(?format, path = %params.disc_path.display(), "player booting");
 
-    let dvd_data = match std::fs::read(&params.disc_path) {
+    let data = match std::fs::read(&params.disc_path) {
         Ok(b) => b,
         Err(err) => {
             tracing::error!(?err, path = %params.disc_path.display(), "read disc");
             return;
         }
     };
-    if shutdown.load(Ordering::Relaxed) {
+    if state.shutdown.load(Ordering::Relaxed) {
         return;
     }
-    let dvd = image::load_dvd(dvd_data);
-    let game_id = dvd.header().game_id();
 
     let (renderer, sink) = Renderer::new(device, queue, format, state.aspect, state.upscale);
     {
         let first_frame = state.first_frame.clone();
         renderer.set_frame_ready_callback(move |_| {
-            if !first_frame.swap(true, Ordering::Relaxed) {
-                tracing::warn!("first emu frame ready");
-            }
+            first_frame.store(true, Ordering::Relaxed);
         });
     }
 
-    match state.platform {
-        Platform::Wii => {
-            let mut emu = Wii::apploader_hle(dvd).build();
-            self::configure_emu(&mut emu, &params, sink, state.fps.clone());
-            emu.apply_host_input(&HostInput::neutral_for(system::WII));
-            let audio = self::install_audio_sink(&mut emu);
-            let _ = emu.load_jit_cache(&game_id);
-            self::set_initialized(&state, renderer, audio, &game_id);
-            emu_thread::run::<{ system::WII }>(
-                emu,
-                state.input.clone(),
-                params.input_config.clone(),
-                Some(game_id),
-                state.throttle.clone(),
-                shutdown,
-            );
+    if params.format == Format::Dol {
+        let game_id = gecko::jit::cache::dol_cache_id(&data);
+        let dol = image::Dol::parse(data);
+        match state.platform {
+            Platform::Wii => self::finish_boot(state, params, renderer, sink, Wii::with_image(&dol), game_id),
+            Platform::Gcn => self::finish_boot(state, params, renderer, sink, GameCube::with_image(&dol), game_id),
         }
+        return;
+    }
+
+    let dvd = image::load_dvd(data);
+    let game_id = dvd.header().game_id();
+
+    match state.platform {
+        Platform::Wii => self::finish_boot(state, params, renderer, sink, Wii::apploader_hle(dvd).build(), game_id),
         Platform::Gcn => {
-            let mut emu = self::build_gamecube(dvd, &params);
-            self::configure_emu(&mut emu, &params, sink, state.fps.clone());
-            emu.apply_host_input(&HostInput::neutral_for(system::GC));
-            let audio = self::install_audio_sink(&mut emu);
-            let _ = emu.load_jit_cache(&game_id);
-            self::set_initialized(&state, renderer, audio, &game_id);
-            emu_thread::run::<{ system::GC }>(
-                emu,
-                state.input.clone(),
-                params.input_config.clone(),
-                Some(game_id),
-                state.throttle.clone(),
-                shutdown,
-            );
+            let emu = self::build_gamecube(dvd, &params);
+            self::finish_boot(state, params, renderer, sink, emu, game_id);
         }
     }
+}
+
+fn finish_boot<const S: gecko::system::SystemId>(
+    state: Arc<PlayerState>,
+    params: BootParams,
+    renderer: Renderer,
+    sink: backend_wgpu::sink::ThreadedSink,
+    mut emu: gecko::system::System<S>,
+    game_id: String,
+) {
+    self::configure_emu(&mut emu, &params, sink, state.fps.clone());
+    emu.apply_host_input(&HostInput::neutral_for(S));
+
+    let audio = self::install_audio_sink(&mut emu);
+    let _ = emu.load_jit_cache(&game_id);
+    self::set_initialized(&state, renderer, audio, &game_id);
+
+    emu_thread::run::<S>(
+        emu,
+        state.input.clone(),
+        params.input_config,
+        Some(game_id),
+        state.throttle.clone(),
+        state.shutdown.clone(),
+    );
 }
 
 fn build_gamecube(dvd: Box<dyn image::Dvd>, params: &BootParams) -> gecko::system::System<{ system::GC }> {
@@ -334,6 +342,7 @@ fn set_initialized(state: &Arc<PlayerState>, renderer: Renderer, audio: Option<c
 
 fn validate(
     platform: Platform,
+    format: Format,
     dsp: &Option<PathBuf>,
     coef: &Option<PathBuf>,
     ipl: &Option<PathBuf>,
@@ -346,7 +355,7 @@ fn validate(
     if coef.is_none() {
         missing.push(DSP_COEF_FILE);
     }
-    if platform == Platform::Gcn && ipl.is_none() {
+    if platform == Platform::Gcn && format != Format::Dol && ipl.is_none() {
         missing.push(IPL_FILE);
     }
 
@@ -354,9 +363,13 @@ fn validate(
         return None;
     }
 
-    let needed = match platform {
-        Platform::Gcn => "GameCube games require IPL.bin, dsp_rom.bin and dsp_coef.bin",
-        Platform::Wii => "Wii games require dsp_rom.bin and dsp_coef.bin",
+    let needed = if format == Format::Dol {
+        "DOL executables require dsp_rom.bin and dsp_coef.bin"
+    } else {
+        match platform {
+            Platform::Gcn => "GameCube games require IPL.bin, dsp_rom.bin and dsp_coef.bin",
+            Platform::Wii => "Wii games require dsp_rom.bin and dsp_coef.bin",
+        }
     };
 
     Some(format!(

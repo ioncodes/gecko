@@ -77,6 +77,7 @@ pub enum Format {
     Iso,
     Rvz,
     Zip,
+    Dol,
 }
 
 impl Format {
@@ -95,6 +96,7 @@ impl Format {
             Format::Iso => "ISO",
             Format::Rvz => "RVZ",
             Format::Zip => "ZIP",
+            Format::Dol => "DOL",
         }
     }
 }
@@ -183,6 +185,33 @@ impl Game {
             platform,
             format,
             banner,
+            title_lc,
+            file_name_lc,
+            game_id_lc,
+            banner_handle: Arc::new(OnceLock::new()),
+        }
+    }
+
+    pub fn from_dol(path: &Path, data: &[u8], platform: Platform) -> Self {
+        let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_owned();
+        let title = path.file_stem().and_then(|s| s.to_str()).unwrap_or("DOL").to_owned();
+        let game_id = gecko::jit::cache::dol_cache_id(data);
+
+        let title_lc = title.to_lowercase();
+        let file_name_lc = file_name.to_lowercase();
+        let game_id_lc = game_id.to_lowercase();
+
+        Game {
+            path: path.to_owned(),
+            file_name,
+            game_id,
+            maker_code: String::new(),
+            disc_id: 0,
+            title,
+            region: Region::Unknown,
+            platform,
+            format: Format::Dol,
+            banner: None,
             title_lc,
             file_name_lc,
             game_id_lc,

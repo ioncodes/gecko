@@ -430,7 +430,9 @@ fn main() {
 
     let mut game_id: Option<String> = None;
     let mut emulator = if let Some(ref dol) = args.dol {
-        let dol = Dol::parse(std::fs::read(dol).expect("failed to read DOL"));
+        let data = std::fs::read(dol).expect("failed to read DOL");
+        game_id = Some(gecko::jit::cache::dol_cache_id(&data));
+        let dol = Dol::parse(data);
         if args.wii {
             EmulatorVariant::Wii(Wii::with_image(&dol))
         } else {

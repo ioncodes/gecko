@@ -184,6 +184,18 @@ fn section_header(palette: &Palette, label: &'static str) -> Element<'static, Me
 fn file_menu(palette: &Palette) -> Menu<'static, Message, iced::Theme, iced::Renderer> {
     Menu::new(vec![
         Item::new(self::menu_item(palette, "Open Game", Message::MenuOpenGame, None)),
+        Item::new(self::menu_item(
+            palette,
+            "Open GameCube DOL",
+            Message::MenuOpenDol(Platform::Gcn),
+            None,
+        )),
+        Item::new(self::menu_item(
+            palette,
+            "Open Wii DOL",
+            Message::MenuOpenDol(Platform::Wii),
+            None,
+        )),
         Item::new(self::separator(palette)),
         Item::new(self::menu_item(
             palette,
