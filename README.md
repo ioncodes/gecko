@@ -92,7 +92,79 @@ It scans the configured GameCube and Wii folders for `.iso`, `.rvz` and `.zip` f
 
 ### Controls
 
-Keybindings are currently hardcoded!
+Gamepads are supported on all frontends through SDL3. Xbox, DualSense (PS5) and anything else SDL recognizes works out of the box. Keyboard and mouse stay active.
+
+On Wii, the pointer source is picked automatically based on what the connected gamepad can do: gyro aiming on a DualSense (press `R3` to recenter), right stick otherwise, mouse as the fallback. The DualSense touchpad can also act as an pointer. Its accelerometer drives Wiimote motion directly, so physically shaking the controller shakes the Wiimote. Pads without motion sensors use `R1` as a shake button instead. The right stick doubles as the Wiimote D-pad whenever it is not serving as the pointer, and game rumble is forwarded to the controller on both GameCube and Wii.
+
+Bindings, pointer source, sensitivity and axis inversion are configurable in `gecko` under `Settings > Controller Bindings`, persisted in the `[input]` section of `config.toml` (see [`other/example.conf`](other/example.conf) for every option). `tinyapp` uses the default bindings and points with the mouse. Pass `--pointer gyro|stick|touchpad|auto` to override.
+
+> [!NOTE]
+> DualSense motion sensors and rumble on Linux require hidraw permissions. Install the `steam-devices` package (or an equivalent udev rule for `054c:0ce6`) and replug the controller. Without it the pad still works, but falls back to buttons and sticks only.
+
+<details>
+<summary>Default gamepad bindings</summary>
+
+#### GameCube
+
+| Gamepad     | Action          |
+| ----------- | --------------- |
+| Left stick  | Main stick      |
+| Right stick | C-stick         |
+| D-pad       | D-pad           |
+| `South`     | A               |
+| `West`      | B               |
+| `East`      | X               |
+| `North`     | Y               |
+| `Start`     | Start           |
+| `L2` `R2`   | L / R (analog)  |
+| `R1`        | Z               |
+
+#### Wii
+
+| Gamepad      | Action                       |
+| ------------ | ---------------------------- |
+| Gyro         | IR pointer (if available)    |
+| Right stick  | IR pointer or D-pad          |
+| Left stick   | Nunchuk stick                |
+| D-pad        | D-pad                        |
+| `South`      | A                            |
+| `R2`         | B                            |
+| `West`       | 1                            |
+| `North`      | 2                            |
+| `Start`      | Plus                         |
+| `Select`     | Minus                        |
+| `Guide`      | Home                         |
+| `L1`         | Nunchuk C                    |
+| `L2`         | Nunchuk Z                    |
+| `R1`         | Shake (pads without sensors) |
+| `R3`         | Recenter pointer             |
+
+</details>
+
+<details>
+<summary>Hotkeys</summary>
+
+`tinyapp` and `debugger`:
+
+| Key     | Action                                                             |
+| ------- | ------------------------------------------------------------------ |
+| `Space` | Start emulation from the splash screen (`--wait` flag)             |
+| `F10`   | Trigger a RenderDoc capture (requires `renderdoc-capture` feature) |
+| `F11`   | Screenshot the full window                                         |
+| `F12`   | Screenshot the emulated framebuffer only                           |
+
+`gecko` player window:
+
+| Key   | Action                                                                |
+| ----- | --------------------------------------------------------------------- |
+| `F10` | Toggle borderless fullscreen                                          |
+| `F11` | Toggle the FPS and emulation speed overlay                            |
+| `F12` | Screenshot the emulated framebuffer to `<gecko exe dir>/screenshots/` |
+
+</details>
+
+<details>
+<summary>Keyboard bindings (hardcoded)</summary>
 
 #### GameCube
 
@@ -134,24 +206,7 @@ Nunchuk:
 | `Q`             | Z            |
 | `E`             | C            |
 
-#### Global
-
-`tinyapp` and `debugger`:
-
-| Key     | Action                                                             |
-| ------- | ------------------------------------------------------------------ |
-| `Space` | Start emulation from the splash screen (`--wait` flag)             |
-| `F10`   | Trigger a RenderDoc capture (requires `renderdoc-capture` feature) |
-| `F11`   | Screenshot the full window                                         |
-| `F12`   | Screenshot the emulated framebuffer only                           |
-
-`gecko` player window:
-
-| Key   | Action                                                                |
-| ----- | --------------------------------------------------------------------- |
-| `F10` | Toggle borderless fullscreen                                          |
-| `F11` | Toggle the FPS and emulation speed overlay                            |
-| `F12` | Screenshot the emulated framebuffer to `<gecko exe dir>/screenshots/` |
+</details>
 
 ## Required files
 
