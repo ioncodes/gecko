@@ -161,6 +161,7 @@ jobs:
 
       - name: Configure macOS build environment
         run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
           echo 'MACOSX_DEPLOYMENT_TARGET=11.0' >> $GITHUB_ENV
           echo 'RUSTFLAGS=-C link-arg=-fapple-link-rtlib' >> $GITHUB_ENV
 
