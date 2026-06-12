@@ -9,7 +9,8 @@ permissions:
   contents: write
 
 env:
-  PACKAGES: -p debugger -p multitool -p gecko-app -p tinyapp -p fifoplayer
+  PACKAGES_QUIET: -p gecko-app -p tinyapp -p fifoplayer
+  PACKAGES_TRACED: -p debugger -p multitool
   BINARIES: tinyapp debugger multitool gecko fifoplayer
 
 jobs:
@@ -71,7 +72,9 @@ jobs:
           perl -pi -e 's/^#codegen-units = 1$/codegen-units = 1/' Cargo.toml
 
       - name: Build (release)
-        run: cargo build --release --target ${{ matrix.target }} ${{ env.PACKAGES }}
+        run: |
+          cargo build --release --target ${{ matrix.target }} ${{ env.PACKAGES_QUIET }}
+          cargo build --release --target ${{ matrix.target }} ${{ env.PACKAGES_TRACED }}
 
       - name: Package artifacts
         shell: bash
@@ -134,8 +137,10 @@ jobs:
 
       - name: Build (release, both arches)
         run: |
-          cargo build --release --target aarch64-apple-darwin ${{ env.PACKAGES }}
-          cargo build --release --target x86_64-apple-darwin  ${{ env.PACKAGES }}
+          cargo build --release --target aarch64-apple-darwin ${{ env.PACKAGES_QUIET }}
+          cargo build --release --target aarch64-apple-darwin ${{ env.PACKAGES_TRACED }}
+          cargo build --release --target x86_64-apple-darwin  ${{ env.PACKAGES_QUIET }}
+          cargo build --release --target x86_64-apple-darwin  ${{ env.PACKAGES_TRACED }}
 
       - name: Lipo + package universal binaries
         shell: bash

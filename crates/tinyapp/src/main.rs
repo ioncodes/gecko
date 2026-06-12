@@ -200,21 +200,23 @@ fn main() {
         wgpu::PresentMode::Fifo
     };
 
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"))
-        .add_directive("cranelift_jit=warn".parse().unwrap())
-        .add_directive("cranelift_codegen=warn".parse().unwrap())
-        .add_directive("cranelift_frontend=warn".parse().unwrap())
-        .add_directive("regalloc2=warn".parse().unwrap())
-        .add_directive("wgpu_core=warn".parse().unwrap())
-        .add_directive("wgpu_hal=warn".parse().unwrap())
-        .add_directive("naga=warn".parse().unwrap());
+    if tracing::level_filters::STATIC_MAX_LEVEL != tracing::level_filters::LevelFilter::OFF {
+        let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"))
+            .add_directive("cranelift_jit=warn".parse().unwrap())
+            .add_directive("cranelift_codegen=warn".parse().unwrap())
+            .add_directive("cranelift_frontend=warn".parse().unwrap())
+            .add_directive("regalloc2=warn".parse().unwrap())
+            .add_directive("wgpu_core=warn".parse().unwrap())
+            .add_directive("wgpu_hal=warn".parse().unwrap())
+            .add_directive("naga=warn".parse().unwrap());
 
-    tracing_subscriber::fmt()
-        .without_time()
-        .with_ansi(!args.no_ansi)
-        .with_env_filter(env_filter)
-        .init();
+        tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(!args.no_ansi)
+            .with_env_filter(env_filter)
+            .init();
+    }
 
     // Boot dispatch:
     //   --dol           : GameCube homebrew (with_image), or Wii if --wii

@@ -51,19 +51,21 @@ struct Args {
 }
 
 fn main() {
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
-        .add_directive("cranelift_jit=warn".parse().unwrap())
-        .add_directive("cranelift_codegen=warn".parse().unwrap())
-        .add_directive("cranelift_frontend=warn".parse().unwrap())
-        .add_directive("regalloc2=warn".parse().unwrap())
-        .add_directive("wgpu_core=warn".parse().unwrap())
-        .add_directive("wgpu_hal=warn".parse().unwrap())
-        .add_directive("naga=warn".parse().unwrap());
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .without_time()
-        .init();
+    if tracing::level_filters::STATIC_MAX_LEVEL != tracing::level_filters::LevelFilter::OFF {
+        let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+            .add_directive("cranelift_jit=warn".parse().unwrap())
+            .add_directive("cranelift_codegen=warn".parse().unwrap())
+            .add_directive("cranelift_frontend=warn".parse().unwrap())
+            .add_directive("regalloc2=warn".parse().unwrap())
+            .add_directive("wgpu_core=warn".parse().unwrap())
+            .add_directive("wgpu_hal=warn".parse().unwrap())
+            .add_directive("naga=warn".parse().unwrap());
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .without_time()
+            .init();
+    }
 
     let args = Args::parse();
 

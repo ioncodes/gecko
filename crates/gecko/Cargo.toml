@@ -33,7 +33,7 @@ chipi-build = "0.9.1"
 [dependencies]
 chapa = "0.1.2"
 dff = { path = "../dff" }
-tracing = { version = "0.1.44", features = ["release_max_level_off"] }
+tracing = "0.1.44"
 image = { path = "../image", default-features = false }
 disasm = { path = "../disasm" }
 glam = { version = "0.32.1", features = ["bytemuck"] }

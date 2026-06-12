@@ -1,236 +1,1544 @@
 {
-  "R25E": [
+  "R25EWR": [
     {
       "internal_name": "LEGO Harry Potter",
       "filename": "LEGO Harry Potter - Years 1-4 (USA) (En,Fr,Es)"
     }
   ],
-  "R5PE": [
+  "R2IE69": [
+    {
+      "internal_name": "Madden NFL 10",
+      "filename": "Madden NFL 10 (USA)"
+    }
+  ],
+  "R2SE18": [
+    {
+      "internal_name": "DECA SPORTS 2",
+      "filename": "Deca Sports 2 (USA) (En,Fr,Es)"
+    }
+  ],
+  "R3BE8P": [
+    {
+      "internal_name": "SambaDeAmigo",
+      "filename": "Samba de Amigo (USA) (En,Fr,Es)"
+    }
+  ],
+  "R3EEWR": [
+    {
+      "internal_name": "Game Party 3",
+      "filename": "Game Party 3 (USA) (En,Fr,Es)"
+    }
+  ],
+  "R3OE01": [
+    {
+      "internal_name": "Metroid: Other M",
+      "filename": "Metroid - Other M (USA) (En,Fr,Es) (Rev 1)"
+    }
+  ],
+  "R3RE8P": [
+    {
+      "internal_name": "Sonic & Sega All-Stars Racing",
+      "filename": "Sonic & Sega All-Stars Racing (USA) (En,Fr,Es)"
+    }
+  ],
+  "R3VEFP": [
+    {
+      "internal_name": "DEER DRIVE",
+      "filename": "Deer Drive (USA)"
+    }
+  ],
+  "R42E69": [
+    {
+      "internal_name": "The Sims 2 Castaway",
+      "filename": "Sims 2, The - Castaway (USA)"
+    }
+  ],
+  "R43E69": [
+    {
+      "internal_name": "EA Sports Active",
+      "filename": "EA Sports Active - Personal Trainer (USA) (En,Fr)"
+    }
+  ],
+  "R4EE01": [
+    {
+      "internal_name": "Endless Ocean 2",
+      "filename": "Endless Ocean - Blue World (USA)"
+    }
+  ],
+  "R4QE01": [
+    {
+      "internal_name": "Mario Strikers Charged",
+      "filename": "Mario Strikers Charged (USA) (En,Fr,Es) (Rev 1)"
+    }
+  ],
+  "R4RP69": [
+    {
+      "internal_name": "FIFA 10",
+      "filename": "FIFA 10 (EU)"
+    }
+  ],
+  "R59E4Q": [
+    {
+      "internal_name": "Club Penguin Wii",
+      "filename": "Disney Club Penguin - Game Day! (USA) (En,Fr,Es)"
+    }
+  ],
+  "R5IE4Q": [
+    {
+      "internal_name": "TSMania",
+      "filename": "Disney-Pixar Toy Story Mania! (USA) (En,Fr,Es)"
+    }
+  ],
+  "R5PE69": [
     {
       "internal_name": "HPOOTP_WII_US_Final_164780",
       "filename": "Harry Potter and the Order of the Phoenix (USA)"
     }
   ],
-  "R7FE": [
+  "R5TJ13": [
+    {
+      "internal_name": "Grand Slam Tennis",
+      "filename": "Grand Slam Tennis (JP)"
+    }
+  ],
+  "R5VE41": [
+    {
+      "internal_name": "avatar-master-us-v645",
+      "filename": "James Cameron's Avatar - The Game (USA) (En,Fr,Es)"
+    }
+  ],
+  "R62E4Q": [
+    {
+      "internal_name": "Disney Sing It: Pop Hits",
+      "filename": "Disney Sing It - Pop Hits (USA) (En,Fr,Es)"
+    }
+  ],
+  "R64E01": [
+    {
+      "internal_name": "RVL Wii Music",
+      "filename": "Wii Music (USA) (En,Fr,Es)"
+    }
+  ],
+  "R6BE78": [
+    {
+      "internal_name": "Blob07",
+      "filename": "de Blob (USA) (En,Fr,Es)"
+    }
+  ],
+  "R6LEWR": [
+    {
+      "internal_name": "LEGO Rock Band",
+      "filename": "LEGO Rock Band (USA) (En,Fr,Es)"
+    }
+  ],
+  "R6OE78": [
+    {
+      "internal_name": "Cars: Race-O-Rama",
+      "filename": "Disney-Pixar Cars - Race-O-Rama (USA) (En,Fr)"
+    }
+  ],
+  "R6QE69": [
+    {
+      "internal_name": "MySims Agents",
+      "filename": "MySims Agents (USA) (En,Fr,Es)"
+    }
+  ],
+  "R6XE69": [
+    {
+      "internal_name": "HASBRO FAMILY GAME NIGHT 2",
+      "filename": "Hasbro Family Game Night 2 (USA) (En,Fr,Es)"
+    }
+  ],
+  "R7FEGD": [
     {
       "internal_name": "FINAL FANTASY FABLES: Chocobo's Dungeon",
       "filename": "Final Fantasy Fables - Chocobo's Dungeon (USA)"
     }
   ],
-  "R8AE": [
+  "R7PE01": [
+    {
+      "internal_name": "Punch Out",
+      "filename": "Punch-Out!! (USA) (En,Fr,Es)"
+    }
+  ],
+  "R7XE69": [
+    {
+      "internal_name": "NFS Montreal",
+      "filename": "Need for Speed - Nitro (USA) (En,Fr,Es)"
+    }
+  ],
+  "R84EE9": [
+    {
+      "internal_name": "Harvest Moon: Tree of Tranquility",
+      "filename": "Harvest Moon - Tree of Tranquility (USA) (Rev 1)"
+    }
+  ],
+  "R8AE01": [
     {
       "internal_name": "Pokepark Wii",
       "filename": "PokePark Wii - Pikachu's Adventure (USA)"
     }
   ],
-  "R8PE": [
+  "R8PE01": [
     {
       "internal_name": "SUPER PAPER MARIO",
       "filename": "Super Paper Mario (USA)"
     }
   ],
-  "RB4E": [
+  "R8YE52": [
+    {
+      "internal_name": "Cabela's Big Game Hunter 2010",
+      "filename": "Cabela's Big Game Hunter 2010 (USA)"
+    }
+  ],
+  "R9DE78": [
+    {
+      "internal_name": "Drawn to Life: The Next Chapter",
+      "filename": "Drawn to Life - The Next Chapter (USA) (En,Fr)"
+    }
+  ],
+  "R9FE36": [
+    {
+      "internal_name": "F1 2009",
+      "filename": "F1 2009 (USA) (En,Fr,Es)"
+    }
+  ],
+  "R9IE01": [
+    {
+      "internal_name": "PIKMIN1 for Wii",
+      "filename": "Pikmin (US)"
+    }
+  ],
+  "R9JE69": [
+    {
+      "internal_name": "The Beatles: Rock Band",
+      "filename": "Beatles, The - Rock Band (USA) (En,Fr,Es)"
+    }
+  ],
+  "R9OE69": [
+    {
+      "internal_name": "Tiger Woods PGA TOUR 2010",
+      "filename": "Tiger Woods PGA Tour 10 (USA) (Rev 1)"
+    }
+  ],
+  "R9TE69": [
+    {
+      "internal_name": "Tiger Woods PGA TOUR 09",
+      "filename": "Tiger Woods PGA Tour 09 - All-Play (USA)"
+    }
+  ],
+  "RB4E08": [
     {
       "internal_name": "resident evil 4 Wii edition (E)",
       "filename": "Resident Evil 4 - Wii Edition (USA)"
     }
   ],
-  "RFCE": [
+  "RBAE41": [
+    {
+      "internal_name": "BAWII",
+      "filename": "Blazing Angels - Squadrons of WWII (USA) (En,Fr,Es)"
+    }
+  ],
+  "RBIEE9": [
+    {
+      "internal_name": "Harvest Moon: Animal Parade",
+      "filename": "Harvest Moon - Animal Parade (USA)"
+    }
+  ],
+  "RBNEG9": [
+    {
+      "internal_name": "Ben10:Protector of Earth",
+      "filename": "Ben 10 - Protector of Earth (USA)"
+    }
+  ],
+  "RBUE08": [
+    {
+      "internal_name": "Resident Evil The Umbrella Chronicles",
+      "filename": "Resident Evil - The Umbrella Chronicles (USA)"
+    }
+  ],
+  "RCAE78": [
+    {
+      "internal_name": "Cars",
+      "filename": "Disney-Pixar Cars (USA) (En,Es)"
+    }
+  ],
+  "RCCE5G": [
+    {
+      "internal_name": "Cooking Mama",
+      "filename": "Cooking Mama - Cook Off (USA)"
+    }
+  ],
+  "RCDE52": [
+    {
+      "internal_name": "COD3 US",
+      "filename": "Call of Duty 3 (USA)"
+    }
+  ],
+  "RCGP54": [
+    {
+      "internal_name": "Carnival Games",
+      "filename": "Carnival Games (EU)"
+    }
+  ],
+  "RCIE41": [
+    {
+      "internal_name": "CSI: Hard Evidence",
+      "filename": "CSI - Crime Scene Investigation - Hard Evidence (USA) (En,Fr,Es)"
+    }
+  ],
+  "RCXE78": [
+    {
+      "internal_name": "All Star Cheer",
+      "filename": "All Star Cheer Squad (USA)"
+    }
+  ],
+  "RD4EA4": [
+    {
+      "internal_name": "DanceDanceRevolution Hottest Party 2",
+      "filename": "Dance Dance Revolution - Hottest Party 2 (USA)"
+    }
+  ],
+  "RDDEA4": [
+    {
+      "internal_name": "Dance Dance Revolution HOTTEST PARTY",
+      "filename": "Dance Dance Revolution - Hottest Party (USA)"
+    }
+  ],
+  "RDFE41": [
+    {
+      "internal_name": "Shaun White Snowboarding: Road Trip",
+      "filename": "Shaun White Snowboarding - Road Trip (USA) (En,Fr,Es)"
+    }
+  ],
+  "RDQEGD": [
+    {
+      "internal_name": "DRAGON QUEST SWORDS",
+      "filename": "Dragon Quest Swords - The Masked Queen and the Tower of Mirrors (USA)"
+    }
+  ],
+  "RDSE70": [
+    {
+      "internal_name": "Dragon Ball Z Budokai Tenkaichi 3",
+      "filename": "Dragon Ball Z - Budokai Tenkaichi 3 (USA)"
+    }
+  ],
+  "RDXE18": [
+    {
+      "internal_name": "DECA SPORTS",
+      "filename": "Deca Sports (USA) (En,Fr,Es) (Rev 1)"
+    }
+  ],
+  "REDE41": [
+    {
+      "internal_name": "RedSteel",
+      "filename": "Red Steel (USA) (En,Fr,Es)"
+    }
+  ],
+  "REKE41": [
+    {
+      "internal_name": "Gold's Gym: Cardio Workout",
+      "filename": "Gold's Gym - Cardio Workout (USA)"
+    }
+  ],
+  "RENE8P": [
+    {
+      "internal_name": "Sonic and the Black Knight",
+      "filename": "Sonic and the Black Knight (USA) (En,Ja,Fr,De,Es,It)"
+    }
+  ],
+  "RF8J13": [
+    {
+      "internal_name": "FIFA 08",
+      "filename": "FIFA 08 (JP)"
+    }
+  ],
+  "RF9P69": [
+    {
+      "internal_name": "FIFA 09 All-Play",
+      "filename": "FIFA 09 All-Play (EU)"
+    }
+  ],
+  "RFAEAF": [
+    {
+      "internal_name": "Active Life: Outdoor Challenge",
+      "filename": "Active Life - Outdoor Challenge (USA) (En,Fr)"
+    }
+  ],
+  "RFBE01": [
+    {
+      "internal_name": "ENDLESS OCEAN",
+      "filename": "Endless Ocean (USA) (En,Fr,Es)"
+    }
+  ],
+  "RFCEGD": [
     {
       "internal_name": "FFCC THE CRYSTAL BEARERS",
       "filename": "Final Fantasy Crystal Chronicles - The Crystal Bearers (USA) (En,Fr,Es)"
     }
   ],
-  "RFFE": [
+  "RFFEGD": [
     {
       "internal_name": "FFCC EOT",
       "filename": "Final Fantasy Crystal Chronicles - Echoes of Time (USA) (En,Fr,Es)"
     }
   ],
-  "RH6E": [
+  "RFKE41": [
+    {
+      "internal_name": "My Fitness Coach",
+      "filename": "My Fitness Coach (USA)"
+    }
+  ],
+  "RFLE69": [
+    {
+      "internal_name": "Madden NFL 09",
+      "filename": "Madden NFL 09 - All-Play (USA)"
+    }
+  ],
+  "RFNE01": [
+    {
+      "internal_name": "RVL Wii Fit",
+      "filename": "Wii Fit (USA) (En,Fr,Es) (Rev 1)"
+    }
+  ],
+  "RFPE01": [
+    {
+      "internal_name": "WiiFitPlus(US:P)",
+      "filename": "Wii Fit Plus (USA) (En,Fr,Es)"
+    }
+  ],
+  "RG5EWR": [
+    {
+      "internal_name": "Guinness World Records: The Video Game",
+      "filename": "Guinness World Records - The Videogame (USA) (En,Fr,Es)"
+    }
+  ],
+  "RG9E54": [
+    {
+      "internal_name": "Carnival Games Mini Golf",
+      "filename": "Carnival Games - MiniGolf (USA) (En,Fr,Es)"
+    }
+  ],
+  "RGHE52": [
+    {
+      "internal_name": "Guitar Hero 3",
+      "filename": "Guitar Hero III - Legends of Rock (USA) (Rev 1)"
+    }
+  ],
+  "RGQE70": [
+    {
+      "internal_name": "Ghostbusters",
+      "filename": "Ghostbusters - The Video Game (USA) (En,Fr,Es) (Rev 1)"
+    }
+  ],
+  "RGSE8P": [
+    {
+      "internal_name": "GHOST SQUAD",
+      "filename": "Ghost Squad (USA)"
+    }
+  ],
+  "RGVE52": [
+    {
+      "internal_name": "Guitar Hero: Aerosmith",
+      "filename": "Guitar Hero - Aerosmith (USA) (En,Fr)"
+    }
+  ],
+  "RGWE41": [
+    {
+      "internal_name": "Rabbids Go Home",
+      "filename": "Rabbids Go Home (USA) (En,Fr,Es)"
+    }
+  ],
+  "RGXE5D": [
+    {
+      "internal_name": "Game Party",
+      "filename": "Game Party (USA) (Rev 1)"
+    }
+  ],
+  "RH3E4Q": [
+    {
+      "internal_name": "High School Musical 3: Senior Year DANCE!",
+      "filename": "Disney High School Musical 3 - Senior Year Dance! (USA) (En,Fr,Es)"
+    }
+  ],
+  "RH6E69": [
     {
       "internal_name": "Harry Potter HBP",
       "filename": "Harry Potter and the Half-Blood Prince (USA) (En,Fr,Es)"
     }
   ],
-  "RJ2E": [
+  "RHAE01": [
+    {
+      "internal_name": "PARTY PACK for REVOLUTION",
+      "filename": "Wii Play (USA, Canada) (Rev 1)"
+    }
+  ],
+  "RHDE8P": [
+    {
+      "internal_name": "THE HOUSE OF THE DEAD 2 AND 3 RETURN",
+      "filename": "House of the Dead 2 & 3 Return, The (USA) (En,Fr,Es)"
+    }
+  ],
+  "RHOE8P": [
+    {
+      "internal_name": "The House of the Dead:OVERKILL",
+      "filename": "House of the Dead, The - Overkill (USA) (En,Fr,Es)"
+    }
+  ],
+  "RHQE4Q": [
+    {
+      "internal_name": "Hannah Montana",
+      "filename": "Disney Hannah Montana - Spotlight World Tour (USA)"
+    }
+  ],
+  "RI2E4Q": [
+    {
+      "internal_name": "HSM",
+      "filename": "Disney High School Musical - Sing It! (USA) (En,Fr) (Rev 1)"
+    }
+  ],
+  "RJ2E52": [
     {
       "internal_name": "Quantum of Solace",
       "filename": "007 - Quantum of Solace (USA) (En,Fr)"
     }
   ],
-  "RJ8E": [
+  "RJ8E64": [
     {
       "internal_name": "Indiana Jones and the Staff of Kings",
       "filename": "Indiana Jones and the Staff of Kings (USA) (En,Fr,Es)"
     }
   ],
-  "RK2E": [
+  "RJAE52": [
+    {
+      "internal_name": "Call of Duty Modern Warfare Reflex",
+      "filename": "Call of Duty - Modern Warfare - Reflex (USA) (En,Fr)"
+    }
+  ],
+  "RJFE5G": [
+    {
+      "internal_name": "Jillian Michaels Fitness Ultimatum 2009",
+      "filename": "Jillian Michaels' Fitness Ultimatum 2009 (USA)"
+    }
+  ],
+  "RK2EEB": [
     {
       "internal_name": "TRAUMA CENTER NEW BLOOD",
       "filename": "Trauma Center - New Blood (USA)"
     }
   ],
-  "RK5E": [
+  "RK5E01": [
     {
       "internal_name": "Kirby's Epic Yarn",
       "filename": "Kirby's Epic Yarn (USA) (En,Fr,Es)"
     }
   ],
-  "RL4E": [
+  "RKPE52": [
+    {
+      "internal_name": "KFP",
+      "filename": "DreamWorks Kung Fu Panda (USA) (En,Fr)"
+    }
+  ],
+  "RKXE69": [
+    {
+      "internal_name": "Rock Band",
+      "filename": "Rock Band (USA)"
+    }
+  ],
+  "RL4E64": [
     {
       "internal_name": "LEGO Indiana Jones 2",
       "filename": "LEGO Indiana Jones 2 - The Adventure Continues (USA) (En,Fr,Es)"
     }
   ],
-  "RLBE": [
+  "RL6E69": [
+    {
+      "internal_name": "N-STRIKE ELITE",
+      "filename": "Nerf N-Strike Elite (USA)"
+    }
+  ],
+  "RLAE20": [
+    {
+      "internal_name": "Deal or No Deal",
+      "filename": "Deal or No Deal (USA)"
+    }
+  ],
+  "RLBEWR": [
     {
       "internal_name": "LEGO Batman",
       "filename": "LEGO Batman - The Videogame (USA) (En,Fr,Es)"
     }
   ],
-  "RLGE": [
+  "RLFE64": [
+    {
+      "internal_name": "The Clone Wars",
+      "filename": "Star Wars - The Clone Wars - Lightsaber Duels (USA) (En,Fr)"
+    }
+  ],
+  "RLGE64": [
     {
       "internal_name": "LEGO Star Wars",
       "filename": "LEGO Star Wars - The Complete Saga (USA) (En,Fr,Es)"
     }
   ],
-  "RLIE": [
+  "RLIE64": [
     {
       "internal_name": "LEGO Indiana Jones: The Original Adventures",
       "filename": "LEGO Indiana Jones - The Original Adventures (USA) (En,Fr,Es)"
     }
   ],
-  "RM8E": [
+  "RLRE4F": [
+    {
+      "internal_name": "Tomb Raider Anniversary",
+      "filename": "Lara Croft Tomb Raider - Anniversary (USA) (En,Fr,Es)"
+    }
+  ],
+  "RM3E01": [
+    {
+      "internal_name": "Metroid Prime 3: Corruption",
+      "filename": "Metroid Prime 3 - Corruption (USA)"
+    }
+  ],
+  "RM4E41": [
+    {
+      "internal_name": "Monster 4x4: World Circuit",
+      "filename": "Monster 4x4 - World Circuit (USA) (En,Fr,Es)"
+    }
+  ],
+  "RM8E01": [
     {
       "internal_name": "Mario Party 8",
       "filename": "Mario Party 8 (USA) (Rev 1)"
     }
   ],
-  "RMCE": [
+  "RMAJ01": [
+    {
+      "internal_name": "MarioTennisGC(Wii Version)",
+      "filename": "Mario Power Tennis (JP)"
+    }
+  ],
+  "RMBE01": [
+    {
+      "internal_name": "Mario Super Sluggers",
+      "filename": "Mario Super Sluggers (USA) (En,Fr,Es)"
+    }
+  ],
+  "RMCE01": [
     {
       "internal_name": "MarioKartWii",
       "filename": "Mario Kart Wii (USA) (En,Fr,Es)"
     }
   ],
-  "RMGE": [
+  "RMFE68": [
+    {
+      "internal_name": "AMF Bowling: Pinbusters",
+      "filename": "AMF Bowling - Pinbusters! (USA)"
+    }
+  ],
+  "RMGE01": [
     {
       "internal_name": "SUPER MARIO GALAXY",
       "filename": "Super Mario Galaxy (USA) (En,Fr,Es)"
     }
   ],
-  "ROLE": [
+  "RMHE08": [
+    {
+      "internal_name": "Monster Hunter Tri",
+      "filename": "Monster Hunter Tri (USA)"
+    }
+  ],
+  "RMKE01": [
+    {
+      "internal_name": "MARIO SPORTS MIX",
+      "filename": "Mario Sports Mix (USA) (En,Fr,Es)"
+    }
+  ],
+  "RN2EAF": [
+    {
+      "internal_name": "NAMCO MUSEUM REMIX",
+      "filename": "Namco Museum Remix (USA)"
+    }
+  ],
+  "RNFE69": [
+    {
+      "internal_name": "Madden NFL 08",
+      "filename": "Madden NFL 08 (USA)"
+    }
+  ],
+  "RNKE69": [
+    {
+      "internal_name": "NERFNSTRIKE",
+      "filename": "Nerf N-Strike (USA)"
+    }
+  ],
+  "RNOJ01": [
+    {
+      "internal_name": "Another Code:R",
+      "filename": "Another Code R - Kioku no Tobira (Japan)"
+    }
+  ],
+  "RNOP01": [
+    {
+      "internal_name": "Another Code:R",
+      "filename": "Another Code R - A Journey into Lost Memories (Europe) (En,Fr,De,Es,It)"
+    }
+  ],
+  "RNPE69": [
+    {
+      "internal_name": "Need for Speed(TM) ProStreet",
+      "filename": "Need for Speed - ProStreet (US)"
+    }
+  ],
+  "RNSE69": [
+    {
+      "internal_name": "Need for Speed Carbon",
+      "filename": "Need for Speed - Carbon (USA)"
+    }
+  ],
+  "RNXEDA": [
+    {
+      "internal_name": "NARUTO: Clash of Ninja Revolution",
+      "filename": "Naruto - Clash of Ninja Revolution (USA)"
+    }
+  ],
+  "RODE01": [
+    {
+      "internal_name": "WarioWare: Smooth Moves",
+      "filename": "WarioWare - Smooth Moves (USA)"
+    }
+  ],
+  "ROLE8P": [
     {
       "internal_name": "Mario & Sonic at the Olympic Winter Games",
       "filename": "Mario & Sonic at the Olympic Winter Games (USA) (En,Ja,Fr,Es)"
     }
   ],
-  "RSBE": [
+  "RP2E69": [
+    {
+      "internal_name": "Smarty Pants",
+      "filename": "Smarty Pants - Trivia Fun for Everyone! (USA)"
+    }
+  ],
+  "RPBE01": [
+    {
+      "internal_name": "Pokemon Battle Revolution",
+      "filename": "Pokemon Battle Revolution (USA)"
+    }
+  ],
+  "RPSE4Q": [
+    {
+      "internal_name": "Disney Princess Wii",
+      "filename": "Disney Princess - Enchanted Journey (USA)"
+    }
+  ],
+  "RPXE69": [
+    {
+      "internal_name": "EA Playground",
+      "filename": "EA Playground (USA)"
+    }
+  ],
+  "RQLE64": [
+    {
+      "internal_name": "Clone Wars Republic Heroes",
+      "filename": "Star Wars - The Clone Wars - Republic Heroes (USA) (En,Fr,Es)"
+    }
+  ],
+  "RQNEWR": [
+    {
+      "internal_name": "Scooby-Doo: First Frights",
+      "filename": "Scooby-Doo! First Frights (USA) (En,Fr,Es)"
+    }
+  ],
+  "RR9E78": [
+    {
+      "internal_name": "WWE Smackdown! vs. RAW 2009",
+      "filename": "WWE SmackDown vs. Raw 2009 (USA) (En,Fr)"
+    }
+  ],
+  "RRBE41": [
+    {
+      "internal_name": "Rayman Raving Rabbids",
+      "filename": "Rayman - Raving Rabbids (USA) (En,Fr,Es) (Rev 2)"
+    }
+  ],
+  "RRME69": [
+    {
+      "internal_name": "Hasbro Family Game Night",
+      "filename": "Hasbro Family Game Night (USA) (En,Fr,Es)"
+    }
+  ],
+  "RRPE41": [
+    {
+      "internal_name": "The Price Is Right",
+      "filename": "Price Is Right, The (USA) (En,Fr)"
+    }
+  ],
+  "RRRE5Z": [
+    {
+      "internal_name": "Real Heroes: Firefighter",
+      "filename": "Real Heroes - Firefighter (USA) (En,Fr,Es)"
+    }
+  ],
+  "RS9E8P": [
+    {
+      "internal_name": "SONIC RIDERS ZERO GRAVITY",
+      "filename": "Sonic Riders - Zero Gravity (USA) (En,Ja,Fr,De,Es,It)"
+    }
+  ],
+  "RSBE01": [
     {
       "internal_name": "Super Smash Bros. Brawl",
       "filename": "Super Smash Bros. Brawl (USA) (Rev 2)"
     }
   ],
-  "RWSE": [
+  "RSHE69": [
+    {
+      "internal_name": "MySims Kingdom",
+      "filename": "MySims Kingdom (USA) (En,Fr,Es)"
+    }
+  ],
+  "RSIE69": [
+    {
+      "internal_name": "MySims",
+      "filename": "MySims (USA) (En,Fr,Es)"
+    }
+  ],
+  "RSME8P": [
+    {
+      "internal_name": "SUPER MONKEY BALL BANANA BLITZ",
+      "filename": "Super Monkey Ball - Banana Blitz (USA) (En,Fr,Es)"
+    }
+  ],
+  "RSNE69": [
+    {
+      "internal_name": "Simpsons",
+      "filename": "Simpsons Game, The (USA)"
+    }
+  ],
+  "RSPE01": [
+    {
+      "internal_name": "SPORTS PACK for REVOLUTION",
+      "filename": "Wii Sports (USA) (Rev 1)"
+    }
+  ],
+  "RSQEAF": [
+    {
+      "internal_name": "We Ski",
+      "filename": "We Ski (USA) (En,Fr,Es)"
+    }
+  ],
+  "RSRE8P": [
+    {
+      "internal_name": "SONIC AND THE SECRET RINGS",
+      "filename": "Sonic and the Secret Rings (USA) (En,Ja,Fr,De,Es,It)"
+    }
+  ],
+  "RSTE64": [
+    {
+      "internal_name": "Star Wars:  The Force Unleashed",
+      "filename": "Star Wars - The Force Unleashed (USA) (En,Fr)"
+    }
+  ],
+  "RSUENR": [
+    {
+      "internal_name": "Summer Sports",
+      "filename": "Summer Sports - Paradise Island (USA)"
+    }
+  ],
+  "RSVE8P": [
+    {
+      "internal_name": "Sonic Unleashed",
+      "filename": "Sonic Unleashed (USA) (En,Ja,Fr,De,Es,It)"
+    }
+  ],
+  "RT3E54": [
+    {
+      "internal_name": "Rockstar Games presents Table Tennis",
+      "filename": "Rockstar Games Presents Table Tennis (USA)"
+    }
+  ],
+  "RT5E8P": [
+    {
+      "internal_name": "Sega Superstar Tennis",
+      "filename": "Sega Superstars Tennis (USA) (En,Fr,Es)"
+    }
+  ],
+  "RT8E69": [
+    {
+      "internal_name": "Tiger Woods PGA TOUR 08",
+      "filename": "Tiger Woods PGA Tour 08 (USA) (En,Fr)"
+    }
+  ],
+  "RUCE5Z": [
+    {
+      "internal_name": "WinterSports 2008",
+      "filename": "Winter Sports - The Ultimate Challenge (USA) (En,Fr)"
+    }
+  ],
+  "RUHX52": [
+    {
+      "internal_name": "Bakugan Battle Brawlers M R",
+      "filename": "Bakugan - Battle Brawlers (USA) (En,Fr) (Toys R Us)"
+    }
+  ],
+  "RUIE4Q": [
+    {
+      "internal_name": "Disney Sing It",
+      "filename": "Disney Sing It (USA) (En,Fr,Es)"
+    }
+  ],
+  "RUUE01": [
+    {
+      "internal_name": "Animal Crossing Wii",
+      "filename": "Animal Crossing - City Folk (USA) (En,Fr,Es)"
+    }
+  ],
+  "RV2E5D": [
+    {
+      "internal_name": "Game Party 2",
+      "filename": "Game Party 2 (USA) (En,Fr,Es)"
+    }
+  ],
+  "RVVE78": [
+    {
+      "internal_name": "THQ Big Beach Sports",
+      "filename": "Big Beach Sports (USA) (En,Fr,Es)"
+    }
+  ],
+  "RVYE52": [
+    {
+      "internal_name": "Call of Duty: World At War",
+      "filename": "Call of Duty - World at War (USA)"
+    }
+  ],
+  "RWAE78": [
+    {
+      "internal_name": "WALL-E",
+      "filename": "Disney-Pixar WALL-E (USA) (En,Fr,Es) (Rev 1)"
+    }
+  ],
+  "RWEEA4": [
+    {
+      "internal_name": "Pro Evolution Soccer 2008",
+      "filename": "PES 2008 - Pro Evolution Soccer (USA) (En,Fr,Es)"
+    }
+  ],
+  "RWLE01": [
+    {
+      "internal_name": "Wario Land Shake It!",
+      "filename": "Wario Land - Shake It! (USA) (En,Fr,Es)"
+    }
+  ],
+  "RWOE69": [
+    {
+      "internal_name": "Monopoly",
+      "filename": "Monopoly (USA) (En,Fr,Es)"
+    }
+  ],
+  "RWSE8P": [
     {
       "internal_name": "MARIO & SONIC At The OlympicGames",
       "filename": "Mario & Sonic at the Olympic Games (USA) (En,Fr,Es)"
     }
   ],
-  "RZDE": [
+  "RWTEG9": [
+    {
+      "internal_name": "Ben 10 Alien Force",
+      "filename": "Ben 10 - Alien Force (USA) (En,Fr,Es)"
+    }
+  ],
+  "RWWE78": [
+    {
+      "internal_name": "WWE Smackdown! vs. RAW 2008",
+      "filename": "WWE SmackDown vs. Raw 2008 (USA)"
+    }
+  ],
+  "RX5E52": [
+    {
+      "internal_name": "Tony Hawk RIDE",
+      "filename": "Tony Hawk - Ride (USA)"
+    }
+  ],
+  "RX6E78": [
+    {
+      "internal_name": "The Biggest Loser",
+      "filename": "Biggest Loser, The (USA)"
+    }
+  ],
+  "RX9E69": [
+    {
+      "internal_name": "Need for Speed(tm) Undercover",
+      "filename": "Need for Speed - Undercover (USA) (En,Fr,Es)"
+    }
+  ],
+  "RXAE78": [
+    {
+      "internal_name": "WWE SmackDown vs. RAW 2010",
+      "filename": "WWE SmackDown vs. Raw 2010 (USA) (En,Fr,Es)"
+    }
+  ],
+  "RXKEGL": [
+    {
+      "internal_name": "TV Show King Party",
+      "filename": "TV Show King Party (USA) (En,Fr,Es)"
+    }
+  ],
+  "RY2E41": [
+    {
+      "internal_name": "Rayman Raving Rabbids 2",
+      "filename": "Rayman - Raving Rabbids 2 (USA) (En,Fr,Es) (Rev 1)"
+    }
+  ],
+  "RY3E41": [
+    {
+      "internal_name": "Rayman Raving Rabbids TV Party",
+      "filename": "Rayman - Raving Rabbids - TV Party (USA) (En,Fr,Es)"
+    }
+  ],
+  "RYRE41": [
+    {
+      "internal_name": "Your Shape",
+      "filename": "Your Shape featuring Jenny McCarthy (USA) (En,Fr,Es)"
+    }
+  ],
+  "RYWE01": [
+    {
+      "internal_name": "Big Brain Academy: Wii Degree",
+      "filename": "Big Brain Academy - Wii Degree (USA) (En,Fr,Es)"
+    }
+  ],
+  "RZDE01": [
     {
       "internal_name": "The Legend of Zelda Twilight Princess",
       "filename": "Legend of Zelda, The - Twilight Princess (USA)"
     }
   ],
-  "S2LE": [
+  "RZPE01": [
+    {
+      "internal_name": "LINKS CROSSBOW TRAINING",
+      "filename": "Link's Crossbow Training (USA) (En,Fr,Es) (Rev 1)"
+    }
+  ],
+  "RZTE01": [
+    {
+      "internal_name": "WSP2 US(P)",
+      "filename": "Wii Sports Resort (USA) (En,Fr,Es) (Rev 1)"
+    }
+  ],
+  "RZZE8P": [
+    {
+      "internal_name": "MadWorld",
+      "filename": "MadWorld (USA) (En,Fr,Es)"
+    }
+  ],
+  "S2EE41": [
+    {
+      "internal_name": "ABBA - You Can Dance",
+      "filename": "ABBA - You Can Dance (USA) (En,Fr,Es)"
+    }
+  ],
+  "S2LE01": [
     {
       "internal_name": "PokePark Wii2",
       "filename": "PokePark 2 - Wonders Beyond (USA)"
     }
   ],
-  "S7AE": [
+  "S3FP69": [
+    {
+      "internal_name": "FIFA 13",
+      "filename": "FIFA 13 (EU)"
+    }
+  ],
+  "S3ME69": [
+    {
+      "internal_name": "The Sims 3",
+      "filename": "Sims 3, The (USA) (En,Fr,Es)"
+    }
+  ],
+  "S5KJAF": [
+    {
+      "internal_name": "TAIKO WII5",
+      "filename": "Taiko no Tatsujin Wii - Chou Goukaban (JP)"
+    }
+  ],
+  "S72E01": [
+    {
+      "internal_name": "Kirby's Dream Collection Special Edition",
+      "filename": "Kirby's Dream Collection - Special Edition (USA)"
+    }
+  ],
+  "S75E69": [
+    {
+      "internal_name": "MonopolyStreets",
+      "filename": "Monopoly Streets (USA) (En,Fr,Es)"
+    }
+  ],
+  "S7AEWR": [
     {
       "internal_name": "LEGO SuperHeroes1",
       "filename": "LEGO Batman 2 - DC Super Heroes (USA) (En,Fr,Es,Pt)"
     }
   ],
-  "SB4E": [
+  "SB4E01": [
     {
       "internal_name": "SUPER MARIO GALAXY MORE",
       "filename": "Super Mario Galaxy 2 (USA) (En,Fr,Es)"
     }
   ],
-  "SC4E": [
+  "SBDE08": [
+    {
+      "internal_name": "RESIDENT EVIL THE DARKSIDE CHRONICLES",
+      "filename": "Resident Evil - The Darkside Chronicles (USA)"
+    }
+  ],
+  "SBYE41": [
+    {
+      "internal_name": "Dance on Broadway",
+      "filename": "Dance on Broadway (USA) (En,Fr,Es)"
+    }
+  ],
+  "SC4E64": [
     {
       "internal_name": "LEGO CloneWars",
       "filename": "LEGO Star Wars III - The Clone Wars (USA) (En,Fr,Es)"
     }
   ],
-  "SCJE": [
+  "SC7E52": [
+    {
+      "internal_name": "Call of Duty: Black Ops",
+      "filename": "Call of Duty - Black Ops (USA)"
+    }
+  ],
+  "SC8E01": [
+    {
+      "internal_name": "Wii Play: Motion",
+      "filename": "Wii Play - Motion (USA) (En,Fr,Es)"
+    }
+  ],
+  "SCJE4Q": [
     {
       "internal_name": "LEGO Pirates",
       "filename": "LEGO Pirates of the Caribbean - The Video Game (USA) (En,Fr,Es)"
     }
   ],
-  "SF8E": [
+  "SCWE41": [
+    {
+      "internal_name": "Gold's Gym: Dance Workout",
+      "filename": "Gold's Gym - Dance Workout (USA) (En,Fr,Es)"
+    }
+  ],
+  "SCYE4Q": [
+    {
+      "internal_name": "Cars 2",
+      "filename": "Disney-Pixar Cars 2 (USA) (En,Fr,Es)"
+    }
+  ],
+  "SD2Y41": [
+    {
+      "internal_name": "Just Dance 2 Special Edition",
+      "filename": "Just Dance 2 (USA) (En,Fr,Es) (Best Buy Edition)"
+    }
+  ],
+  "SDNP41": [
+    {
+      "internal_name": "Just Dance",
+      "filename": "Just Dance (EU)"
+    }
+  ],
+  "SDQJGD": [
+    {
+      "internal_name": "DragonQuest X Version 3",
+      "filename": "Dragon Quest 10 Inishie no Ryu no Denshou Online (JP)"
+    }
+  ],
+  "SDXE4Q": [
+    {
+      "internal_name": "DisneyU",
+      "filename": "Disney Universe (USA) (En,Fr,Es)"
+    }
+  ],
+  "SDZE41": [
+    {
+      "internal_name": "Just Dance Kids",
+      "filename": "Just Dance Kids (USA) (En,Fr,Es)"
+    }
+  ],
+  "SE3E41": [
+    {
+      "internal_name": "Just Dance 2015",
+      "filename": "Just Dance 2015 (USA) (En,Fr,Es)"
+    }
+  ],
+  "SEAE69": [
+    {
+      "internal_name": "EA SPORTS Active More Workouts",
+      "filename": "EA Sports Active - More Workouts (USA) (En,Fr)"
+    }
+  ],
+  "SELE69": [
+    {
+      "internal_name": "FIFA 11",
+      "filename": "FIFA Soccer 11 (USA) (En,Fr,Es)"
+    }
+  ],
+  "SEME4Q": [
+    {
+      "internal_name": "Disney Epic Mickey",
+      "filename": "Disney Epic Mickey (USA) (En,Fr,Es)"
+    }
+  ],
+  "SERE4Q": [
+    {
+      "internal_name": "Disney Epic Mickey 2: The Power of 2",
+      "filename": "Disney Epic Mickey 2 - The Power of Two (USA) (En,Fr,Es,Pt)"
+    }
+  ],
+  "SF8E01": [
     {
       "internal_name": "Donkey Kong Country Returns",
       "filename": "Donkey Kong Country Returns (USA) (En,Fr,Es)"
     }
   ],
-  "SH5E": [
+  "SFTE78": [
+    {
+      "internal_name": "Wheel",
+      "filename": "Wheel of Fortune (USA)"
+    }
+  ],
+  "SFUE64": [
+    {
+      "internal_name": "Star Wars: The Force Unleashed 2",
+      "filename": "Star Wars - The Force Unleashed II (USA) (En,Fr,Es)"
+    }
+  ],
+  "SGVEAF": [
+    {
+      "internal_name": "GO VACATION",
+      "filename": "Go Vacation (USA) (En,Fr,Es)"
+    }
+  ],
+  "SH5E69": [
     {
       "internal_name": "Harry Potter and the Deathly Hallows - Part 2",
       "filename": "Harry Potter and the Deathly Hallows - Part 2 (USA) (En,Fr,Es)"
     }
   ],
-  "SHHE": [
+  "SHBE69": [
+    {
+      "internal_name": "Family Game Night 3",
+      "filename": "Hasbro Family Game Night 3 (USA) (En,Fr,Es)"
+    }
+  ],
+  "SHHE69": [
     {
       "internal_name": "Harry Potter and the Deathly Hallows - Part 1",
       "filename": "Harry Potter and the Deathly Hallows - Part 1 (USA) (En,Fr,Es)"
     }
   ],
-  "SJBE": [
+  "SI3E69": [
+    {
+      "internal_name": "FIFA 12",
+      "filename": "FIFA Soccer 12 (USA) (En,Fr,Es)"
+    }
+  ],
+  "SIIE8P": [
+    {
+      "internal_name": "Mario & Sonic LONDON",
+      "filename": "Mario & Sonic at the London 2012 Olympic Games (USA) (En,Ja,Fr,Es)"
+    }
+  ],
+  "SJBE52": [
     {
       "internal_name": "James Bond: Golden Eye",
       "filename": "GoldenEye 007 (USA) (En,Fr)"
     }
   ],
-  "SK3E": [
+  "SJDZ41": [
+    {
+      "internal_name": "Just Dance 3 (Target)",
+      "filename": "Just Dance 3 (USA) (En,Fr,Es) (Target Exclusive Edition) (Rev 1)"
+    }
+  ],
+  "SJNP41": [
+    {
+      "internal_name": "Just Dance 2016",
+      "filename": "Just Dance 2016 (EU)"
+    }
+  ],
+  "SJOP41": [
+    {
+      "internal_name": "Just Dance 2014",
+      "filename": "Just Dance 2014 (EU)"
+    }
+  ],
+  "SK3EEB": [
     {
       "internal_name": "TRAUMA TEAM",
       "filename": "Trauma Team (USA)"
     }
   ],
-  "SLRE": [
+  "SK8E52": [
+    {
+      "internal_name": "Skylanders Trap Team",
+      "filename": "Skylanders - Trap Team (USA) (En,Fr)"
+    }
+  ],
+  "SKAPA4": [
+    {
+      "internal_name": "Karaoke Revolution Glee",
+      "filename": "Karaoke Revolution Glee (EU)"
+    }
+  ],
+  "SKYE52": [
+    {
+      "internal_name": "Skylanders Giants",
+      "filename": "Skylanders - Giants (USA) (En,Fr)"
+    }
+  ],
+  "SLHEWR": [
+    {
+      "internal_name": "LEGO Harry2",
+      "filename": "LEGO Harry Potter - Years 5-7 (USA) (En,Fr,Es,Pt) (Rev 1)"
+    }
+  ],
+  "SLREWR": [
     {
       "internal_name": "LEGO LOTR",
       "filename": "LEGO The Lord of the Rings (USA) (En,Fr,Es,Pt)"
     }
   ],
-  "SMNE": [
+  "SLSEXJ": [
+    {
+      "internal_name": "THE LAST STORY",
+      "filename": "Last Story, The (USA) (En,Fr,Es)"
+    }
+  ],
+  "SM8E52": [
+    {
+      "internal_name": "Modern Warfare 3 (US EN)",
+      "filename": "Call of Duty - Modern Warfare 3 (USA)"
+    }
+  ],
+  "SMEE69": [
+    {
+      "internal_name": "Madden NFL 11",
+      "filename": "Madden NFL 11 (USA) (Rev 1)"
+    }
+  ],
+  "SMNE01": [
     {
       "internal_name": "New SUPER MARIO BROS. Wii",
       "filename": "New Super Mario Bros. Wii (USA) (En,Fr,Es) (Rev 2)"
     }
   ],
-  "SOJE": [
+  "SMOE41": [
+    {
+      "internal_name": "MICHAEL JACKSON THE EXPERIENCE",
+      "filename": "Michael Jackson - The Experience (USA) (En,Fr,Es)"
+    }
+  ],
+  "SN9E54": [
+    {
+      "internal_name": "Nickelodeon Fit",
+      "filename": "Nickelodeon Fit (USA)"
+    }
+  ],
+  "SNCE8P": [
+    {
+      "internal_name": "Sonic Colors",
+      "filename": "Sonic Colors (USA) (En,Ja,Fr,De,Es,It)"
+    }
+  ],
+  "SNFE69": [
+    {
+      "internal_name": "EA SPORTS Active NFL Training Camp",
+      "filename": "EA Sports Active - NFL Training Camp (USA)"
+    }
+  ],
+  "SOJE41": [
     {
       "internal_name": "Rayman Origins",
       "filename": "Rayman Origins (USA) (En,Fr,Es)"
     }
   ],
-  "SOUE": [
+  "SOME01": [
+    {
+      "internal_name": "RHYTHM HEAVEN FEVER",
+      "filename": "Rhythm Heaven Fever (USA)"
+    }
+  ],
+  "SOTE52": [
+    {
+      "internal_name": "Wipeout",
+      "filename": "ABC Wipeout - The Game (USA)"
+    }
+  ],
+  "SOUE01": [
     {
       "internal_name": "The Legend of Zelda Skyward Sword",
       "filename": "Legend of Zelda, The - Skyward Sword (USA) (En,Fr,Es)"
     }
   ],
-  "SUKE": [
+  "SQ2EPZ": [
+    {
+      "internal_name": "Country Dance",
+      "filename": "Country Dance (USA)"
+    }
+  ],
+  "SQIE4Q": [
+    {
+      "internal_name": "Disney Infinity",
+      "filename": "Disney Infinity (USA) (En,Fr,Es,Pt)"
+    }
+  ],
+  "SR4E41": [
+    {
+      "internal_name": "Raving Rabbids - Travel in time",
+      "filename": "Raving Rabbids - Travel in Time (USA) (En,Fr,Es)"
+    }
+  ],
+  "SRPE4Q": [
+    {
+      "internal_name": "Tangled",
+      "filename": "Disney Tangled (USA) (En,Fr,Es)"
+    }
+  ],
+  "SSGPNG": [
+    {
+      "internal_name": "We Sing",
+      "filename": "We Sing (Europe) (En,Fr,De,Es,It)"
+    }
+  ],
+  "SSPE52": [
+    {
+      "internal_name": "Skylanders Spyro's Adventure",
+      "filename": "Skylanders - Spyro's Adventure (USA) (En,Fr)"
+    }
+  ],
+  "SSQE01": [
+    {
+      "internal_name": "Mario Party 9",
+      "filename": "Mario Party 9 (USA, Asia) (En,Fr,Es)"
+    }
+  ],
+  "ST6E78": [
+    {
+      "internal_name": "The Biggest Loser Challenge",
+      "filename": "Biggest Loser Challenge, The (USA) (En,Fr,Es)"
+    }
+  ],
+  "STAE78": [
+    {
+      "internal_name": "Pictionary",
+      "filename": "Pictionary (USA) (En,Fr,Es)"
+    }
+  ],
+  "STSE4Q": [
+    {
+      "internal_name": "Toy Story 3",
+      "filename": "Disney-Pixar Toy Story 3 (USA) (En,Fr,Es)"
+    }
+  ],
+  "SUKE01": [
     {
       "internal_name": "Kirby Wii",
       "filename": "Kirby's Return to Dream Land (USA) (En,Fr,Es)"
+    }
+  ],
+  "SUPE01": [
+    {
+      "internal_name": "Wii Party",
+      "filename": "Wii Party (USA) (En,Fr,Es)"
+    }
+  ],
+  "SUWE78": [
+    {
+      "internal_name": "uDraw",
+      "filename": "uDraw Studio (USA) (En,Fr,Es)"
+    }
+  ],
+  "SVME01": [
+    {
+      "internal_name": "super mario collection",
+      "filename": "Super Mario All-Stars (USA)"
+    }
+  ],
+  "SVXE52": [
+    {
+      "internal_name": "Skylanders: Swap Force",
+      "filename": "Skylanders - Swap Force (USA) (En,Fr) (Rev 1)"
+    }
+  ],
+  "SWAE52": [
+    {
+      "internal_name": "DJ Hero",
+      "filename": "DJ Hero (USA) (En,Fr)"
+    }
+  ],
+  "SX4E01": [
+    {
+      "internal_name": "Xenoblade Chronicles",
+      "filename": "Xenoblade Chronicles (USA, Asia) (En,Fr,Es)"
+    }
+  ],
+  "SXAE52": [
+    {
+      "internal_name": "Guitar Hero: World Tour",
+      "filename": "Guitar Hero World Tour (USA) (En,Fr)"
+    }
+  ],
+  "SXBP52": [
+    {
+      "internal_name": "Guitar Hero Metallica",
+      "filename": "Guitar Hero - Metallica (EU)"
+    }
+  ],
+  "SXEE52": [
+    {
+      "internal_name": "Guitar Hero 5",
+      "filename": "Guitar Hero 5 (USA) (En,Fr)"
+    }
+  ],
+  "SXFE52": [
+    {
+      "internal_name": "Band Hero",
+      "filename": "Band Hero (USA)"
+    }
+  ],
+  "SXIE52": [
+    {
+      "internal_name": "Guitar Hero: Warriors of Rock",
+      "filename": "Guitar Hero - Warriors of Rock (USA) (En,Fr)"
+    }
+  ],
+  "SZ2E5G": [
+    {
+      "internal_name": "Zumba Fitness 2",
+      "filename": "Zumba Fitness 2 (USA)"
+    }
+  ],
+  "SZ5E5G": [
+    {
+      "internal_name": "Zumba",
+      "filename": "Zumba Fitness (USA)"
+    }
+  ],
+  "SZ7P41": [
+    {
+      "internal_name": "Just Dance 2017",
+      "filename": "Just Dance 2017 (EU)"
+    }
+  ],
+  "SZAE69": [
+    {
+      "internal_name": "Rock Band 2",
+      "filename": "Rock Band 2 (USA)"
+    }
+  ],
+  "SZBE69": [
+    {
+      "internal_name": "Rock Band 3",
+      "filename": "Rock Band 3 (USA)"
     }
   ]
 }

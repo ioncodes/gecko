@@ -26,9 +26,11 @@ struct Args {
 }
 
 fn main() -> iced::Result {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")))
-        .init();
+    if tracing::level_filters::STATIC_MAX_LEVEL != tracing::level_filters::LevelFilter::OFF {
+        tracing_subscriber::fmt()
+            .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")))
+            .init();
+    }
 
     let args = Args::parse();
 

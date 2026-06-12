@@ -5832,6 +5832,8 @@ dependencies = [
  "image 0.1.0",
  "png",
  "pollster",
+ "tracing",
+ "tracing-subscriber",
  "wgpu",
 ]
 
