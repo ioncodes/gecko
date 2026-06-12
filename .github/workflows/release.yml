@@ -21,19 +21,15 @@ jobs:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             suffix: linux-x86_64
-            dbg_suffix: linux-dbg-x86_64
           - os: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
             suffix: linux-arm64
-            dbg_suffix: linux-dbg-arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             suffix: windows-x86_64
-            dbg_suffix: windows-dbg-x86_64
           - os: windows-11-arm
             target: aarch64-pc-windows-msvc
             suffix: windows-arm64
-            dbg_suffix: windows-dbg-arm64
 
     runs-on: ${{ matrix.os }}
 
@@ -77,9 +73,6 @@ jobs:
       - name: Build (release)
         run: cargo build --release --target ${{ matrix.target }} ${{ env.PACKAGES }}
 
-      - name: Build (dev profile, with tracing output)
-        run: cargo build --profile dev --target ${{ matrix.target }} ${{ env.PACKAGES }}
-
       - name: Package artifacts
         shell: bash
         run: |
@@ -99,7 +92,6 @@ jobs:
           }
 
           package release "${{ matrix.suffix }}" staging-rel
-          package debug   "${{ matrix.dbg_suffix }}" staging-dbg
 
       - uses: actions/upload-artifact@v4
         with:
@@ -145,11 +137,6 @@ jobs:
           cargo build --release --target aarch64-apple-darwin ${{ env.PACKAGES }}
           cargo build --release --target x86_64-apple-darwin  ${{ env.PACKAGES }}
 
-      - name: Build (dev profile, both arches)
-        run: |
-          cargo build --profile dev --target aarch64-apple-darwin ${{ env.PACKAGES }}
-          cargo build --profile dev --target x86_64-apple-darwin  ${{ env.PACKAGES }}
-
       - name: Lipo + package universal binaries
         shell: bash
         run: |
@@ -169,7 +156,6 @@ jobs:
           }
 
           package release macos-universal staging-rel
-          package debug   macos-dbg-universal staging-dbg
 
       - name: Verify universal binaries
         run: lipo -info staging-rel/tinyapp
