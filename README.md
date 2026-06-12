@@ -26,9 +26,15 @@ Gecko now also has a [**community driven** compatibility database](https://gecko
 
 Gecko is developed with homebrew development and reverse engineering in mind, but also aims to provide a faithful and playable experience!
 
-- PowerPC JIT (Cranelift)
-- DSP JIT (Cranelift)
-- GX vertex decode JIT (Cranelift)
+- Cross-platform: Windows, Linux and macOS
+  - x86 and ARM supported on each platform
+  - More platforms supported if compiling yourself
+- Cranelift based JITs
+  - PowerPC, DSP, vertex decoder
+- Upscaling 1x - 4x
+- Controller support
+  - Xbox, Steam, etc.
+  - PS5 DualSense Wiimote motion control
 - Starlet HLE
 - IPL skip patches for NTSC and PAL
 - `wgpu` based renderer backend
