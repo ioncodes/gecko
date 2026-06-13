@@ -19,6 +19,10 @@ pub struct Config {
     pub skip_ipl: bool,
     #[serde(default = "self::default_upscale")]
     pub upscale: u32,
+    #[serde(default = "self::default_memcard_enabled")]
+    pub memcard_enabled: bool,
+    #[serde(default = "self::default_sram_enabled")]
+    pub sram_enabled: bool,
     pub input: hostinput::InputConfig,
 }
 
@@ -28,6 +32,14 @@ fn default_skip_ipl() -> bool {
 
 fn default_upscale() -> u32 {
     1
+}
+
+fn default_memcard_enabled() -> bool {
+    true
+}
+
+fn default_sram_enabled() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -43,10 +55,16 @@ impl Default for Config {
             ipl: None,
             skip_ipl: self::default_skip_ipl(),
             upscale: self::default_upscale(),
+            memcard_enabled: self::default_memcard_enabled(),
+            sram_enabled: self::default_sram_enabled(),
             input: hostinput::InputConfig::default(),
         }
     }
 }
+
+/// Console-internal storage (SRAM, memory cards) lives next to the binary.
+pub const SRAM_FILE: &str = "internal/sram.bin";
+pub const MEMCARD_A_FILE: &str = "internal/memcard_a.raw";
 
 pub const DSP_ROM_FILE: &str = "dsp_rom.bin";
 pub const DSP_COEF_FILE: &str = "dsp_coef.bin";

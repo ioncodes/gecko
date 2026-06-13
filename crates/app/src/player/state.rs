@@ -13,7 +13,7 @@ use gecko::{HostInput, system};
 use iced::keyboard::key::{Code, Physical};
 use iced::mouse::Button as MouseButton;
 
-use crate::config::{Config, DSP_COEF_FILE, DSP_ROM_FILE, IPL_FILE};
+use crate::config::{self, Config, DSP_COEF_FILE, DSP_ROM_FILE, IPL_FILE, MEMCARD_A_FILE, SRAM_FILE};
 use crate::game::{Format, Game, Platform};
 use crate::player::{audio, emu_thread, input};
 
@@ -24,6 +24,8 @@ struct BootParams {
     coef_path: Option<PathBuf>,
     ipl_path: Option<PathBuf>,
     skip_ipl: bool,
+    sram_path: Option<PathBuf>,
+    memcard_path: Option<PathBuf>,
     execution_mode: gecko::ExecutionMode,
     input_config: hostinput::InputConfig,
 }
@@ -86,6 +88,8 @@ impl PlayerState {
                 coef_path: coef,
                 ipl_path: ipl,
                 skip_ipl: config.skip_ipl,
+                sram_path: config.sram_enabled.then(|| config::exe_relative(SRAM_FILE)),
+                memcard_path: config.memcard_enabled.then(|| config::exe_relative(MEMCARD_A_FILE)),
                 execution_mode: config.cpu_mode.into(),
                 input_config: config.input.clone(),
             })),
@@ -313,22 +317,43 @@ fn finish_boot<const S: gecko::system::SystemId>(
     );
 }
 
-fn build_gamecube(dvd: Box<dyn image::Dvd>, params: &BootParams) -> gecko::system::System<{ system::GC }> {
-    let Some(ipl_path) = params.ipl_path.as_deref() else {
-        return GameCube::with_ipl_hle(dvd);
-    };
-    match std::fs::read(ipl_path) {
-        Ok(ipl_data) => {
-            tracing::warn!(path = %ipl_path.display(), skip_ipl = params.skip_ipl, "booting via real IPL");
-            let mut emu = GameCube::with_ipl(&ipl_data, params.skip_ipl);
-            emu.insert_dvd(dvd);
-            emu
-        }
-        Err(err) => {
-            tracing::warn!(?err, path = %ipl_path.display(), "IPL.bin unreadable; falling back to IPL HLE");
-            GameCube::with_ipl_hle(dvd)
-        }
+fn ensure_internal_dir(path: Option<&Path>) {
+    if let Some(dir) = path.and_then(Path::parent)
+        && let Err(err) = std::fs::create_dir_all(dir)
+    {
+        tracing::warn!(?err, dir = %dir.display(), "failed to create internal storage dir");
     }
+}
+
+fn build_gamecube(dvd: Box<dyn image::Dvd>, params: &BootParams) -> gecko::system::System<{ system::GC }> {
+    let mut emu = match params.ipl_path.as_deref() {
+        None => GameCube::with_ipl_hle(dvd),
+        Some(ipl_path) => match std::fs::read(ipl_path) {
+            Ok(ipl_data) => {
+                tracing::warn!(path = %ipl_path.display(), skip_ipl = params.skip_ipl, "booting via real IPL");
+                let mut emu = GameCube::with_ipl(&ipl_data, params.skip_ipl);
+                emu.insert_dvd(dvd);
+                emu
+            }
+            Err(err) => {
+                tracing::warn!(?err, path = %ipl_path.display(), "IPL.bin unreadable; falling back to IPL HLE");
+                GameCube::with_ipl_hle(dvd)
+            }
+        },
+    };
+
+    // Persist console SRAM and attach the Slot A memory card when enabled.
+    self::ensure_internal_dir(params.sram_path.as_deref().or(params.memcard_path.as_deref()));
+
+    if let Some(sram_path) = &params.sram_path {
+        emu.set_sram_path(sram_path.clone());
+    }
+
+    if let Some(memcard_path) = &params.memcard_path {
+        emu.insert_memory_card(0, Some(memcard_path.clone()), 256);
+    }
+
+    emu
 }
 
 fn configure_emu<const S: gecko::system::SystemId>(

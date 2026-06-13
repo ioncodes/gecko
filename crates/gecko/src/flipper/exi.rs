@@ -1,5 +1,6 @@
 pub mod device;
 pub mod macronix;
+pub mod memcard;
 pub mod regs;
 
 use crate::flipper::exi::regs::TransferType;
@@ -78,6 +79,13 @@ impl ExternalInterface {
 
     pub fn device_connected(&self, channel: usize) -> bool {
         self.devices[channel][0].as_ref().is_some_and(|d| d.connected())
+    }
+
+    pub fn macronix_mut(&mut self) -> Option<&mut macronix::ExiMacronix> {
+        self.devices[macronix::ExiMacronix::CHANNEL][macronix::ExiMacronix::DEVICE]
+            .as_mut()
+            .and_then(|d| d.as_any_mut())
+            .and_then(|any| any.downcast_mut::<macronix::ExiMacronix>())
     }
 
     #[inline(always)]
@@ -177,6 +185,16 @@ impl ExternalInterface {
     }
 
     #[inline(always)]
+    fn set_exi_interrupt<const CHANNEL: usize>(&mut self, val: bool) {
+        match CHANNEL {
+            0 => self.ch0_csr.set_exi_interrupt(val),
+            1 => self.ch1_csr.set_exi_interrupt(val),
+            2 => self.ch2_csr.set_exi_interrupt(val),
+            _ => unreachable!(),
+        }
+    }
+
+    #[inline(always)]
     fn finish_transfer<const CHANNEL: usize>(&mut self) {
         match CHANNEL {
             0 => {
@@ -232,14 +250,35 @@ pub fn refresh_interrupts<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
 #[inline(always)]
 pub fn on_chip_select_written<const CHANNEL: usize, const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, new_cs: u8) {
     let prev = sys.exi.prev_cs[CHANNEL];
-    if new_cs != prev && new_cs != 0 {
-        if let Some(slot) = ExternalInterface::cs_to_slot(new_cs)
-            && let Some(device) = &mut sys.exi.devices[CHANNEL][slot]
+
+    if new_cs != prev {
+        if new_cs != 0 {
+            if let Some(slot) = ExternalInterface::cs_to_slot(new_cs)
+                && let Some(device) = &mut sys.exi.devices[CHANNEL][slot]
+            {
+                device.on_select();
+            }
+        } else if let Some(slot) = ExternalInterface::cs_to_slot(prev)
+            && let Some(delay) = sys.exi.devices[CHANNEL][slot].as_mut().and_then(|d| d.on_deselect())
         {
-            device.on_select();
+            sys.scheduler
+                .schedule_in(delay, self::memcard_cmd_done::<CHANNEL, SYSTEM>);
         }
     }
+
     sys.exi.prev_cs[CHANNEL] = new_cs;
+}
+
+fn memcard_cmd_done<const CHANNEL: usize, const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    let raise = sys.exi.devices[CHANNEL][0]
+        .as_mut()
+        .is_some_and(|d| d.complete_command());
+
+    if raise {
+        sys.exi.set_exi_interrupt::<CHANNEL>(true);
+    }
+
+    self::refresh_interrupts(sys);
 }
 
 #[inline(always)]

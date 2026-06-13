@@ -207,6 +207,22 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         self.gx.execution_mode = mode;
     }
 
+    /// Attach a GameCube memory card on the given EXI channel (0 = slot A,
+    /// 1 = slot B), device slot 0. `total_blocks` sets the card size
+    /// (256 blocks = "Memory Card 251" / 2 MB card).
+    pub fn insert_memory_card(&mut self, channel: usize, path: Option<std::path::PathBuf>, total_blocks: u32) {
+        let card = crate::flipper::exi::memcard::ExiMemoryCard::new(path, total_blocks);
+        self.exi.attach_device(channel, 0, Box::new(card));
+    }
+
+    /// Back the GameCube SRAM (console settings, clock bias, memory card flash
+    /// id) with a file so it persists across runs.
+    pub fn set_sram_path(&mut self, path: std::path::PathBuf) {
+        if let Some(macronix) = self.exi.macronix_mut() {
+            macronix.set_sram_path(path);
+        }
+    }
+
     /// Drain pending scheduler events, then execute one CPU instruction.
     #[inline(always)]
     pub fn step(&mut self) {

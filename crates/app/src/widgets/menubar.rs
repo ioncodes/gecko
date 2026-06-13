@@ -16,6 +16,8 @@ pub fn menubar(
     theme_pref: ThemePreference,
     skip_ipl: bool,
     upscale: u32,
+    memcard_enabled: bool,
+    sram_enabled: bool,
 ) -> Element<'static, Message> {
     let bar_bg = palette.bg_2;
     let border = palette.border;
@@ -25,7 +27,15 @@ pub fn menubar(
         Item::with_menu(self::top_label(palette, "File"), self::file_menu(palette)),
         Item::with_menu(
             self::top_label(palette, "Settings"),
-            self::settings_menu(palette, cpu, theme_pref, skip_ipl, upscale),
+            self::settings_menu(
+                palette,
+                cpu,
+                theme_pref,
+                skip_ipl,
+                upscale,
+                memcard_enabled,
+                sram_enabled,
+            ),
         ),
         Item::with_menu(
             self::top_label(palette, "Compatibility"),
@@ -224,6 +234,8 @@ fn settings_menu(
     theme_pref: ThemePreference,
     skip_ipl: bool,
     upscale: u32,
+    memcard_enabled: bool,
+    sram_enabled: bool,
 ) -> Menu<'static, Message, iced::Theme, iced::Renderer> {
     Menu::new(vec![
         Item::new(self::section_header(palette, "Execution Engine")),
@@ -246,6 +258,18 @@ fn settings_menu(
             "Skip IPL (GameCube)",
             Message::MenuToggleSkipIpl,
             Some(skip_ipl),
+        )),
+        Item::new(self::menu_item(
+            palette,
+            "Memory Card (Slot A)",
+            Message::MenuToggleMemoryCard,
+            Some(memcard_enabled),
+        )),
+        Item::new(self::menu_item(
+            palette,
+            "Persist SRAM",
+            Message::MenuToggleSram,
+            Some(sram_enabled),
         )),
         Item::new(self::separator(palette)),
         Item::new(self::section_header(palette, "Internal Resolution")),

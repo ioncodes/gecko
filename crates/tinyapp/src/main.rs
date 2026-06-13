@@ -183,6 +183,17 @@ struct Args {
     /// first presented frame until the app exits
     #[arg(long)]
     fifo_record: Option<String>,
+
+    /// Path to a GameCube Slot A memory card image (.raw), created blank if
+    /// missing. No card is attached unless this is given.
+    #[arg(long)]
+    memcard: Option<String>,
+
+    /// Path to a GameCube SRAM image (64 bytes), persisting console settings,
+    /// clock bias and the memory card flash id across runs. Created on first
+    /// write. The IPL boot uses an in-memory default if this is not given.
+    #[arg(long)]
+    sram: Option<String>,
 }
 
 fn main() {
@@ -287,6 +298,16 @@ fn configure<const SYSTEM: SystemId>(emulator: &mut System<SYSTEM>, args: &Args)
     if let Some(ref coef_path) = args.coef {
         let coef_data = std::fs::read(coef_path).expect("failed to read DSP coefficient ROM");
         emulator.dsp.load_coef(&coef_data);
+    }
+
+    if SYSTEM == gecko::GC {
+        if let Some(path) = &args.memcard {
+            emulator.insert_memory_card(0, Some(std::path::PathBuf::from(path)), 256);
+        }
+
+        if let Some(path) = &args.sram {
+            emulator.set_sram_path(std::path::PathBuf::from(path));
+        }
     }
 
     #[cfg(feature = "scripting")]

@@ -44,6 +44,8 @@ pub enum Message {
     MenuQuit,
     MenuToggleCpu(CpuMode),
     MenuToggleSkipIpl,
+    MenuToggleMemoryCard,
+    MenuToggleSram,
     MenuSetTheme(ThemePreference),
     MenuSetUpscale(u32),
     MenuAbout,
@@ -394,6 +396,16 @@ impl App {
                 self.persist_config();
                 Task::none()
             }
+            Message::MenuToggleMemoryCard => {
+                self.config.memcard_enabled = !self.config.memcard_enabled;
+                self.persist_config();
+                Task::none()
+            }
+            Message::MenuToggleSram => {
+                self.config.sram_enabled = !self.config.sram_enabled;
+                self.persist_config();
+                Task::none()
+            }
             Message::MenuSetTheme(pref) => {
                 self.config.theme = pref;
                 self.persist_config();
@@ -656,6 +668,8 @@ impl App {
                 self.config.theme,
                 self.config.skip_ipl,
                 self.config.upscale,
+                self.config.memcard_enabled,
+                self.config.sram_enabled,
             ),
             search_bar::search_bar(palette, &self.search),
             body,
