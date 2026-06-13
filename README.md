@@ -43,6 +43,7 @@ Gecko is developed with homebrew development and reverse engineering in mind, bu
 - JIT and shader cache
 - FIFO recorder, player and [debugger](https://www.youtube.com/watch?v=8mTPH3iAjy4)
   - Compatible with Dolphin
+- GameCube memory cards
 - Frame pacing
 - Modular audio backend, defaults to `cpal`
   - Supports mixing audio sinks
@@ -64,8 +65,6 @@ Gecko is developed with homebrew development and reverse engineering in mind, bu
 - Various built-in diagnostics for JIT and GX
 - [Support for web browser](https://gecko.layle.dev)
   - [incl. debugging capabilities](https://gecko.layle.dev/dbg)
-
-There is currently **no way to save games** for GameCube. Wii save games are supported naturally via NAND.
 
 ## Usage
 Prebuilt releases (including debug builds) can be downloaded [here](https://github.com/ioncodes/gecko/releases). GameCube and Wii require system files to use the emulator, please refer to the ["Required Files"](https://github.com/ioncodes/gecko#required-files) chapter. Minimal commands to launch a game:
