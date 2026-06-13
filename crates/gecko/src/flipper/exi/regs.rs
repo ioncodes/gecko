@@ -152,7 +152,7 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel0Control {
             if self.dma_mode() {
                 exi::run_dma::<0, SYSTEM>(sys);
             } else {
-                sys.exi.start_immediate_transfer::<0>();
+                sys.exi.start_immediate_transfer::<0, SYSTEM>();
             }
         }
         exi::refresh_interrupts(sys);
@@ -257,7 +257,7 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel1Control {
             if self.dma_mode() {
                 exi::run_dma::<1, SYSTEM>(sys);
             } else {
-                sys.exi.start_immediate_transfer::<1>();
+                sys.exi.start_immediate_transfer::<1, SYSTEM>();
             }
         }
         exi::refresh_interrupts(sys);
@@ -364,7 +364,7 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel2Control {
             if self.dma_mode() {
                 exi::run_dma::<2, SYSTEM>(sys);
             } else {
-                sys.exi.start_immediate_transfer::<2>();
+                sys.exi.start_immediate_transfer::<2, SYSTEM>();
             }
         }
         exi::refresh_interrupts(sys);

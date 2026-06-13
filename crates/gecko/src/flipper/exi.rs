@@ -103,7 +103,7 @@ impl ExternalInterface {
     }
 
     #[inline(always)]
-    pub fn start_immediate_transfer<const CHANNEL: usize>(&mut self) {
+    pub fn start_immediate_transfer<const CHANNEL: usize, const SYSTEM: SystemId>(&mut self) {
         let (transfer_type, transfer_length, chip_select, mut bytes) = match CHANNEL {
             0 => (
                 self.ch0_cr.transfer_type(),
@@ -142,7 +142,7 @@ impl ExternalInterface {
         let size = (transfer_length as usize) + 1;
 
         if let Some(device) = &mut self.devices[CHANNEL][slot] {
-            if device.is_stub() {
+            if device.is_stub() && SYSTEM == crate::system::GC {
                 tracing::warn!(
                     channel = CHANNEL,
                     slot,
@@ -159,13 +159,15 @@ impl ExternalInterface {
                 device.transfer_byte(&mut bytes[i]);
             }
         } else {
-            tracing::warn!(
-                channel = CHANNEL,
-                slot,
-                ?transfer_type,
-                size,
-                "EXI immediate transfer to empty slot"
-            );
+            if SYSTEM == crate::system::GC {
+                tracing::warn!(
+                    channel = CHANNEL,
+                    slot,
+                    ?transfer_type,
+                    size,
+                    "EXI immediate transfer to empty slot"
+                );
+            }
 
             bytes[..size].fill(0);
         }
@@ -330,7 +332,7 @@ pub fn run_dma<const CHANNEL: usize, const SYSTEM: SystemId>(sys: &mut System<SY
 
         match transfer_type {
             TransferType::Read => {
-                if stub {
+                if stub && SYSTEM == crate::system::GC {
                     tracing::warn!(
                         channel = CHANNEL,
                         slot,
@@ -344,7 +346,7 @@ pub fn run_dma<const CHANNEL: usize, const SYSTEM: SystemId>(sys: &mut System<SY
                 sys.mmio.queue_icbi_for_range(address, length);
             }
             TransferType::Write => {
-                if stub {
+                if stub && SYSTEM == crate::system::GC {
                     tracing::error!(
                         channel = CHANNEL,
                         slot,
@@ -363,7 +365,7 @@ pub fn run_dma<const CHANNEL: usize, const SYSTEM: SystemId>(sys: &mut System<SY
                 );
             }
         }
-    } else {
+    } else if SYSTEM == crate::system::GC {
         tracing::warn!(channel = CHANNEL, slot, ?transfer_type, length, "EXI DMA to empty slot");
     }
 
