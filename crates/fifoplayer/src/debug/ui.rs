@@ -269,9 +269,15 @@ impl<const SYSTEM: SystemId> DebugApp<SYSTEM> {
         let mut stepped = true;
         match action {
             UiAction::StepCmd => {
+                let f0 = self.session.frame_idx;
                 self.session.step_command();
+                self::rerender_if_in_frame(&mut self.session, f0);
             }
-            UiAction::StepDraw => self.session.step_draw(),
+            UiAction::StepDraw => {
+                let f0 = self.session.frame_idx;
+                self.session.step_draw();
+                self::rerender_if_in_frame(&mut self.session, f0);
+            }
             UiAction::StepFrame => self.session.step_frame(),
             UiAction::RunPause => {
                 stepped = false;
@@ -1098,6 +1104,12 @@ fn breakpoint_list<T: Copy + Eq + Ord + std::hash::Hash>(
     }
     if let Some(item) = remove {
         set.remove(&item);
+    }
+}
+
+fn rerender_if_in_frame<const SYSTEM: SystemId>(session: &mut DebugSession<SYSTEM>, prev_frame: usize) {
+    if !session.finished && session.frame_idx == prev_frame {
+        session.rerender();
     }
 }
 

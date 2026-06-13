@@ -301,12 +301,23 @@ impl<const SYSTEM: SystemId> DebugSession<SYSTEM> {
     }
 
     pub fn seek_to(&mut self, frame: usize, row: usize) {
+        self.replay_to(frame, row, true);
+    }
+
+    pub fn rerender(&mut self) {
+        self.replay_to(self.frame_idx, self.row, false);
+    }
+
+    fn replay_to(&mut self, frame: usize, row: usize, invalidate: bool) {
         let frame = frame.clamp(self.start, self.end);
 
         self.playback = Playback::new();
         self.finished = false;
+        self.presents = 0;
 
-        self.sink.exec(GxAction::InvalidateCaches);
+        if invalidate {
+            self.sink.exec(GxAction::InvalidateCaches);
+        }
         self.sink.reset_efb();
         self.playback.load_state(&self.file, &mut self.sink);
 
