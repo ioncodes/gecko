@@ -36,6 +36,10 @@ impl RenderSink for PlayerSink {
         self.inner.flush_efb_copies(ram);
     }
 
+    fn reset_efb(&mut self) {
+        self.inner.reset_efb();
+    }
+
     fn take_draw_data(&mut self) -> Box<DrawData> {
         self.inner.take_draw_data()
     }

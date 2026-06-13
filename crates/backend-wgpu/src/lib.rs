@@ -895,6 +895,27 @@ impl GxRenderer {
         self.submit_pending(queue);
     }
 
+    pub fn reset_efb(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.flush_pending_draws(device, queue);
+        self.submit_pending(queue);
+
+        self.clear_efb_region(
+            device,
+            queue,
+            0,
+            0,
+            EFB_WIDTH,
+            EFB_HEIGHT,
+            [0.0, 0.0, 0.0, 0.0],
+            1.0,
+            true,
+            true,
+            true,
+        );
+
+        self.submit_pending(queue);
+    }
+
     pub fn efb_view(&self) -> &wgpu::TextureView {
         &self.efb_view
     }

@@ -289,6 +289,10 @@ impl RenderSink for InlineSink {
             .drain_pending_writebacks(&self.device, &self.queue, ram);
     }
 
+    fn reset_efb(&mut self) {
+        self.gx.lock().unwrap().reset_efb(&self.device, &self.queue);
+    }
+
     fn take_draw_data(&mut self) -> Box<DrawData> {
         self.recycled_draw_data.pop().unwrap_or_default()
     }

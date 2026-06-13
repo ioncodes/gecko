@@ -951,7 +951,7 @@ impl<const SYSTEM: SystemId> DebugApp<SYSTEM> {
             let show_xfb = match self.view_mode {
                 ViewMode::Xfb => true,
                 ViewMode::Efb => false,
-                ViewMode::Auto => self.session.row == 0 && self.session.presents > 0,
+                ViewMode::Auto => (self.session.row == 0 || self.session.finished) && self.session.presents > 0,
             };
 
             let (tex, size, label) = if show_xfb {

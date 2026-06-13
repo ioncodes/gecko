@@ -235,6 +235,9 @@ pub trait RenderSink: Send {
         let _ = ram;
     }
 
+    /// Clear the embedded framebuffer back to a fresh (empty) state.
+    fn reset_efb(&mut self) {}
+
     /// Acquire a `DrawData` box for the next draw call. The default impl
     /// allocates fresh. Real renderers override to recycle boxes that come
     /// back through [`Self::exec`] as `GxAction::Draw(box)`. The caller

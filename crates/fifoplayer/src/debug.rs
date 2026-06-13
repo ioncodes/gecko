@@ -307,6 +307,7 @@ impl<const SYSTEM: SystemId> DebugSession<SYSTEM> {
         self.finished = false;
 
         self.sink.exec(GxAction::InvalidateCaches);
+        self.sink.reset_efb();
         self.playback.load_state(&self.file, &mut self.sink);
 
         for f in self.start..frame {
