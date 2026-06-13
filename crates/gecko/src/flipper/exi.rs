@@ -76,6 +76,10 @@ impl ExternalInterface {
         }
     }
 
+    pub fn device_connected(&self, channel: usize) -> bool {
+        self.devices[channel][0].as_ref().is_some_and(|d| d.connected())
+    }
+
     #[inline(always)]
     pub fn interrupt_active(&self) -> bool {
         Self::channel_interrupt_active(&self.ch0_csr)
@@ -130,6 +134,16 @@ impl ExternalInterface {
         let size = (transfer_length as usize) + 1;
 
         if let Some(device) = &mut self.devices[CHANNEL][slot] {
+            if device.is_stub() {
+                tracing::warn!(
+                    channel = CHANNEL,
+                    slot,
+                    ?transfer_type,
+                    size,
+                    "EXI immediate transfer to unimplemented device"
+                );
+            }
+
             for i in 0..size {
                 if transfer_type == TransferType::Read {
                     bytes[i] = 0;
@@ -137,6 +151,14 @@ impl ExternalInterface {
                 device.transfer_byte(&mut bytes[i]);
             }
         } else {
+            tracing::warn!(
+                channel = CHANNEL,
+                slot,
+                ?transfer_type,
+                size,
+                "EXI immediate transfer to empty slot"
+            );
+
             bytes[..size].fill(0);
         }
 
@@ -265,13 +287,35 @@ pub fn run_dma<const CHANNEL: usize, const SYSTEM: SystemId>(sys: &mut System<SY
     };
 
     if let Some(device) = &mut sys.exi.devices[CHANNEL][slot] {
+        let stub = device.is_stub();
+
         match transfer_type {
             TransferType::Read => {
+                if stub {
+                    tracing::warn!(
+                        channel = CHANNEL,
+                        slot,
+                        length,
+                        "EXI DMA read from unimplemented device"
+                    );
+                }
+
                 device.dma_read(sys.mmio.phys_slice_mut(address, length as usize));
                 #[cfg(feature = "jit")]
                 sys.mmio.queue_icbi_for_range(address, length);
             }
-            TransferType::Write => device.dma_write(sys.mmio.phys_slice(address, length as usize)),
+            TransferType::Write => {
+                if stub {
+                    tracing::error!(
+                        channel = CHANNEL,
+                        slot,
+                        length,
+                        "EXI DMA write to unimplemented device (data dropped)"
+                    );
+                }
+
+                device.dma_write(sys.mmio.phys_slice(address, length as usize));
+            }
             TransferType::ReadAndWrite | TransferType::Reserved => {
                 tracing::error!(
                     channel = CHANNEL,
@@ -280,6 +324,8 @@ pub fn run_dma<const CHANNEL: usize, const SYSTEM: SystemId>(sys: &mut System<SY
                 );
             }
         }
+    } else {
+        tracing::warn!(channel = CHANNEL, slot, ?transfer_type, length, "EXI DMA to empty slot");
     }
 
     sys.exi.finish_transfer::<CHANNEL>();

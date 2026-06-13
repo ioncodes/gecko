@@ -15,6 +15,14 @@ pub trait ExiDevice: Send {
             self.transfer_byte(&mut b);
         }
     }
+
+    fn connected(&self) -> bool {
+        true
+    }
+
+    fn is_stub(&self) -> bool {
+        false
+    }
 }
 
 pub struct ExiDummy;
@@ -22,5 +30,13 @@ pub struct ExiDummy;
 impl ExiDevice for ExiDummy {
     fn transfer_byte(&mut self, byte: &mut u8) {
         *byte = 0;
+    }
+
+    fn connected(&self) -> bool {
+        false
+    }
+
+    fn is_stub(&self) -> bool {
+        true
     }
 }

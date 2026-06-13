@@ -1,15 +1,15 @@
 // GameCube IPL ROM / SRAM / RTC device (EXI channel 0, device 1)
 // Macronix device according to yagcd, TODO: update name
 // - Address 0x000000..0x1FFFFF: Mask ROM (2 MB)
-// - Address 0x800000..0x800043: SRAM (TODO: 64 or 68 bytes??)
+// - Address 0x800000..0x80003F: SRAM (64 bytes)
 // - Address 0x840000: RTC (seconds since 2000-01-01?)
 
 const IPL_START: u32 = 0x000000;
 const IPL_END: u32 = 0x1FFFFF;
 
 const SRAM_START: u32 = 0x800000;
-const SRAM_END: u32 = 0x800043;
-const SRAM_SIZE: usize = 68;
+const SRAM_END: u32 = 0x80003F;
+const SRAM_SIZE: usize = 64;
 
 const RTC_START: u32 = 0x840000;
 const RTC_END: u32 = 0x840004;
@@ -212,7 +212,6 @@ impl Sram {
                 0x00, 0x00, 0x00, 0x00,
                 0x00, 0x00, 0x00, 0x00,
                 0x00, 0x00, 0x00, 0x00,
-                0x01, 0x04, 0xFE, 0xFB, // TODO: start and end is cooked? isnt it supposed to be 64 bytes?
             ],
         }
     }
