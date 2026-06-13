@@ -474,7 +474,7 @@ impl GraphicsProcessor {
         let g = clear_gb.green() as f32 / 255.0;
         let b = clear_gb.blue() as f32 / 255.0;
 
-        let clear_z = PeClearZ::from_raw(self.bp_regs[BP_PE_COPY_CLEAR_Z]).z() as f32 / 16777215.0;
+        let clear_z = PeClearZ::from_raw(self.bp_regs[BP_PE_COPY_CLEAR_Z]).z() as f32 / DEPTH_24_BIT_RANGE;
 
         tracing::debug!(
             src_x,
