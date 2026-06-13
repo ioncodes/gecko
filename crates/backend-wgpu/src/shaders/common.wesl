@@ -92,7 +92,7 @@ struct VsIn {
 };
 
 struct VsOut {
-    @builtin(position) clip_pos: vec4<f32>,
+    @invariant @builtin(position) clip_pos: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) color1: vec4<f32>,
     @location(2) uv0: vec3<f32>,
