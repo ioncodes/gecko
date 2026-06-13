@@ -39,7 +39,7 @@ fn fs_writeback_z24(@builtin(position) position: vec4<f32>) -> @location(0) vec4
     let src_pixel = u.src_rect.xy + (position.xy / dst_size) * u.src_rect.zw;
     let coord = vec2<i32>(src_pixel);
     let depth = textureLoad(efb_depth, coord, 0);
-    let z24 = u32(depth * Z24_SCALE);
+    let z24 = min(u32(depth * Z24_SCALE), 0xFFFFFFu);
     let r = f32((z24 >> 16u) & 0xFFu) / 255.0;
     let g = f32((z24 >>  8u) & 0xFFu) / 255.0;
     let b = f32( z24         & 0xFFu) / 255.0;
