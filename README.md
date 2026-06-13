@@ -88,6 +88,7 @@ It scans the configured GameCube and Wii folders for `.iso`, `.rvz` and `.zip` f
   config.toml                # settings, auto-generated
   cache/library.bin          # cached library, auto-generated
   screenshots/               # F12 screenshots, auto-generated
+  internal/                  # contains SRAM and memory cards, auto-generated
   system/                    # system file folder (user provided!)
     IPL.bin                  # GameCube only (must be decoded! see multitool)
     dsp_rom.bin              # GameCube and Wii
