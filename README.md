@@ -84,7 +84,7 @@ A more modern and friendly experience is provided via `gecko` ([short preview on
 
 It scans the configured GameCube and Wii folders for `.iso`, `.rvz` and `.zip` files. Double-clicking on a row opens a dedicated player window for that game. The decoded GameCube IPL and DSP files are expected to be inside the `system` folder and **must** be named exactly as follows:
 
-```
+```sh
 <gecko exe dir>/
   config.toml                # settings, auto-generated
   cache/library.bin          # cached library, auto-generated
