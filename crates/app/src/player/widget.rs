@@ -1,20 +1,22 @@
 use std::sync::Arc;
 
 use iced::advanced::graphics::Viewport;
+use iced::keyboard::key::Code;
 use iced::widget::shader::{self, Pipeline, Primitive, Program, Shader};
-use iced::{Rectangle, mouse};
+use iced::{Rectangle, mouse, window};
 
 use crate::app::Message;
 use crate::player::state::{self, PlayerState};
 
-pub fn shader_widget(state: Arc<PlayerState>) -> Shader<Message, PlayerProgram> {
-    Shader::new(PlayerProgram { state })
+pub fn shader_widget(state: Arc<PlayerState>, window: window::Id) -> Shader<Message, PlayerProgram> {
+    Shader::new(PlayerProgram { state, window })
         .width(iced::Length::Fill)
         .height(iced::Length::Fill)
 }
 
 pub struct PlayerProgram {
     state: Arc<PlayerState>,
+    window: window::Id,
 }
 
 impl Program<Message> for PlayerProgram {
@@ -36,11 +38,27 @@ impl Program<Message> for PlayerProgram {
     ) -> Option<shader::Action<Message>> {
         match event {
             iced::Event::Keyboard(kbd) => match kbd {
-                iced::keyboard::Event::KeyPressed { physical_key, .. } => {
-                    if let Some(code) = state::physical_to_code(physical_key) {
-                        self.state.handle_keyboard(code, true);
+                iced::keyboard::Event::KeyPressed {
+                    physical_key, repeat, ..
+                } => {
+                    let hotkey = match state::physical_to_code(physical_key) {
+                        Some(_) if *repeat => None,
+                        Some(Code::Space) => Some(Message::PlayerTogglePause(self.window)),
+                        Some(Code::Tab) => Some(Message::PlayerToggleUncapped(self.window)),
+                        Some(Code::F10) => Some(Message::PlayerToggleFullscreen(self.window)),
+                        Some(Code::F11) => Some(Message::PlayerToggleOverlay(self.window)),
+                        Some(Code::F12) => Some(Message::PlayerScreenshot(self.window)),
+                        Some(code) => {
+                            self.state.handle_keyboard(code, true);
+                            None
+                        }
+                        None => None,
+                    };
+
+                    match hotkey {
+                        Some(message) => Some(shader::Action::publish(message)),
+                        None => Some(shader::Action::request_redraw()),
                     }
-                    Some(shader::Action::request_redraw())
                 }
                 iced::keyboard::Event::KeyReleased { physical_key, .. } => {
                     if let Some(code) = state::physical_to_code(physical_key) {

@@ -1,34 +1,17 @@
 use cranelift_codegen::Context;
-use cranelift_codegen::ir::{AbiParam, InstBuilder, Signature, Value, types};
+use cranelift_codegen::ir::{AbiParam, BlockArg, InstBuilder, Signature, Value, types};
 use cranelift_codegen::isa::CallConv;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Module};
 
-use super::block::BlockSpec;
+use super::block::{BlockSpec, TermKind};
 #[derive(Clone, Copy)]
 pub struct ExternFuncs {
-    pub cache_ext_ac: FuncId,
-    pub loop_tail: FuncId,
-    pub update_flags_logic: FuncId,
-    pub update_flags_add: FuncId,
-    pub update_flags_sub: FuncId,
-    pub update_flags_ac: FuncId,
     pub read_dmem: FuncId,
     pub write_dmem: FuncId,
-    pub inc_ar: FuncId,
-    pub dec_ar: FuncId,
-    pub increase_ar: FuncId,
-    pub decrease_ar_ix: FuncId,
-    pub dynamic_shift: FuncId,
-    pub read_imem: FuncId,
-    pub write_ac_mid_sxm: FuncId,
-    pub call_stack_push: FuncId,
-    pub call_stack_pop: FuncId,
-    pub data_stack_pop: FuncId,
     pub read_reg_full: FuncId,
     pub write_reg_full: FuncId,
-    pub loop_setup: FuncId,
 }
 
 pub fn translate(
@@ -39,6 +22,7 @@ pub fn translate(
     spec: &BlockSpec,
     block_lookup_table_addr: i64,
     entry_counter_addr: Option<usize>,
+    loop_end_table: &[u8; 0x10000],
 ) {
     let pointer_type = module.target_config().pointer_type();
 
@@ -50,25 +34,32 @@ pub fn translate(
 
     let ctx_ptr: Value = builder.block_params(entry)[0];
 
+    use crate::flipper::dsp::core::stack::DspStack;
     use crate::flipper::dsp::instruction::Instruction;
     use crate::flipper::dsp::jit::{jit_lut, translate as t};
-    use cranelift_codegen::ir::MemFlags;
+    use cranelift_codegen::ir::MemFlagsData;
     let nia_offset = super::abi::dsp_nia_offset_max() as i32;
     let pc_offset = super::abi::dsp_pc_offset_max() as i32;
     let loop_addr_ptr_offset = super::abi::dsp_loop_addr_ptr_offset_max() as i32;
-    let loop_tail_ref = module.declare_func_in_func(extern_funcs.loop_tail, builder.func);
+    let loop_addr_data_offset = (super::abi::dsp_loop_addr_offset() + DspStack::<32>::data_offset()) as i32;
+    let loop_counter_ptr_offset = (super::abi::dsp_loop_counter_offset() + DspStack::<32>::ptr_offset()) as i32;
+    let loop_counter_data_offset = (super::abi::dsp_loop_counter_offset() + DspStack::<32>::data_offset()) as i32;
+    let call_stack_ptr_offset = (super::abi::dsp_call_stack_offset() + DspStack::<32>::ptr_offset()) as i32;
+    let call_stack_data_offset = (super::abi::dsp_call_stack_offset() + DspStack::<32>::data_offset()) as i32;
 
     if let Some(addr) = entry_counter_addr {
         let slot_v = builder.ins().iconst(types::I64, addr as i64);
-        let cur = builder.ins().load(types::I64, MemFlags::trusted(), slot_v, 0);
+        let cur = builder.ins().load(types::I64, MemFlagsData::trusted(), slot_v, 0);
         let next = builder.ins().iadd_imm(cur, 1);
-        builder.ins().store(MemFlags::trusted(), next, slot_v, 0);
+        builder.ins().store(MemFlagsData::trusted(), next, slot_v, 0);
     }
 
-    for entry in &spec.instrs {
+    let block_sig_ref = builder.import_signature(block_signature(pointer_type));
+
+    for (idx, entry) in spec.instrs.iter().enumerate() {
         let natural_nia = entry.pc.wrapping_add(entry.size as u16);
         let nia_v = builder.ins().iconst(types::I16, natural_nia as i64);
-        builder.ins().store(MemFlags::trusted(), nia_v, ctx_ptr, nia_offset);
+        builder.ins().store(MemFlagsData::trusted(), nia_v, ctx_ptr, nia_offset);
 
         let primary = (entry.raw & 0xFFFF) as u16;
         let has_ext = ((primary >> 12) & 0xF) >= 3;
@@ -104,9 +95,19 @@ pub fn translate(
             jit_lut::dispatch_gc_dsp_ext(&mut tctx2, crate::flipper::dsp::instruction::GcDspExt(ext_byte as u8));
         }
 
+        let is_last = idx + 1 == spec.instrs.len();
+        let dynamic_nia = is_last && spec.terminator != TermKind::LengthLimit;
+        let marked_loop_end = loop_end_table[entry.pc as usize] != 0;
+
+        if !dynamic_nia && !marked_loop_end {
+            let pc_v = builder.ins().iconst(types::I16, natural_nia as i64);
+            builder.ins().store(MemFlagsData::trusted(), pc_v, ctx_ptr, pc_offset);
+            continue;
+        }
+
         let loop_ptr = builder
             .ins()
-            .load(types::I8, MemFlags::trusted(), ctx_ptr, loop_addr_ptr_offset);
+            .load(types::I8, MemFlagsData::trusted(), ctx_ptr, loop_addr_ptr_offset);
         let in_loop = builder
             .ins()
             .icmp_imm(cranelift_codegen::ir::condcodes::IntCC::NotEqual, loop_ptr, 0);
@@ -117,34 +118,126 @@ pub fn translate(
 
         builder.switch_to_block(fast_block);
         builder.seal_block(fast_block);
-        let nia_v = builder.ins().load(types::I16, MemFlags::trusted(), ctx_ptr, nia_offset);
-        builder.ins().store(MemFlags::trusted(), nia_v, ctx_ptr, pc_offset);
+        let nia_v = builder
+            .ins()
+            .load(types::I16, MemFlagsData::trusted(), ctx_ptr, nia_offset);
+        builder.ins().store(MemFlagsData::trusted(), nia_v, ctx_ptr, pc_offset);
         builder.ins().jump(continue_block, &[]);
 
         builder.switch_to_block(slow_block);
         builder.seal_block(slow_block);
-        builder.ins().call(loop_tail_ref, &[ctx_ptr]);
-        // After loop_tail, PC may have been redirected (jump back from loop iteration).
-        // If PC != natural_nia, exit the block early so the chain link can dispatch
-        // the correct next block. Otherwise, fall through to the next instruction.
-        let pc_after = builder.ins().load(types::I16, MemFlags::trusted(), ctx_ptr, pc_offset);
+        // Inline loop_tail: when nia matches the active loop's end address,
+        // either decrement the counter and jump back to the loop top (from the
+        // call stack), or pop all three loop stacks once the count runs out.
+        // If the final nia != natural_nia, exit the block early so the chain
+        // link can dispatch the correct next block.
+        let loopend_block = builder.create_block();
+        let cont_loop_block = builder.create_block();
+        let pop_block = builder.create_block();
+        let finish_block = builder.create_block();
+        builder.append_block_param(finish_block, types::I16);
+
+        let nia_cur = builder
+            .ins()
+            .load(types::I16, MemFlagsData::trusted(), ctx_ptr, nia_offset);
+        let la_idx = builder.ins().uextend(types::I64, loop_ptr);
+        let la_byte = builder.ins().ishl_imm(la_idx, 1);
+        let la_addr = builder.ins().iadd(ctx_ptr, la_byte);
+        let la_top = builder
+            .ins()
+            .load(types::I16, MemFlagsData::trusted(), la_addr, loop_addr_data_offset);
+        let at_end = builder
+            .ins()
+            .icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, nia_cur, la_top);
+        builder
+            .ins()
+            .brif(at_end, loopend_block, &[], finish_block, &[BlockArg::Value(nia_cur)]);
+
+        builder.switch_to_block(loopend_block);
+        builder.seal_block(loopend_block);
+        let lc_ptr = builder
+            .ins()
+            .load(types::I8, MemFlagsData::trusted(), ctx_ptr, loop_counter_ptr_offset);
+        let lc_idx = builder.ins().uextend(types::I64, lc_ptr);
+        let lc_byte = builder.ins().ishl_imm(lc_idx, 1);
+        let lc_addr = builder.ins().iadd(ctx_ptr, lc_byte);
+        let counter = builder
+            .ins()
+            .load(types::I16, MemFlagsData::trusted(), lc_addr, loop_counter_data_offset);
+        let cnt1 = builder.ins().iadd_imm(counter, -1);
+        let nz = builder
+            .ins()
+            .icmp_imm(cranelift_codegen::ir::condcodes::IntCC::NotEqual, cnt1, 0);
+        builder.ins().brif(nz, cont_loop_block, &[], pop_block, &[]);
+
+        builder.switch_to_block(cont_loop_block);
+        builder.seal_block(cont_loop_block);
+        builder
+            .ins()
+            .store(MemFlagsData::trusted(), cnt1, lc_addr, loop_counter_data_offset);
+        let cs_ptr = builder
+            .ins()
+            .load(types::I8, MemFlagsData::trusted(), ctx_ptr, call_stack_ptr_offset);
+        let cs_idx = builder.ins().uextend(types::I64, cs_ptr);
+        let cs_byte = builder.ins().ishl_imm(cs_idx, 1);
+        let cs_addr = builder.ins().iadd(ctx_ptr, cs_byte);
+        let cs_top = builder
+            .ins()
+            .load(types::I16, MemFlagsData::trusted(), cs_addr, call_stack_data_offset);
+        builder.ins().jump(finish_block, &[BlockArg::Value(cs_top)]);
+
+        builder.switch_to_block(pop_block);
+        builder.seal_block(pop_block);
+        let lc_dec = builder.ins().iadd_imm(lc_ptr, -1);
+        let lc_new = builder.ins().band_imm(lc_dec, 31);
+        builder
+            .ins()
+            .store(MemFlagsData::trusted(), lc_new, ctx_ptr, loop_counter_ptr_offset);
+        let la_dec = builder.ins().iadd_imm(loop_ptr, -1);
+        let la_new = builder.ins().band_imm(la_dec, 31);
+        builder
+            .ins()
+            .store(MemFlagsData::trusted(), la_new, ctx_ptr, loop_addr_ptr_offset);
+        let csp = builder
+            .ins()
+            .load(types::I8, MemFlagsData::trusted(), ctx_ptr, call_stack_ptr_offset);
+        let csp_dec = builder.ins().iadd_imm(csp, -1);
+        let csp_new = builder.ins().band_imm(csp_dec, 31);
+        builder
+            .ins()
+            .store(MemFlagsData::trusted(), csp_new, ctx_ptr, call_stack_ptr_offset);
+        builder.ins().jump(finish_block, &[BlockArg::Value(nia_cur)]);
+
+        builder.switch_to_block(finish_block);
+        builder.seal_block(finish_block);
+        let nia_final = builder.block_params(finish_block)[0];
+        builder
+            .ins()
+            .store(MemFlagsData::trusted(), nia_final, ctx_ptr, nia_offset);
+        builder
+            .ins()
+            .store(MemFlagsData::trusted(), nia_final, ctx_ptr, pc_offset);
         let expected = builder.ins().iconst(types::I16, natural_nia as i64);
         let same = builder
             .ins()
-            .icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, pc_after, expected);
+            .icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, nia_final, expected);
         let exit_block = builder.create_block();
         builder.ins().brif(same, continue_block, &[], exit_block, &[]);
 
         builder.switch_to_block(exit_block);
         builder.seal_block(exit_block);
-        let pc_u32 = builder.ins().uextend(types::I32, pc_after);
-        builder.ins().return_(&[pc_u32]);
+        emit_block_tail_chain(
+            &mut builder,
+            ctx_ptr,
+            block_sig_ref,
+            block_lookup_table_addr,
+            idx as i64 + 1,
+        );
 
         builder.switch_to_block(continue_block);
         builder.seal_block(continue_block);
     }
 
-    let block_sig_ref = builder.import_signature(block_signature(pointer_type));
     emit_block_tail_chain(
         &mut builder,
         ctx_ptr,
@@ -163,7 +256,7 @@ fn emit_block_tail_chain(
     block_lookup_table_addr: i64,
     block_instr_count: i64,
 ) {
-    use cranelift_codegen::ir::MemFlags;
+    use cranelift_codegen::ir::MemFlagsData;
     use cranelift_codegen::ir::condcodes::IntCC;
 
     let pc_offset = super::abi::dsp_pc_offset_max() as i32;
@@ -172,18 +265,20 @@ fn emit_block_tail_chain(
 
     let instr_count = builder
         .ins()
-        .load(types::I32, MemFlags::trusted(), ctx_ptr, instr_count_offset);
+        .load(types::I32, MemFlagsData::trusted(), ctx_ptr, instr_count_offset);
     let new_instr_count = builder.ins().iadd_imm(instr_count, block_instr_count);
     builder
         .ins()
-        .store(MemFlags::trusted(), new_instr_count, ctx_ptr, instr_count_offset);
+        .store(MemFlagsData::trusted(), new_instr_count, ctx_ptr, instr_count_offset);
 
-    let pc_u16 = builder.ins().load(types::I16, MemFlags::trusted(), ctx_ptr, pc_offset);
+    let pc_u16 = builder
+        .ins()
+        .load(types::I16, MemFlagsData::trusted(), ctx_ptr, pc_offset);
     let pc_u32 = builder.ins().uextend(types::I32, pc_u16);
 
     let budget = builder
         .ins()
-        .load(types::I32, MemFlags::trusted(), ctx_ptr, chain_budget_offset);
+        .load(types::I32, MemFlagsData::trusted(), ctx_ptr, chain_budget_offset);
 
     let pc_low12 = builder.ins().band_imm(pc_u32, 0xFFF);
     let pc_shifted = builder.ins().ushr_imm(pc_u32, 3);
@@ -196,8 +291,8 @@ fn emit_block_tail_chain(
     let table_base = builder.ins().iconst(types::I64, block_lookup_table_addr);
     let slot_addr = builder.ins().iadd(table_base, off64);
 
-    let slot_pc = builder.ins().load(types::I32, MemFlags::trusted(), slot_addr, 0);
-    let slot_entry = builder.ins().load(types::I64, MemFlags::trusted(), slot_addr, 8);
+    let slot_pc = builder.ins().load(types::I32, MemFlagsData::trusted(), slot_addr, 0);
+    let slot_entry = builder.ins().load(types::I64, MemFlagsData::trusted(), slot_addr, 8);
 
     let pc_match = builder.ins().icmp(IntCC::Equal, slot_pc, pc_u32);
     let entry_nonzero = builder.ins().icmp_imm(IntCC::NotEqual, slot_entry, 0);
@@ -218,14 +313,14 @@ fn emit_block_tail_chain(
     let new_budget = builder.ins().iadd_imm(budget, -1);
     builder
         .ins()
-        .store(MemFlags::trusted(), new_budget, ctx_ptr, chain_budget_offset);
+        .store(MemFlagsData::trusted(), new_budget, ctx_ptr, chain_budget_offset);
     builder
         .ins()
         .return_call_indirect(block_sig_ref, slot_entry, &[ctx_ptr]);
 }
 
 fn emit_cache_ext_ac_inline(builder: &mut FunctionBuilder, ctx_ptr: Value) {
-    use cranelift_codegen::ir::MemFlags;
+    use cranelift_codegen::ir::MemFlagsData;
     use cranelift_codegen::ir::condcodes::IntCC;
 
     let ac0_low_off = super::abi::dsp_ac0_low_offset() as i32;
@@ -239,31 +334,39 @@ fn emit_cache_ext_ac_inline(builder: &mut FunctionBuilder, ctx_ptr: Value) {
 
     let ac0_low = builder
         .ins()
-        .load(types::I16, MemFlags::trusted(), ctx_ptr, ac0_low_off);
+        .load(types::I16, MemFlagsData::trusted(), ctx_ptr, ac0_low_off);
     let ac1_low = builder
         .ins()
-        .load(types::I16, MemFlags::trusted(), ctx_ptr, ac1_low_off);
+        .load(types::I16, MemFlagsData::trusted(), ctx_ptr, ac1_low_off);
     let ac0_mid = builder
         .ins()
-        .load(types::I16, MemFlags::trusted(), ctx_ptr, ac0_mid_off);
+        .load(types::I16, MemFlagsData::trusted(), ctx_ptr, ac0_mid_off);
     let ac1_mid = builder
         .ins()
-        .load(types::I16, MemFlags::trusted(), ctx_ptr, ac1_mid_off);
-    let ac0_hi = builder.ins().load(types::I16, MemFlags::trusted(), ctx_ptr, ac0_hi_off);
-    let ac1_hi = builder.ins().load(types::I16, MemFlags::trusted(), ctx_ptr, ac1_hi_off);
+        .load(types::I16, MemFlagsData::trusted(), ctx_ptr, ac1_mid_off);
+    let ac0_hi = builder
+        .ins()
+        .load(types::I16, MemFlagsData::trusted(), ctx_ptr, ac0_hi_off);
+    let ac1_hi = builder
+        .ins()
+        .load(types::I16, MemFlagsData::trusted(), ctx_ptr, ac1_hi_off);
 
-    builder.ins().store(MemFlags::trusted(), ac0_low, ctx_ptr, cache_base);
     builder
         .ins()
-        .store(MemFlags::trusted(), ac1_low, ctx_ptr, cache_base + 2);
+        .store(MemFlagsData::trusted(), ac0_low, ctx_ptr, cache_base);
     builder
         .ins()
-        .store(MemFlags::trusted(), ac0_mid, ctx_ptr, cache_base + 8);
+        .store(MemFlagsData::trusted(), ac1_low, ctx_ptr, cache_base + 2);
     builder
         .ins()
-        .store(MemFlags::trusted(), ac1_mid, ctx_ptr, cache_base + 10);
+        .store(MemFlagsData::trusted(), ac0_mid, ctx_ptr, cache_base + 8);
+    builder
+        .ins()
+        .store(MemFlagsData::trusted(), ac1_mid, ctx_ptr, cache_base + 10);
 
-    let status = builder.ins().load(types::I16, MemFlags::trusted(), ctx_ptr, status_off);
+    let status = builder
+        .ins()
+        .load(types::I16, MemFlagsData::trusted(), ctx_ptr, status_off);
     let sxm_shifted = builder.ins().ushr_imm(status, 14);
     let sxm = builder.ins().band_imm(sxm_shifted, 1);
     let sxm_set = builder.ins().icmp_imm(IntCC::NotEqual, sxm, 0);
@@ -273,8 +376,12 @@ fn emit_cache_ext_ac_inline(builder: &mut FunctionBuilder, ctx_ptr: Value) {
 
     let sel0 = builder.ins().select(sxm_set, sat0, ac0_mid);
     let sel1 = builder.ins().select(sxm_set, sat1, ac1_mid);
-    builder.ins().store(MemFlags::trusted(), sel0, ctx_ptr, cache_base + 4);
-    builder.ins().store(MemFlags::trusted(), sel1, ctx_ptr, cache_base + 6);
+    builder
+        .ins()
+        .store(MemFlagsData::trusted(), sel0, ctx_ptr, cache_base + 4);
+    builder
+        .ins()
+        .store(MemFlagsData::trusted(), sel1, ctx_ptr, cache_base + 6);
 }
 
 fn emit_saturate_ac_mid(builder: &mut FunctionBuilder, high: Value, mid: Value) -> Value {
@@ -300,36 +407,6 @@ pub fn block_signature(pointer_type: cranelift_codegen::ir::Type) -> Signature {
     sig
 }
 
-pub fn void_thunk_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: CallConv) -> Signature {
-    let mut sig = Signature::new(host_cc);
-    sig.params.push(AbiParam::new(pointer_type));
-    sig
-}
-
-pub fn flags_logic_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: CallConv) -> Signature {
-    let mut sig = Signature::new(host_cc);
-    sig.params.push(AbiParam::new(pointer_type));
-    sig.params.push(AbiParam::new(types::I32));
-    sig.params.push(AbiParam::new(types::I64));
-    sig
-}
-
-pub fn flags_arith_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: CallConv) -> Signature {
-    let mut sig = Signature::new(host_cc);
-    sig.params.push(AbiParam::new(pointer_type));
-    sig.params.push(AbiParam::new(types::I64));
-    sig.params.push(AbiParam::new(types::I64));
-    sig.params.push(AbiParam::new(types::I64));
-    sig
-}
-
-pub fn flags_ac_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: CallConv) -> Signature {
-    let mut sig = Signature::new(host_cc);
-    sig.params.push(AbiParam::new(pointer_type));
-    sig.params.push(AbiParam::new(types::I64));
-    sig
-}
-
 pub fn dmem_read_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: CallConv) -> Signature {
     let mut sig = Signature::new(host_cc);
     sig.params.push(AbiParam::new(pointer_type));
@@ -343,39 +420,6 @@ pub fn dmem_write_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: 
     sig.params.push(AbiParam::new(pointer_type));
     sig.params.push(AbiParam::new(types::I32));
     sig.params.push(AbiParam::new(types::I32));
-    sig
-}
-
-pub fn ar_unary_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: CallConv) -> Signature {
-    let mut sig = Signature::new(host_cc);
-    sig.params.push(AbiParam::new(pointer_type));
-    sig.params.push(AbiParam::new(types::I32));
-    sig.returns.push(AbiParam::new(types::I32));
-    sig
-}
-
-pub fn ar_binary_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: CallConv) -> Signature {
-    let mut sig = Signature::new(host_cc);
-    sig.params.push(AbiParam::new(pointer_type));
-    sig.params.push(AbiParam::new(types::I32));
-    sig.params.push(AbiParam::new(types::I32));
-    sig.returns.push(AbiParam::new(types::I32));
-    sig
-}
-
-pub fn dynamic_shift_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: CallConv) -> Signature {
-    let mut sig = Signature::new(host_cc);
-    sig.params.push(AbiParam::new(pointer_type));
-    sig.params.push(AbiParam::new(types::I32));
-    sig.params.push(AbiParam::new(types::I32));
-    sig.params.push(AbiParam::new(types::I32));
-    sig
-}
-
-pub fn stack_pop_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: CallConv) -> Signature {
-    let mut sig = Signature::new(host_cc);
-    sig.params.push(AbiParam::new(pointer_type));
-    sig.returns.push(AbiParam::new(types::I32));
     sig
 }
 

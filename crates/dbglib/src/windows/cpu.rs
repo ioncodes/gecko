@@ -208,7 +208,7 @@ pub fn show_cpu<const SYSTEM: SystemId>(
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
                     .show(ui, |ui| {
                         Grid::new("fprs").num_columns(2).striped(true).show(ui, |ui| {
-                            for (i, &val) in cpu.fprs.iter().enumerate() {
+                            for (i, val) in cpu.fpr_array().into_iter().enumerate() {
                                 ui.label(format!("f{i:<2}"));
                                 ui.monospace(format!("{:+.6e}", val));
                                 ui.end_row();

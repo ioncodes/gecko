@@ -8,24 +8,29 @@ on:
 permissions:
   contents: write
 
+env:
+  PACKAGES_QUIET: -p gecko-app -p tinyapp -p fifoplayer
+  PACKAGES_TRACED: -p debugger -p multitool
+  BINARIES: tinyapp debugger multitool gecko fifoplayer
+
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             suffix: linux-x86_64
-            dbg_suffix: linux-dbg-x86_64
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            suffix: linux-arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             suffix: windows-x86_64
-            dbg_suffix: windows-dbg-x86_64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            suffix: macos-arm64
-            dbg_suffix: macos-dbg-arm64
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            suffix: windows-arm64
 
     runs-on: ${{ matrix.os }}
 
@@ -45,19 +50,19 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ matrix.target }}-
+          key: ${{ matrix.os }}-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ matrix.os }}-${{ matrix.target }}-
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libxrandr-dev libxcursor-dev libasound2-dev
+          sudo apt-get install -y libasound2-dev libpulse-dev libaudio-dev libfribidi-dev libjack-dev libsndio-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev libthai-dev libusb-1.0-0-dev libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
 
       - name: Install mold linker
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update && sudo apt-get install -y mold
+          sudo apt-get install -y mold
           echo 'RUSTFLAGS=-C link-arg=-fuse-ld=mold' >> $GITHUB_ENV
 
       - name: Patch Cargo.toml for CI builds
@@ -66,21 +71,10 @@ jobs:
           perl -pi -e 's/^#panic = "abort"$/panic = "abort"/' Cargo.toml
           perl -pi -e 's/^#codegen-units = 1$/codegen-units = 1/' Cargo.toml
 
-      - name: Build debugger + multitool + gecko-app + tinyapp + fifoplayer (release)
-        run: cargo build --release --target ${{ matrix.target }} -p debugger -p multitool -p gecko-app -p tinyapp -p fifoplayer
-
-      - name: Build debugger + multitool + gecko-app + tinyapp + fifoplayer (dev profile, with tracing output)
-        run: cargo build --profile dev --target ${{ matrix.target }} -p debugger -p multitool -p gecko-app -p tinyapp -p fifoplayer
-
-      # - name: Patch chipi dispatch strategy (tinyapp only)
-      #   shell: bash
-      #   run: perl -pi -e 's/strategy fn_ptr_lut/strategy jump_table/g' crates/gecko/spec/*.bindings.chipi
-
-      # - name: Build tinyapp (release)
-      #   run: cargo build --release --package tinyapp --target ${{ matrix.target }}
-
-      # - name: Build tinyapp (dev profile, with tracing output)
-      #   run: cargo build --profile dev --package tinyapp --target ${{ matrix.target }}
+      - name: Build (release)
+        run: |
+          cargo build --release --target ${{ matrix.target }} ${{ env.PACKAGES_QUIET }}
+          cargo build --release --target ${{ matrix.target }} ${{ env.PACKAGES_TRACED }}
 
       - name: Package artifacts
         shell: bash
@@ -93,25 +87,91 @@ jobs:
           package() {
             local profile=$1 suffix=$2 staging=$3
             mkdir -p "$staging"
-            cp "target/${{ matrix.target }}/$profile/tinyapp$EXT" "$staging/"
-            cp "target/${{ matrix.target }}/$profile/debugger$EXT" "$staging/"
-            cp "target/${{ matrix.target }}/$profile/multitool$EXT" "$staging/"
-            cp "target/${{ matrix.target }}/$profile/gecko$EXT" "$staging/"
-            cp "target/${{ matrix.target }}/$profile/fifoplayer$EXT" "$staging/"
+            for bin in $BINARIES; do
+              cp "target/${{ matrix.target }}/$profile/$bin$EXT" "$staging/"
+            done
             cp LICENSE README.md "$staging/"
             (cd "$staging" && 7z a "../artifacts/gecko-$suffix.zip" *)
           }
 
           package release "${{ matrix.suffix }}" staging-rel
-          package debug   "${{ matrix.dbg_suffix }}" staging-dbg
 
       - uses: actions/upload-artifact@v4
         with:
           name: binaries-${{ matrix.suffix }}
           path: artifacts/*
 
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Init submodules
+        run: git submodule update --init --depth 1 --recursive submodules/chipi-spec submodules/solstice
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: macos-universal-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: macos-universal-
+
+      - name: Configure macOS build environment
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          echo 'MACOSX_DEPLOYMENT_TARGET=11.0' >> $GITHUB_ENV
+          echo 'RUSTFLAGS=-C link-arg=-fapple-link-rtlib' >> $GITHUB_ENV
+
+      - name: Patch Cargo.toml for CI builds
+        shell: bash
+        run: |
+          perl -pi -e 's/^#panic = "abort"$/panic = "abort"/' Cargo.toml
+          perl -pi -e 's/^#codegen-units = 1$/codegen-units = 1/' Cargo.toml
+
+      - name: Build (release, both arches)
+        run: |
+          cargo build --release --target aarch64-apple-darwin ${{ env.PACKAGES_QUIET }}
+          cargo build --release --target aarch64-apple-darwin ${{ env.PACKAGES_TRACED }}
+          cargo build --release --target x86_64-apple-darwin  ${{ env.PACKAGES_QUIET }}
+          cargo build --release --target x86_64-apple-darwin  ${{ env.PACKAGES_TRACED }}
+
+      - name: Lipo + package universal binaries
+        shell: bash
+        run: |
+          mkdir -p artifacts
+
+          package() {
+            local profile=$1 suffix=$2 staging=$3
+            mkdir -p "$staging"
+            for bin in $BINARIES; do
+              lipo -create \
+                "target/aarch64-apple-darwin/$profile/$bin" \
+                "target/x86_64-apple-darwin/$profile/$bin" \
+                -output "$staging/$bin"
+            done
+            cp LICENSE README.md "$staging/"
+            (cd "$staging" && 7z a "../artifacts/gecko-$suffix.zip" *)
+          }
+
+          package release macos-universal staging-rel
+
+      - name: Verify universal binaries
+        run: lipo -info staging-rel/tinyapp
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-macos-universal
+          path: artifacts/*
+
   release:
-    needs: build
+    needs: [build, build-macos]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/master'
 

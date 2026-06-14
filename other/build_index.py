@@ -7,20 +7,20 @@ HERE = Path(__file__).parent
 
 PLATFORMS = {
     "gc": {
-        "roms_path": Path("/run/user/1000/gvfs/smb-share:server=vibrator.local,share=roms/Nintendo - GameCube"),
+        "roms_path": Path("/mnt/roms/Nintendo - GameCube"),
         "output_json": HERE / "game_index.json",
         "output_txt": HERE / "game_index.txt",
         "expected_magic": "gc",
     },
     "wii": {
-        "roms_path": Path("/run/user/1000/gvfs/smb-share:server=vibrator.local,share=roms/Nintendo - Wii"),
+        "roms_path": Path("/mnt/roms/Nintendo - Wii"),
         "output_json": HERE / "game_index_wii.json",
         "output_txt": HERE / "game_index_wii.txt",
         "expected_magic": "wii",
     },
 }
 
-WHITELIST = ["(USA)"]
+GC_WHITELIST = ["(US"]
 GC_BLACKLIST = [
     "Alpha", "Beta", "Proto", "Rev ", "Action Replay", "(v1.", "(Unl)", "Disc 2", "Disc 3", "Demo", "Preview", "Bonus", "Debug"
 ]
@@ -34,11 +34,12 @@ GC_MAGIC = b"\xC2\x33\x9F\x3D"
 
 
 def is_allowed(name: str, platform: str) -> bool:
+    if platform != "gc":
+        return True
     lower = name.lower()
-    if not any(w.lower() in lower for w in WHITELIST):
+    if not any(w.lower() in lower for w in GC_WHITELIST):
         return False
-    blacklist = GC_BLACKLIST if platform == "gc" else []
-    return not any(b.lower() in lower for b in blacklist)
+    return not any(b.lower() in lower for b in GC_BLACKLIST)
 
 
 def read_disc_header(fp) -> bytes:
@@ -49,7 +50,7 @@ def read_disc_header(fp) -> bytes:
 
 
 def parse_header(header: bytes) -> tuple[str, str, str | None]:
-    game_code = header[:4].decode("ascii", errors="replace")
+    game_code = header[:6].decode("ascii", errors="replace")
     name_bytes = header[0x20:DISC_HEADER_SIZE].split(b"\x00", 1)[0]
     internal_name = name_bytes.decode("utf-8", errors="replace").strip()
     if header[0x18:0x1C] == WII_MAGIC:
@@ -72,6 +73,13 @@ def index_zip(zip_path: Path) -> tuple[str, str, str, str | None] | None:
     return game_code, internal_name, zip_path.stem, kind
 
 
+def index_rvz(rvz_path: Path) -> tuple[str, str, str, str | None]:
+    with rvz_path.open("rb") as fp:
+        header = read_disc_header(fp)
+    game_code, internal_name, kind = parse_header(header)
+    return game_code, internal_name, rvz_path.stem, kind
+
+
 def build_platform(platform: str) -> None:
     cfg = PLATFORMS[platform]
     roms_path: Path = cfg["roms_path"]
@@ -81,19 +89,20 @@ def build_platform(platform: str) -> None:
 
     print(f"=== {platform} === scanning {roms_path}")
     collisions: dict[str, list[tuple[str, str]]] = {}
-    for zip_path in sorted(roms_path.glob("*.zip")):
-        if not is_allowed(zip_path.name, platform):
+    rom_paths = sorted(p for p in roms_path.iterdir() if p.suffix.lower() in (".zip", ".rvz"))
+    for rom_path in rom_paths:
+        if not is_allowed(rom_path.name, platform):
             continue
         try:
-            entry = index_zip(zip_path)
+            entry = index_zip(rom_path) if rom_path.suffix.lower() == ".zip" else index_rvz(rom_path)
         except Exception as e:
-            print(f"[skip] {zip_path.name}: {e}")
+            print(f"[skip] {rom_path.name}: {e}")
             continue
         if entry is None:
             continue
         game_code, internal_name, stem, kind = entry
         if kind != expected_magic:
-            print(f"[skip] {zip_path.name}: expected {expected_magic} disc, got {kind!r}")
+            print(f"[skip] {rom_path.name}: expected {expected_magic} disc, got {kind!r}")
             continue
         collisions.setdefault(game_code, []).append((internal_name, stem))
         print(f"{game_code}  {internal_name}  ({stem})")

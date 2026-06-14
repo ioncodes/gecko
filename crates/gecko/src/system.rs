@@ -18,6 +18,7 @@ use crate::hollywood::Hollywood;
 #[cfg(feature = "hooks")]
 use crate::hooks::{HookFilters, HookFlags, HookState, Host};
 use crate::host::{EmptyRenderSink, RenderSink};
+use crate::input::InputSink;
 use crate::mmio::Mmio;
 use crate::scheduler::Scheduler;
 use crate::starlet::Starlet;
@@ -64,6 +65,9 @@ pub struct System<const SYSTEM: SystemId> {
 
     /// AID DMA pushes 8-frame stereo s16 blocks here.
     pub audio_sink: Box<dyn AudioSink>,
+
+    /// Controller input is sampled from here FOR WII ONLY.
+    pub input_sink: Option<Box<dyn InputSink>>,
 
     #[cfg(feature = "hooks")]
     pub hook_host: Option<Box<dyn Host<SYSTEM> + Send>>,
@@ -117,6 +121,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
             render_sink: Box::new(EmptyRenderSink::default()),
             audio_sink: Box::new(EmptyAudioSink),
+            input_sink: None,
 
             #[cfg(feature = "hooks")]
             hook_host: None,
@@ -202,6 +207,22 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         self.gx.execution_mode = mode;
     }
 
+    /// Attach a GameCube memory card on the given EXI channel (0 = slot A,
+    /// 1 = slot B), device slot 0. `total_blocks` sets the card size
+    /// (256 blocks = "Memory Card 251" / 2 MB card).
+    pub fn insert_memory_card(&mut self, channel: usize, path: Option<std::path::PathBuf>, total_blocks: u32) {
+        let card = crate::flipper::exi::memcard::ExiMemoryCard::new(path, total_blocks);
+        self.exi.attach_device(channel, 0, Box::new(card));
+    }
+
+    /// Back the GameCube SRAM (console settings, clock bias, memory card flash
+    /// id) with a file so it persists across runs.
+    pub fn set_sram_path(&mut self, path: std::path::PathBuf) {
+        if let Some(macronix) = self.exi.macronix_mut() {
+            macronix.set_sram_path(path);
+        }
+    }
+
     /// Drain pending scheduler events, then execute one CPU instruction.
     #[inline(always)]
     pub fn step(&mut self) {
@@ -246,6 +267,10 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
     #[cfg(feature = "jit")]
     pub fn load_jit_cache(&mut self, game_id: &str) -> (usize, usize, usize, usize, usize, usize) {
+        if self.execution_mode != ExecutionMode::Jit {
+            return (0, 0, 0, 0, 0, 0);
+        }
+
         let mut ppc_compiled = 0;
         let mut ppc_skipped = 0;
         let mut dsp_compiled = 0;
@@ -253,8 +278,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         let mut vtx_compiled = 0;
         let mut vtx_skipped = 0;
 
-        let ppc_path = crate::jit_cache::ppc_cache_path(game_id);
-        if let Ok(blocks) = crate::jit_cache::load_ppc_blocks(&ppc_path) {
+        let ppc_path = crate::jit::cache::ppc_cache_path(game_id);
+        if let Ok(blocks) = crate::jit::cache::load_ppc_blocks(&ppc_path) {
             tracing::info!(count = blocks.len(), "loaded PPC JIT block cache");
 
             if self.jit.is_none() {
@@ -269,8 +294,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             self.jit = Some(jit);
         }
 
-        let dsp_path = crate::jit_cache::dsp_cache_path(game_id);
-        if let Ok(blocks) = crate::jit_cache::load_dsp_blocks(&dsp_path) {
+        let dsp_path = crate::jit::cache::dsp_cache_path(game_id);
+        if let Ok(blocks) = crate::jit::cache::load_dsp_blocks(&dsp_path) {
             tracing::info!(count = blocks.len(), "loaded DSP JIT block cache");
 
             if self.dsp.jit.is_none() {
@@ -289,8 +314,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             dsp_skipped = s;
         }
 
-        let vtx_path = crate::jit_cache::vtx_cache_path(game_id);
-        if let Ok(keys) = crate::jit_cache::load_vtx_keys(&vtx_path) {
+        let vtx_path = crate::jit::cache::vtx_cache_path(game_id);
+        if let Ok(keys) = crate::jit::cache::load_vtx_keys(&vtx_path) {
             tracing::info!(count = keys.len(), "loaded vertex JIT key cache");
             let (c, s) = self.gx.jit_vtx.precompile_keys(&keys);
             vtx_compiled = c;
@@ -310,9 +335,9 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[cfg(feature = "jit")]
     pub fn save_jit_cache(&self, game_id: &str) -> std::io::Result<(usize, usize, usize)> {
         let cached_system = if SYSTEM == WII {
-            crate::jit_cache::CachedSystem::Wii
+            crate::jit::cache::CachedSystem::Wii
         } else {
-            crate::jit_cache::CachedSystem::Gc
+            crate::jit::cache::CachedSystem::Gc
         };
 
         let mut ppc_count = 0;
@@ -321,18 +346,18 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         if let Some(jit) = self.jit.as_ref() {
             let blocks = jit.cached_blocks();
             ppc_count = blocks.len();
-            crate::jit_cache::save_ppc_blocks(&crate::jit_cache::ppc_cache_path(game_id), cached_system, &blocks)?;
+            crate::jit::cache::save_ppc_blocks(&crate::jit::cache::ppc_cache_path(game_id), cached_system, &blocks)?;
         }
 
         if let Some(jit) = self.dsp.jit.as_ref() {
             let blocks = jit.cached_blocks();
             dsp_count = blocks.len();
-            crate::jit_cache::save_dsp_blocks(&crate::jit_cache::dsp_cache_path(game_id), cached_system, &blocks)?;
+            crate::jit::cache::save_dsp_blocks(&crate::jit::cache::dsp_cache_path(game_id), cached_system, &blocks)?;
         }
 
         let keys = self.gx.jit_vtx.cached_keys();
         let vtx_count = keys.len();
-        crate::jit_cache::save_vtx_keys(&crate::jit_cache::vtx_cache_path(game_id), cached_system, &keys)?;
+        crate::jit::cache::save_vtx_keys(&crate::jit::cache::vtx_cache_path(game_id), cached_system, &keys)?;
 
         Ok((ppc_count, dsp_count, vtx_count))
     }
@@ -457,6 +482,39 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         let dsp_suspends = crate::flipper::dsp::DSP_SUSPEND_COUNT.load(Ordering::Relaxed);
         let dsp_wakes = crate::flipper::dsp::DSP_WAKE_COUNT.load(Ordering::Relaxed);
 
+        let drain_calls = crate::flipper::dsp::DSP_DRAIN_CALLS.load(Ordering::Relaxed);
+        let drain_steps = crate::flipper::dsp::DSP_DRAIN_STEPS.load(Ordering::Relaxed);
+        let drain_blocks = crate::flipper::dsp::DSP_DRAIN_BLOCKS.load(Ordering::Relaxed);
+        let drain_nanos = crate::flipper::dsp::DSP_DRAIN_NANOS.load(Ordering::Relaxed);
+        let drain_halt = crate::flipper::dsp::DSP_DRAIN_EXIT_HALT.load(Ordering::Relaxed);
+        let drain_answered = crate::flipper::dsp::DSP_DRAIN_EXIT_ANSWERED.load(Ordering::Relaxed);
+        let drain_wait = crate::flipper::dsp::DSP_DRAIN_EXIT_WAIT.load(Ordering::Relaxed);
+        let drain_budget = crate::flipper::dsp::DSP_DRAIN_EXIT_BUDGET.load(Ordering::Relaxed);
+        let batch_calls = crate::flipper::dsp::DSP_BATCH_CALLS.load(Ordering::Relaxed);
+        let batch_steps = crate::flipper::dsp::DSP_BATCH_STEPS.load(Ordering::Relaxed);
+        let batch_nanos = crate::flipper::dsp::DSP_BATCH_NANOS.load(Ordering::Relaxed);
+
+        let drain_avg_steps = if drain_calls > 0 {
+            drain_steps as f64 / drain_calls as f64
+        } else {
+            0.0
+        };
+        let drain_avg_block = if drain_blocks > 0 {
+            drain_steps as f64 / drain_blocks as f64
+        } else {
+            0.0
+        };
+        let drain_ns_per_step = if drain_steps > 0 {
+            drain_nanos as f64 / drain_steps as f64
+        } else {
+            0.0
+        };
+        let batch_ns_per_step = if batch_steps > 0 {
+            batch_nanos as f64 / batch_steps as f64
+        } else {
+            0.0
+        };
+
         let event_breakdown = self.event_breakdown_top_n(20);
 
         let path = self.heatmap.out_dir.join("idle-skip.txt");
@@ -465,6 +523,33 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 f,
                 "vsync_count={}\nppc_idle_calls={}\nppc_cycles_advanced={}\nppc_avg_advance={:.1}\ndsp_suspends={}\ndsp_wakes={}",
                 self.vsync_count, calls, cycles, avg, dsp_suspends, dsp_wakes
+            )?;
+
+            writeln!(
+                f,
+                "dsp_drain_calls={}\ndsp_drain_steps={}\ndsp_drain_blocks={}\ndsp_drain_ms={:.1}\ndsp_drain_avg_steps={:.1}\ndsp_drain_avg_steps_per_block={:.1}\ndsp_drain_ns_per_step={:.1}",
+                drain_calls,
+                drain_steps,
+                drain_blocks,
+                drain_nanos as f64 / 1e6,
+                drain_avg_steps,
+                drain_avg_block,
+                drain_ns_per_step
+            )?;
+
+            writeln!(
+                f,
+                "dsp_drain_exit_halt={}\ndsp_drain_exit_answered={}\ndsp_drain_exit_wait={}\ndsp_drain_exit_budget={}",
+                drain_halt, drain_answered, drain_wait, drain_budget
+            )?;
+
+            writeln!(
+                f,
+                "dsp_batch_calls={}\ndsp_batch_steps={}\ndsp_batch_ms={:.1}\ndsp_batch_ns_per_step={:.1}",
+                batch_calls,
+                batch_steps,
+                batch_nanos as f64 / 1e6,
+                batch_ns_per_step
             )?;
 
             writeln!(f, "\n--- top scheduler events by fire count ---")?;
@@ -583,6 +668,30 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         (fmt.columns(), fmt.lines())
     }
 
+    pub fn set_input_sink(&mut self, sink: Box<dyn InputSink>) {
+        self.input_sink = Some(sink);
+    }
+
+    pub fn sample_host_input(&mut self) {
+        let Some(sink) = self.input_sink.as_mut() else {
+            return;
+        };
+
+        let input = sink.sample();
+
+        self.apply_host_input(&input);
+
+        let rumble = if SYSTEM == WII {
+            self.starlet.wiimote_rumble()
+        } else {
+            self.si.rumble(0)
+        };
+
+        if let Some(sink) = self.input_sink.as_mut() {
+            sink.set_rumble(0, rumble);
+        }
+    }
+
     pub fn apply_host_input(&mut self, input: &HostInput) {
         match input {
             HostInput::Gc(pad) if SYSTEM == GC => {
@@ -595,12 +704,14 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 nunchuk_stick_x,
                 nunchuk_stick_y,
                 ir_pointer,
+                accel,
             } if SYSTEM == WII => {
                 self.starlet.set_wiimote_buttons(*wiimote_buttons);
                 self.starlet.set_wiimote_shake(*wiimote_shake);
                 self.starlet
                     .set_nunchuk(*nunchuk_buttons, *nunchuk_stick_x, *nunchuk_stick_y);
                 self.starlet.set_ir_pointer(*ir_pointer);
+                self.starlet.set_wiimote_accel(*accel);
             }
             _ => unreachable!("invalid host input for system"),
         }

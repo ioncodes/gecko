@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use backend_wgpu::capture::CapturedFrame;
 use backend_wgpu::sink::{Renderer, TargetAspect};
 use gecko::audio::EmptyAudioSink;
+use gecko::fps::{self, FpsShared};
 use gecko::gamecube::GameCube;
 use gecko::hollywood::ipc::usb;
 use gecko::wii::Wii;
@@ -11,17 +13,21 @@ use gecko::{HostInput, system};
 use iced::keyboard::key::{Code, Physical};
 use iced::mouse::Button as MouseButton;
 
-use crate::config::{Config, DSP_COEF_FILE, DSP_ROM_FILE, IPL_FILE};
-use crate::game::{Game, Platform};
+use crate::config::{self, Config, DSP_COEF_FILE, DSP_ROM_FILE, IPL_FILE, MEMCARD_A_FILE, SRAM_FILE};
+use crate::game::{Format, Game, Platform};
 use crate::player::{audio, emu_thread, input};
 
 struct BootParams {
     disc_path: PathBuf,
+    format: Format,
     dsp_path: Option<PathBuf>,
     coef_path: Option<PathBuf>,
     ipl_path: Option<PathBuf>,
     skip_ipl: bool,
+    sram_path: Option<PathBuf>,
+    memcard_path: Option<PathBuf>,
     execution_mode: gecko::ExecutionMode,
+    input_config: hostinput::InputConfig,
 }
 
 struct Initialized {
@@ -33,11 +39,15 @@ pub struct PlayerState {
     boot: Mutex<Option<BootParams>>,
     initialized: OnceLock<Initialized>,
     shutdown: Arc<AtomicBool>,
+    throttle: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
     aspect: TargetAspect,
+    upscale: u32,
     input: Arc<Mutex<HostInput>>,
     platform: Platform,
     boot_error: Option<String>,
     first_frame: Arc<AtomicBool>,
+    fps: FpsShared,
 }
 
 #[derive(Debug, Clone)]
@@ -68,24 +78,32 @@ impl PlayerState {
         let dsp = Config::resolve_in_dir(&config.dsp_rom, &system_dir, DSP_ROM_FILE);
         let coef = Config::resolve_in_dir(&config.dsp_coef, &system_dir, DSP_COEF_FILE);
         let ipl = Config::resolve_in_dir(&config.ipl, &system_dir, IPL_FILE);
-        let boot_error = self::validate(game.platform, &dsp, &coef, &ipl, &system_dir);
+        let boot_error = self::validate(game.platform, game.format, &dsp, &coef, &ipl, &system_dir);
 
         Arc::new(Self {
             boot: Mutex::new(Some(BootParams {
                 disc_path: game.path.clone(),
+                format: game.format,
                 dsp_path: dsp,
                 coef_path: coef,
                 ipl_path: ipl,
                 skip_ipl: config.skip_ipl,
+                sram_path: config.sram_enabled.then(|| config::exe_relative(SRAM_FILE)),
+                memcard_path: config.memcard_enabled.then(|| config::exe_relative(MEMCARD_A_FILE)),
                 execution_mode: config.cpu_mode.into(),
+                input_config: config.input.clone(),
             })),
             initialized: OnceLock::new(),
             shutdown: Arc::new(AtomicBool::new(false)),
+            throttle: Arc::new(AtomicBool::new(true)),
+            paused: Arc::new(AtomicBool::new(false)),
             aspect,
+            upscale: config.upscale,
             input: Arc::new(Mutex::new(neutral)),
             platform: game.platform,
             boot_error,
             first_frame: Arc::new(AtomicBool::new(false)),
+            fps: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -138,7 +156,7 @@ impl PlayerState {
                 nunchuk_buttons,
                 nunchuk_stick_x,
                 nunchuk_stick_y,
-                ir_pointer: _,
+                ..
             } => {
                 input::update_wiimote_keys(wiimote_buttons, key, pressed);
                 input::update_wiimote_motion_keys(wiimote_shake, key, pressed);
@@ -168,7 +186,7 @@ impl PlayerState {
         if self.platform != Platform::Wii {
             return;
         }
-        let (ir_x, ir_y) = self::aim_to_ir(aim_x, aim_y);
+        let (ir_x, ir_y) = gecko::input::aim_to_ir(aim_x, aim_y);
         let mut input_guard = self.input.lock().unwrap();
         if let HostInput::Wii { ir_pointer, .. } = &mut *input_guard {
             *ir_pointer = Some((ir_x, ir_y));
@@ -183,6 +201,26 @@ impl PlayerState {
         if let HostInput::Wii { ir_pointer, .. } = &mut *input_guard {
             *ir_pointer = None;
         }
+    }
+
+    pub fn fps(&self) -> (f32, f32) {
+        fps::read(&self.fps)
+    }
+
+    pub fn capture_frame(&self) -> Option<CapturedFrame> {
+        self.initialized.get().and_then(|init| init.renderer.capture_xfb())
+    }
+
+    pub fn toggle_throttle(&self) -> bool {
+        !self.throttle.fetch_xor(true, Ordering::Relaxed)
+    }
+
+    pub fn toggle_pause(&self) {
+        self.paused.fetch_xor(true, Ordering::Relaxed);
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
     }
 
     pub fn shutdown(&self) {
@@ -203,22 +241,6 @@ pub fn physical_to_code(physical: &Physical) -> Option<Code> {
     }
 }
 
-fn aim_to_ir(aim_x: f32, aim_y: f32) -> (u16, u16) {
-    const POINTER_SCALE_X: f64 = 0.44;
-    const POINTER_SCALE_Y: f64 = 0.66;
-    const POINTER_Y_OFFSET: f64 = 120.0;
-
-    let aim_x = (aim_x as f64).clamp(0.0, 1.0);
-    let aim_y = (aim_y as f64).clamp(0.0, 1.0);
-    let span_x = usb::IR_CAMERA_WIDTH as f64 * POINTER_SCALE_X;
-    let span_y = usb::IR_CAMERA_HEIGHT as f64 * POINTER_SCALE_Y;
-    let base_x = (usb::IR_CAMERA_WIDTH as f64 - span_x) / 2.0;
-    let base_y = (usb::IR_CAMERA_HEIGHT as f64 - span_y) / 2.0 + POINTER_Y_OFFSET;
-    let ir_x = (base_x + (1.0 - aim_x) * span_x) as u16;
-    let ir_y = (base_y + aim_y * span_y) as u16;
-    (ir_x, ir_y)
-}
-
 fn player_thread(
     state: Arc<PlayerState>,
     params: BootParams,
@@ -226,80 +248,124 @@ fn player_thread(
     queue: wgpu::Queue,
     format: wgpu::TextureFormat,
 ) {
-    let shutdown = state.shutdown.clone();
     tracing::warn!(?format, path = %params.disc_path.display(), "player booting");
 
-    let dvd_data = match std::fs::read(&params.disc_path) {
+    let data = match std::fs::read(&params.disc_path) {
         Ok(b) => b,
         Err(err) => {
             tracing::error!(?err, path = %params.disc_path.display(), "read disc");
             return;
         }
     };
-    if shutdown.load(Ordering::Relaxed) {
+    if state.shutdown.load(Ordering::Relaxed) {
         return;
     }
-    let dvd = image::load_dvd(dvd_data);
-    let game_id = dvd.header().game_id();
 
-    let (renderer, sink) = Renderer::new(device, queue, format, state.aspect);
+    let (renderer, sink) = Renderer::new(device, queue, format, state.aspect, state.upscale);
     {
         let first_frame = state.first_frame.clone();
         renderer.set_frame_ready_callback(move |_| {
-            if !first_frame.swap(true, Ordering::Relaxed) {
-                tracing::warn!("first emu frame ready");
-            }
+            first_frame.store(true, Ordering::Relaxed);
         });
     }
 
-    match state.platform {
-        Platform::Wii => {
-            let mut emu = Wii::apploader_hle(dvd).build();
-            self::configure_emu(&mut emu, &params, sink);
-            emu.apply_host_input(&HostInput::neutral_for(system::WII));
-            let audio = self::install_audio_sink(&mut emu);
-            let _ = emu.load_jit_cache(&game_id);
-            self::set_initialized(&state, renderer, audio, &game_id);
-            emu_thread::run::<{ system::WII }>(emu, state.input.clone(), Some(game_id), true, shutdown);
+    if params.format == Format::Dol {
+        let game_id = gecko::jit::cache::dol_cache_id(&data);
+        let dol = image::Dol::parse(data);
+        match state.platform {
+            Platform::Wii => self::finish_boot(state, params, renderer, sink, Wii::with_image(&dol), game_id),
+            Platform::Gcn => self::finish_boot(state, params, renderer, sink, GameCube::with_image(&dol), game_id),
         }
+        return;
+    }
+
+    let dvd = image::load_dvd(data);
+    let game_id = dvd.header().game_id();
+
+    match state.platform {
+        Platform::Wii => self::finish_boot(state, params, renderer, sink, Wii::apploader_hle(dvd).build(), game_id),
         Platform::Gcn => {
-            let mut emu = self::build_gamecube(dvd, &params);
-            self::configure_emu(&mut emu, &params, sink);
-            emu.apply_host_input(&HostInput::neutral_for(system::GC));
-            let audio = self::install_audio_sink(&mut emu);
-            let _ = emu.load_jit_cache(&game_id);
-            self::set_initialized(&state, renderer, audio, &game_id);
-            emu_thread::run::<{ system::GC }>(emu, state.input.clone(), Some(game_id), true, shutdown);
+            let emu = self::build_gamecube(dvd, &params);
+            self::finish_boot(state, params, renderer, sink, emu, game_id);
         }
     }
 }
 
-fn build_gamecube(dvd: Box<dyn image::Dvd>, params: &BootParams) -> gecko::system::System<{ system::GC }> {
-    let Some(ipl_path) = params.ipl_path.as_deref() else {
-        return GameCube::with_ipl_hle(dvd);
-    };
-    match std::fs::read(ipl_path) {
-        Ok(ipl_data) => {
-            tracing::warn!(path = %ipl_path.display(), skip_ipl = params.skip_ipl, "booting via real IPL");
-            let mut emu = GameCube::with_ipl(&ipl_data, params.skip_ipl);
-            emu.insert_dvd(dvd);
-            emu
-        }
-        Err(err) => {
-            tracing::warn!(?err, path = %ipl_path.display(), "IPL.bin unreadable; falling back to IPL HLE");
-            GameCube::with_ipl_hle(dvd)
-        }
+fn finish_boot<const S: gecko::system::SystemId>(
+    state: Arc<PlayerState>,
+    params: BootParams,
+    renderer: Renderer,
+    sink: backend_wgpu::sink::ThreadedSink,
+    mut emu: gecko::system::System<S>,
+    game_id: String,
+) {
+    self::configure_emu(&mut emu, &params, sink, state.fps.clone());
+    emu.apply_host_input(&HostInput::neutral_for(S));
+
+    let audio = self::install_audio_sink(&mut emu);
+    let _ = emu.load_jit_cache(&game_id);
+    self::set_initialized(&state, renderer, audio, &game_id);
+
+    emu_thread::run::<S>(
+        emu,
+        state.input.clone(),
+        params.input_config,
+        Some(game_id),
+        state.throttle.clone(),
+        state.paused.clone(),
+        state.shutdown.clone(),
+    );
+}
+
+fn ensure_internal_dir(path: Option<&Path>) {
+    if let Some(dir) = path.and_then(Path::parent)
+        && let Err(err) = std::fs::create_dir_all(dir)
+    {
+        tracing::warn!(?err, dir = %dir.display(), "failed to create internal storage dir");
     }
+}
+
+fn build_gamecube(dvd: Box<dyn image::Dvd>, params: &BootParams) -> gecko::system::System<{ system::GC }> {
+    let mut emu = match params.ipl_path.as_deref() {
+        None => GameCube::with_ipl_hle(dvd),
+        Some(ipl_path) => match std::fs::read(ipl_path) {
+            Ok(ipl_data) => {
+                tracing::warn!(path = %ipl_path.display(), skip_ipl = params.skip_ipl, "booting via real IPL");
+                let mut emu = GameCube::with_ipl(&ipl_data, params.skip_ipl);
+                emu.insert_dvd(dvd);
+                emu
+            }
+            Err(err) => {
+                tracing::warn!(?err, path = %ipl_path.display(), "IPL.bin unreadable; falling back to IPL HLE");
+                GameCube::with_ipl_hle(dvd)
+            }
+        },
+    };
+
+    // Persist console SRAM and attach the Slot A memory card when enabled.
+    self::ensure_internal_dir(params.sram_path.as_deref().or(params.memcard_path.as_deref()));
+
+    if let Some(sram_path) = &params.sram_path {
+        emu.set_sram_path(sram_path.clone());
+    }
+
+    if let Some(memcard_path) = &params.memcard_path {
+        emu.insert_memory_card(0, Some(memcard_path.clone()), 256);
+    }
+
+    emu
 }
 
 fn configure_emu<const S: gecko::system::SystemId>(
     emu: &mut gecko::system::System<S>,
     params: &BootParams,
     sink: backend_wgpu::sink::ThreadedSink,
+    fps: FpsShared,
 ) {
     emu.set_execution_mode(params.execution_mode);
     self::load_dsp_roms(emu, params.dsp_path.as_deref(), params.coef_path.as_deref());
     emu.render_sink = Box::new(sink);
+    emu.fps_counter.shared = fps;
 }
 
 fn set_initialized(state: &Arc<PlayerState>, renderer: Renderer, audio: Option<cpal::Stream>, game_id: &str) {
@@ -312,6 +378,7 @@ fn set_initialized(state: &Arc<PlayerState>, renderer: Renderer, audio: Option<c
 
 fn validate(
     platform: Platform,
+    format: Format,
     dsp: &Option<PathBuf>,
     coef: &Option<PathBuf>,
     ipl: &Option<PathBuf>,
@@ -324,7 +391,7 @@ fn validate(
     if coef.is_none() {
         missing.push(DSP_COEF_FILE);
     }
-    if platform == Platform::Gcn && ipl.is_none() {
+    if platform == Platform::Gcn && format != Format::Dol && ipl.is_none() {
         missing.push(IPL_FILE);
     }
 
@@ -332,9 +399,13 @@ fn validate(
         return None;
     }
 
-    let needed = match platform {
-        Platform::Gcn => "GameCube games require IPL.bin, dsp_rom.bin and dsp_coef.bin",
-        Platform::Wii => "Wii games require dsp_rom.bin and dsp_coef.bin",
+    let needed = if format == Format::Dol {
+        "DOL executables require dsp_rom.bin and dsp_coef.bin"
+    } else {
+        match platform {
+            Platform::Gcn => "GameCube games require IPL.bin, dsp_rom.bin and dsp_coef.bin",
+            Platform::Wii => "Wii games require dsp_rom.bin and dsp_coef.bin",
+        }
     };
 
     Some(format!(

@@ -53,6 +53,28 @@ pub fn hash_words(words: impl IntoIterator<Item = u32>) -> u64 {
     h
 }
 
+#[inline]
+pub fn hash_bytes(data: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+
+    let mut chunks = data.chunks_exact(8);
+    for c in &mut chunks {
+        h ^= u64::from_le_bytes(c.try_into().unwrap());
+        h = h.wrapping_mul(0x100000001b3);
+    }
+
+    for &b in chunks.remainder() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+
+    h
+}
+
+pub fn dol_cache_id(data: &[u8]) -> String {
+    format!("dol-{:016x}", self::hash_bytes(data))
+}
+
 pub fn cache_dir(game_id: &str) -> PathBuf {
     PathBuf::from("cache").join(game_id)
 }

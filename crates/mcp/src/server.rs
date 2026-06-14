@@ -595,6 +595,7 @@ impl McpServer {
                 .nunchuk_stick_y
                 .unwrap_or(gecko::hollywood::ipc::usb::NUNCHUK_STICK_CENTER),
             ir_pointer: args.ir_x.zip(args.ir_y),
+            accel: None,
         };
         let mut s = self.shared.state.lock().unwrap();
         s.backend.as_mut().unwrap().apply_host_input(&input);
@@ -719,8 +720,8 @@ fn registers_of<const SYSTEM: gecko::SystemId>(sys: &gecko::System<{ SYSTEM }>) 
         srr0: g.spr.srr0.raw(),
         srr1: g.spr.srr1,
         gprs: g.gprs,
-        fprs: g.fprs,
-        ps1s: g.ps1s,
+        fprs: g.fpr_array(),
+        ps1s: g.ps1_array(),
     }
 }
 

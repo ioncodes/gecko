@@ -12,6 +12,14 @@ impl<const N: usize> Default for DspStack<N> {
 impl<const N: usize> DspStack<N> {
     const MASK: u8 = (N - 1) as u8;
 
+    pub const fn data_offset() -> usize {
+        core::mem::offset_of!(Self, data)
+    }
+
+    pub const fn ptr_offset() -> usize {
+        core::mem::offset_of!(Self, ptr)
+    }
+
     #[inline(always)]
     pub fn top(&self) -> u16 {
         debug_assert!((self.ptr as usize) < N);

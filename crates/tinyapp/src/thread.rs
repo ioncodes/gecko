@@ -9,6 +9,7 @@ use std::time::Duration;
 pub fn emu_thread<const SYSTEM: SystemId>(
     mut emulator: System<SYSTEM>,
     input: Arc<Mutex<HostInput>>,
+    input_config: hostinput::InputConfig,
     game_id: Option<String>,
     throttle: bool,
     start_gate: Arc<AtomicBool>,
@@ -30,6 +31,12 @@ pub fn emu_thread<const SYSTEM: SystemId>(
         emulator.gx.recorder = Some(Box::new(FifoRecorder::new()));
     }
 
+    emulator.set_input_sink(Box::new(hostinput::InputManager::new(
+        SYSTEM,
+        &input_config,
+        input.clone(),
+    )));
+
     while !shutdown.load(Ordering::Relaxed) {
         while throttle && emulator.audio_sink.should_throttle() {
             if shutdown.load(Ordering::Relaxed) {
@@ -38,8 +45,6 @@ pub fn emu_thread<const SYSTEM: SystemId>(
             sleeper.sleep(throttle_step);
         }
 
-        let input = *input.lock().unwrap();
-        emulator.apply_host_input(&input);
         emulator.run_until_vsync();
     }
 

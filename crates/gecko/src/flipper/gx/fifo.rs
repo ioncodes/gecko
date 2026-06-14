@@ -10,6 +10,9 @@ impl GraphicsProcessor {
     pub fn drain_fifo<const SYSTEM: SystemId>(&mut self, mmio: &mut Mmio<SYSTEM>, renderer: &mut dyn RenderSink) {
         let mut fifo = std::mem::take(&mut self.fifo);
 
+        #[cfg(feature = "jit")]
+        fifo.reserve(crate::flipper::gx::jit::VEC_OVERREAD_BYTES);
+
         let pos = self::drain_buf::<SYSTEM>(self, mmio, renderer, &fifo);
         if pos > 0 {
             fifo.drain(..pos);
@@ -123,6 +126,10 @@ fn drain_buf<const SYSTEM: SystemId>(
                         let mut buf = std::mem::take(&mut gp.dl_scratch);
                         buf.clear();
                         buf.extend_from_slice(slice);
+
+                        #[cfg(feature = "jit")]
+                        buf.reserve(crate::flipper::gx::jit::VEC_OVERREAD_BYTES);
+
                         buf
                     }
                     None => {
@@ -173,33 +180,37 @@ fn drain_buf<const SYSTEM: SystemId>(
 
 impl GraphicsProcessor {
     fn vertex_stride(&self, vertex_format_index: usize) -> usize {
-        let vcd_lo = VcdLo::from_raw(self.cp_regs[VCD_LO_REG]);
-        let vcd_hi = VcdHi::from_raw(self.cp_regs[VCD_HI_REG]);
-        let vat_a = VatA::from_raw(self.cp_regs[VATA_REG + vertex_format_index]);
-        let vat_b = VatB::from_raw(self.cp_regs[VATB_REG + vertex_format_index]);
-        let vat_c = VatC::from_raw(self.cp_regs[VATC_REG + vertex_format_index]);
-
-        let attr_size = |attr: AttributeType, direct_size: usize| -> usize {
-            match attr {
-                AttributeType::Direct => direct_size,
-                AttributeType::Index8 => 1,
-                AttributeType::Index16 => 2,
-                AttributeType::None => 0,
-            }
-        };
-
-        vcd_lo.mtx_idx_count()
-            + attr_size(vcd_lo.position(), vat_a.pos_data_size())
-            + vat_a.nrm_stream_size(vcd_lo.normal())
-            + attr_size(vcd_lo.color0(), vat_a.clr0_data_size())
-            + attr_size(vcd_lo.color1(), vat_a.clr1_data_size())
-            + attr_size(vcd_hi.tex0(), vat_a.tex0_data_size())
-            + attr_size(vcd_hi.tex1(), vat_b.tex1_data_size())
-            + attr_size(vcd_hi.tex2(), vat_b.tex2_data_size())
-            + attr_size(vcd_hi.tex3(), vat_b.tex3_data_size())
-            + attr_size(vcd_hi.tex4(), vat_b.tex4_data_size())
-            + attr_size(vcd_hi.tex5(), vat_c.tex5_data_size())
-            + attr_size(vcd_hi.tex6(), vat_c.tex6_data_size())
-            + attr_size(vcd_hi.tex7(), vat_c.tex7_data_size())
+        self::vertex_stride_from_cp(&self.cp_regs, vertex_format_index)
     }
+}
+
+pub fn vertex_stride_from_cp(cp_regs: &[u32], vertex_format_index: usize) -> usize {
+    let vcd_lo = VcdLo::from_raw(cp_regs[VCD_LO_REG]);
+    let vcd_hi = VcdHi::from_raw(cp_regs[VCD_HI_REG]);
+    let vat_a = VatA::from_raw(cp_regs[VATA_REG + vertex_format_index]);
+    let vat_b = VatB::from_raw(cp_regs[VATB_REG + vertex_format_index]);
+    let vat_c = VatC::from_raw(cp_regs[VATC_REG + vertex_format_index]);
+
+    let attr_size = |attr: AttributeType, direct_size: usize| -> usize {
+        match attr {
+            AttributeType::Direct => direct_size,
+            AttributeType::Index8 => 1,
+            AttributeType::Index16 => 2,
+            AttributeType::None => 0,
+        }
+    };
+
+    vcd_lo.mtx_idx_count()
+        + attr_size(vcd_lo.position(), vat_a.pos_data_size())
+        + vat_a.nrm_stream_size(vcd_lo.normal())
+        + attr_size(vcd_lo.color0(), vat_a.clr0_data_size())
+        + attr_size(vcd_lo.color1(), vat_a.clr1_data_size())
+        + attr_size(vcd_hi.tex0(), vat_a.tex0_data_size())
+        + attr_size(vcd_hi.tex1(), vat_b.tex1_data_size())
+        + attr_size(vcd_hi.tex2(), vat_b.tex2_data_size())
+        + attr_size(vcd_hi.tex3(), vat_b.tex3_data_size())
+        + attr_size(vcd_hi.tex4(), vat_b.tex4_data_size())
+        + attr_size(vcd_hi.tex5(), vat_c.tex5_data_size())
+        + attr_size(vcd_hi.tex6(), vat_c.tex6_data_size())
+        + attr_size(vcd_hi.tex7(), vat_c.tex7_data_size())
 }

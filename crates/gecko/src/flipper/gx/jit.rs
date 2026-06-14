@@ -2,7 +2,6 @@
 
 pub mod attr;
 pub mod builder;
-pub mod runtime;
 #[cfg(feature = "vtx-jit-validate")]
 pub mod validate;
 
@@ -14,7 +13,6 @@ use cranelift_frontend::FunctionBuilderContext;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 use rustc_hash::FxHashMap;
-use std::ffi::c_void;
 
 use crate::flipper::gx::constants::*;
 use crate::flipper::gx::regs::{VatA, VatB, VatC, VcdHi, VcdLo};
@@ -85,6 +83,9 @@ unsafe impl Send for ResolvedArray {}
 /// 12 array slots: pos, nrm, clr0, clr1, tex0..tex7.
 pub const RESOLVED_ARRAY_COUNT: usize = 12;
 
+/// Slack every buffer keeps past its last byte so the JITs vector loads can run off the data without faulting.
+pub const VEC_OVERREAD_BYTES: usize = 16;
+
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub struct ResolvedArrays(pub [ResolvedArray; RESOLVED_ARRAY_COUNT]);
@@ -116,9 +117,8 @@ pub fn resolve_addr(mem1: &[u8], mem2: &[u8], addr: u32) -> *const u8 {
 
 /// JIT'd parser entry signature. The compiled function decodes
 /// `vertex_count` vertices from `fifo_ptr` straight into `out_ptr`,
-/// invoking the texgen helper per vertex via `gp_ptr`.
+/// reading transform/texgen config from `xf_mem_ptr`.
 pub type ParserFn = unsafe extern "C" fn(
-    gp_ptr: *mut c_void,
     xf_mem_ptr: *const u32,
     arrays_ptr: *const ResolvedArray,
     fifo_ptr: *const u8,
@@ -185,10 +185,8 @@ impl JitVertexEngine {
 
         let mut jit_builder = JITBuilder::with_isa(isa, default_libcall_names());
 
-        jit_builder.symbol(
-            runtime::SYM_APPLY_TEXGENS,
-            runtime::gecko_gx_jit_apply_texgens as *const u8,
-        );
+        let arena = crate::jit::arena::DenseArena::new(64 << 20).expect("reserve VTX JIT code arena");
+        jit_builder.memory_provider(Box::new(arena));
 
         let module = JITModule::new(jit_builder);
         let ptr = module.target_config().pointer_type();
@@ -209,10 +207,10 @@ impl JitVertexEngine {
         }
     }
 
-    pub fn cached_keys(&self) -> Vec<crate::jit_cache::CachedVtxKey> {
+    pub fn cached_keys(&self) -> Vec<crate::jit::cache::CachedVtxKey> {
         self.cache
             .keys()
-            .map(|k| crate::jit_cache::CachedVtxKey {
+            .map(|k| crate::jit::cache::CachedVtxKey {
                 vcd_lo: k.vcd_lo,
                 vcd_hi: k.vcd_hi,
                 vat_a: k.vat_a,
@@ -222,7 +220,7 @@ impl JitVertexEngine {
             .collect()
     }
 
-    pub fn precompile_keys(&mut self, keys: &[crate::jit_cache::CachedVtxKey]) -> (usize, usize) {
+    pub fn precompile_keys(&mut self, keys: &[crate::jit::cache::CachedVtxKey]) -> (usize, usize) {
         let mut compiled = 0;
         let mut skipped = 0;
         for k in keys {
@@ -290,10 +288,7 @@ impl JitVertexEngine {
         self.ctx.func.signature = self.parser_sig.clone();
 
         let pointer_ty = self.module.target_config().pointer_type();
-        if !builder::build_parser(&mut self.ctx, &mut self.fn_ctx, &mut self.module, pointer_ty, key) {
-            // Codegen refused (unsupported feature). Drop the in-progress fn.
-            return None;
-        }
+        builder::build_parser(&mut self.ctx, &mut self.fn_ctx, pointer_ty, key);
 
         self.module
             .define_function(func_id, &mut self.ctx)
@@ -315,7 +310,6 @@ impl Default for JitVertexEngine {
 fn parser_signature(ptr: ir::Type, cc: CallConv) -> Signature {
     Signature {
         params: vec![
-            ir::AbiParam::new(ptr),            // gp_ptr
             ir::AbiParam::new(ptr),            // xf_mem_ptr
             ir::AbiParam::new(ptr),            // arrays_ptr
             ir::AbiParam::new(ptr),            // fifo_ptr
@@ -450,7 +444,7 @@ pub fn resolve_arrays_for_draw(
         };
         let max_byte_off = max_idx
             .saturating_mul(r.stride as u64)
-            .saturating_add(attr_data_size[slot] as u64);
+            .saturating_add(attr_data_size[slot].max(VEC_OVERREAD_BYTES) as u64);
         let remaining = bank_remaining_from(r.host_base) as u64;
         if max_byte_off > remaining {
             return false;

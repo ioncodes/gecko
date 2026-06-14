@@ -2,11 +2,13 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 const WORKER_COUNT: usize = 2;
 const WORKER_BIN: &str = "screenshotter-worker";
 
 const WORKER_MEM_MAX_DEFAULT: &str = "8G";
+const WORKER_TIMEOUT_SECS: u64 = 300;
 
 fn main() {
     let input_dir = PathBuf::from(
@@ -81,7 +83,11 @@ fn main() {
                             None => return,
                         };
 
-                        match worker_command(&worker_exe, &file, capped, &mem_max).status() {
+                        match self::run_worker(
+                            self::worker_command(&worker_exe, &file, capped, &mem_max),
+                            capped,
+                            &file,
+                        ) {
                             Ok(status) if status.success() => {}
                             Ok(status) => {
                                 eprintln!("Skipping {}: worker exited with {}", file.display(), status,);
@@ -116,10 +122,38 @@ fn worker_command(worker_exe: &Path, file: &Path, capped: bool, mem_max: &str) -
         .arg(format!("MemoryMax={mem_max}"))
         .arg("-p")
         .arg("MemorySwapMax=0")
+        .arg("-p")
+        .arg(format!("RuntimeMaxSec={WORKER_TIMEOUT_SECS}"))
         .arg("--")
         .arg(worker_exe)
         .arg(file);
     cmd
+}
+
+fn run_worker(mut cmd: Command, capped: bool, file: &Path) -> std::io::Result<std::process::ExitStatus> {
+    if capped {
+        return cmd.status();
+    }
+
+    let mut child = cmd.spawn()?;
+    let deadline = Instant::now() + Duration::from_secs(WORKER_TIMEOUT_SECS);
+
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+
+        if Instant::now() >= deadline {
+            eprintln!(
+                "Killing {}: worker exceeded {WORKER_TIMEOUT_SECS}s timeout",
+                file.display()
+            );
+            let _ = child.kill();
+            return child.wait();
+        }
+
+        std::thread::sleep(Duration::from_millis(500));
+    }
 }
 
 #[cfg(target_os = "linux")]

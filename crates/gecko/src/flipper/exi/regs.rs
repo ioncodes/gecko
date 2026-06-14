@@ -92,7 +92,9 @@ crate::mmio_reg!(Channel0Status: u32 @ 0xCC006800);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel0Status {
     fn read(sys: &mut System<SYSTEM>) -> Self {
-        sys.exi.ch0_csr
+        let mut csr = sys.exi.ch0_csr;
+        csr.set_device_connected(sys.exi.device_connected(0));
+        csr
     }
     fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
         write_csr(&mut sys.exi.ch0_csr, self);
@@ -150,7 +152,7 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel0Control {
             if self.dma_mode() {
                 exi::run_dma::<0, SYSTEM>(sys);
             } else {
-                sys.exi.start_immediate_transfer::<0>();
+                sys.exi.start_immediate_transfer::<0, SYSTEM>();
             }
         }
         exi::refresh_interrupts(sys);
@@ -195,7 +197,9 @@ crate::mmio_reg!(Channel1Status: u32 @ 0xCC006814);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel1Status {
     fn read(sys: &mut System<SYSTEM>) -> Self {
-        sys.exi.ch1_csr
+        let mut csr = sys.exi.ch1_csr;
+        csr.set_device_connected(sys.exi.device_connected(1));
+        csr
     }
     fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
         write_csr(&mut sys.exi.ch1_csr, self);
@@ -253,7 +257,7 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel1Control {
             if self.dma_mode() {
                 exi::run_dma::<1, SYSTEM>(sys);
             } else {
-                sys.exi.start_immediate_transfer::<1>();
+                sys.exi.start_immediate_transfer::<1, SYSTEM>();
             }
         }
         exi::refresh_interrupts(sys);
@@ -298,7 +302,9 @@ crate::mmio_reg!(Channel2Status: u32 @ 0xCC006828);
 
 impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel2Status {
     fn read(sys: &mut System<SYSTEM>) -> Self {
-        sys.exi.ch2_csr
+        let mut csr = sys.exi.ch2_csr;
+        csr.set_device_connected(sys.exi.device_connected(2));
+        csr
     }
     fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
         write_csr(&mut sys.exi.ch2_csr, self);
@@ -358,7 +364,7 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for Channel2Control {
             if self.dma_mode() {
                 exi::run_dma::<2, SYSTEM>(sys);
             } else {
-                sys.exi.start_immediate_transfer::<2>();
+                sys.exi.start_immediate_transfer::<2, SYSTEM>();
             }
         }
         exi::refresh_interrupts(sys);

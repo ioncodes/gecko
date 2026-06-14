@@ -73,6 +73,10 @@ make_dsp_offset!(dsp_ax_base_offset, ax,);
 make_dsp_offset!(dsp_axh_base_offset, axh,);
 make_dsp_offset!(dsp_status_offset, status,);
 make_dsp_offset!(dsp_ext_ac_cache_base_offset, ext_ac_cache,);
+make_dsp_offset!(dsp_call_stack_offset, call_stack,);
+make_dsp_offset!(dsp_data_stack_offset, data_stack,);
+make_dsp_offset!(dsp_loop_addr_offset, loop_addr,);
+make_dsp_offset!(dsp_loop_counter_offset, loop_counter,);
 
 #[inline(always)]
 pub const fn dsp_loop_addr_ptr_offset_max() -> usize {
@@ -95,6 +99,10 @@ pub const fn dsp_loop_addr_ptr_offset_max() -> usize {
 make_dsp_field_offset!(dsp_csr_offset, csr);
 make_dsp_field_offset!(dsp_chain_budget_offset, chain_budget);
 make_dsp_field_offset!(dsp_instr_count_offset, instr_count);
+make_dsp_field_offset!(dsp_dram_ptr_offset, dram);
+make_dsp_field_offset!(dsp_coef_ptr_offset, coef);
+make_dsp_field_offset!(dsp_iram_ptr_offset, iram);
+make_dsp_field_offset!(dsp_irom_ptr_offset, irom);
 
 const _: () = {
     let _ = dsp_pc_offset_max();
@@ -122,6 +130,14 @@ const _: () = {
     let _ = dsp_loop_addr_ptr_offset_max();
     let _ = dsp_chain_budget_offset();
     let _ = dsp_instr_count_offset();
+    let _ = dsp_dram_ptr_offset();
+    let _ = dsp_coef_ptr_offset();
+    let _ = dsp_call_stack_offset();
+    let _ = dsp_data_stack_offset();
+    let _ = dsp_loop_addr_offset();
+    let _ = dsp_loop_counter_offset();
+    let _ = dsp_iram_ptr_offset();
+    let _ = dsp_irom_ptr_offset();
 };
 
 const _: () = {

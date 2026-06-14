@@ -17,11 +17,11 @@ pub type FrameReadyCallback = Box<dyn Fn(Instant) + Send + Sync>;
 #[cfg(not(target_arch = "wasm32"))]
 const WORK_QUEUE_LIMIT: usize = 4096;
 
-/// Holds the XFB output texture view that the render worker updates and the
-/// windowing thread reads for blitting.
+/// Holds the XFB output texture that the render worker updates and the
+/// windowing thread reads for blitting and screenshots.
 #[cfg(not(target_arch = "wasm32"))]
 pub struct Shared {
-    pub output: Mutex<wgpu::TextureView>,
+    pub output: Mutex<wgpu::Texture>,
 }
 
 /// How the XFB is fit into the present surface.
@@ -136,8 +136,7 @@ impl RenderWorker {
                     rd.begin_emulated_frame();
                 }
 
-                let view = self.gx.xfb_view.clone();
-                *self.shared.output.lock().unwrap() = view;
+                *self.shared.output.lock().unwrap() = self.gx.xfb_texture.clone();
                 if let Some(cb) = self.frame_ready_cb.get() {
                     cb(Instant::now());
                 }
@@ -252,7 +251,7 @@ impl InlineSink {
         queue: wgpu::Queue,
         surface_format: wgpu::TextureFormat,
     ) -> (Arc<Mutex<GxRenderer>>, Self) {
-        let gx = Arc::new(Mutex::new(GxRenderer::new(&device, &queue, surface_format)));
+        let gx = Arc::new(Mutex::new(GxRenderer::new(&device, &queue, surface_format, 1)));
         let sink = InlineSink {
             gx: gx.clone(),
             device,
@@ -290,6 +289,10 @@ impl RenderSink for InlineSink {
             .drain_pending_writebacks(&self.device, &self.queue, ram);
     }
 
+    fn reset_efb(&mut self) {
+        self.gx.lock().unwrap().reset_efb(&self.device, &self.queue);
+    }
+
     fn take_draw_data(&mut self) -> Box<DrawData> {
         self.recycled_draw_data.pop().unwrap_or_default()
     }
@@ -312,6 +315,7 @@ pub fn action_resets_vertex_scratch(action: &GxAction) -> bool {
 pub struct Renderer {
     shared: Arc<Shared>,
     device: wgpu::Device,
+    queue: wgpu::Queue,
     blit_pipeline: wgpu::RenderPipeline,
     blit_bind_group_layout: wgpu::BindGroupLayout,
     blit_sampler: wgpu::Sampler,
@@ -328,13 +332,14 @@ impl Renderer {
         queue: wgpu::Queue,
         surface_format: wgpu::TextureFormat,
         target_aspect: TargetAspect,
+        efb_scale: u32,
     ) -> (Self, ThreadedSink) {
-        let mut gx = GxRenderer::new(&device, &queue, surface_format);
+        let mut gx = GxRenderer::new(&device, &queue, surface_format, efb_scale);
         gx.prewarm_pipeline_cache(&device);
 
-        // Initial shared output: the XFB view (black until first PresentXfb).
+        // Initial shared output: the XFB texture (black until first PresentXfb).
         let shared = Arc::new(Shared {
-            output: Mutex::new(gx.xfb_view.clone()),
+            output: Mutex::new(gx.xfb_texture.clone()),
         });
 
         // Build the blit pipeline.
@@ -413,7 +418,7 @@ impl Renderer {
         let worker = RenderWorker {
             gx,
             device: device.clone(),
-            queue,
+            queue: queue.clone(),
             shared: shared.clone(),
             frame_ready_cb: frame_ready_cb.clone(),
             recycled_draw_data_tx,
@@ -436,6 +441,7 @@ impl Renderer {
         let renderer = Renderer {
             shared,
             device,
+            queue,
             blit_pipeline,
             blit_bind_group_layout,
             blit_sampler,
@@ -487,6 +493,13 @@ impl Renderer {
         self.target_aspect
     }
 
+    /// Read back the most recently presented XFB frame at the emulated
+    /// resolution times the EFB scale. Blocks until the GPU copy completes.
+    pub fn capture_xfb(&self) -> Option<crate::capture::CapturedFrame> {
+        let texture = self.shared.output.lock().unwrap().clone();
+        crate::capture::capture_texture(&self.device, &self.queue, &texture)
+    }
+
     /// Blit the latest XFB output to the given render target. `target_size`
     /// is the destination view's pixel size; used to letterbox/pillarbox the
     /// XFB to `self.target_aspect`. Called by the windowing thread on each
@@ -514,14 +527,15 @@ impl Renderer {
         target_size: (u32, u32),
         load: wgpu::LoadOp<wgpu::Color>,
     ) {
-        let output = self.shared.output.lock().unwrap();
+        let output = self.shared.output.lock().unwrap().clone();
+        let view = output.create_view(&Default::default());
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("blit_bg"),
             layout: &self.blit_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&output),
+                    resource: wgpu::BindingResource::TextureView(&view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -529,7 +543,6 @@ impl Renderer {
                 },
             ],
         });
-        drop(output);
 
         encoder.push_debug_group("XFB Blit To Surface");
         {

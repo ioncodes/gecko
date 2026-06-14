@@ -1,6 +1,5 @@
 use rustc_hash::FxHashMap;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 
 use super::VtxKey;
 use crate::host::DrawVertex;
@@ -149,21 +148,17 @@ pub struct MismatchSummary {
 }
 
 pub struct VertexJitValidator {
-    pub enabled: bool,
     pub summary: FxHashMap<(VtxKey, Field), MismatchSummary>,
     pub draw_seq: u64,
     pub interp_scratch: Vec<DrawVertex>,
-    pub use_jit_output_downstream: bool,
 }
 
 impl VertexJitValidator {
     pub fn new() -> Self {
         Self {
-            enabled: env_validate_enabled(),
             summary: FxHashMap::default(),
             draw_seq: 0,
             interp_scratch: Vec::with_capacity(256),
-            use_jit_output_downstream: !env_use_interp_output(),
         }
     }
 
@@ -239,18 +234,4 @@ impl Default for VertexJitValidator {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn env_validate_enabled() -> bool {
-    static CACHED: OnceLock<bool> = OnceLock::new();
-    *CACHED.get_or_init(|| {
-        std::env::var("GECKO_VTX_VALIDATE")
-            .map(|v| !v.is_empty() && v != "0")
-            .unwrap_or(true)
-    })
-}
-
-fn env_use_interp_output() -> bool {
-    static CACHED: OnceLock<bool> = OnceLock::new();
-    *CACHED.get_or_init(|| matches!(std::env::var("GECKO_VTX_VALIDATE_USE").as_deref(), Ok("interp")))
 }

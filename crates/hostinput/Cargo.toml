@@ -1,0 +1,15 @@
+[package]
+name = "hostinput"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "input-probe"
+path = "src/probe.rs"
+
+[dependencies]
+gecko = { path = "../gecko", default-features = false }
+sdl3 = { version = "0.18.4", features = ["build-from-source-static", "hidapi"] }
+serde = { version = "1.0.228", features = ["derive"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

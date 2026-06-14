@@ -195,3 +195,5 @@ pub const EFB_HEIGHT: u32 = 528;
 
 // Depth max for 24-bit Z
 pub const DEPTH_24_BIT_MAX: f32 = 16777215.0; // (1 << 24) - 1
+pub const DEPTH_24_BIT_RANGE: f32 = 16777216.0; // 1 << 24
+pub const MAX_EFB_DEPTH: f32 = DEPTH_24_BIT_MAX / DEPTH_24_BIT_RANGE;

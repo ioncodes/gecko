@@ -8,23 +8,35 @@ use std::time::Duration;
 pub fn run<const SYSTEM: SystemId>(
     mut emulator: System<SYSTEM>,
     input: Arc<Mutex<HostInput>>,
+    input_config: hostinput::InputConfig,
     game_id: Option<String>,
-    throttle: bool,
+    throttle: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
 ) {
     let sleeper = SpinSleeper::default();
     let throttle_step = Duration::from_micros(5);
+    let pause_step = Duration::from_millis(10);
+
+    emulator.set_input_sink(Box::new(hostinput::InputManager::new(
+        SYSTEM,
+        &input_config,
+        input.clone(),
+    )));
 
     while !shutdown.load(Ordering::Relaxed) {
-        while throttle && emulator.audio_sink.should_throttle() {
+        if paused.load(Ordering::Relaxed) {
+            sleeper.sleep(pause_step);
+            continue;
+        }
+
+        while throttle.load(Ordering::Relaxed) && emulator.audio_sink.should_throttle() {
             if shutdown.load(Ordering::Relaxed) {
                 break;
             }
             sleeper.sleep(throttle_step);
         }
 
-        let input = *input.lock().unwrap();
-        emulator.apply_host_input(&input);
         emulator.run_until_vsync();
     }
 

@@ -184,23 +184,31 @@ pub fn fp_ops<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, i
         OP_FMADDX => fp_write(
             ctx,
             &instr,
-            ctx.gekko.read_fpr(instr.ra()) * ctx.gekko.read_fpr(instr.fc()) + ctx.gekko.read_fpr(instr.rb()),
+            ctx.gekko
+                .read_fpr(instr.ra())
+                .mul_add(ctx.gekko.read_fpr(instr.fc()), ctx.gekko.read_fpr(instr.rb())),
         ),
         OP_FMSUBX => fp_write(
             ctx,
             &instr,
-            ctx.gekko.read_fpr(instr.ra()) * ctx.gekko.read_fpr(instr.fc()) - ctx.gekko.read_fpr(instr.rb()),
+            ctx.gekko
+                .read_fpr(instr.ra())
+                .mul_add(ctx.gekko.read_fpr(instr.fc()), -ctx.gekko.read_fpr(instr.rb())),
         ),
-        OP_FNMADDX => fp_write(
-            ctx,
-            &instr,
-            -(ctx.gekko.read_fpr(instr.ra()) * ctx.gekko.read_fpr(instr.fc()) + ctx.gekko.read_fpr(instr.rb())),
-        ),
-        OP_FNMSUBX => fp_write(
-            ctx,
-            &instr,
-            -(ctx.gekko.read_fpr(instr.ra()) * ctx.gekko.read_fpr(instr.fc()) - ctx.gekko.read_fpr(instr.rb())),
-        ),
+        OP_FNMADDX => {
+            let t = ctx
+                .gekko
+                .read_fpr(instr.ra())
+                .mul_add(ctx.gekko.read_fpr(instr.fc()), ctx.gekko.read_fpr(instr.rb()));
+            fp_write(ctx, &instr, super::neg_unless_nan(t));
+        }
+        OP_FNMSUBX => {
+            let t = ctx
+                .gekko
+                .read_fpr(instr.ra())
+                .mul_add(ctx.gekko.read_fpr(instr.fc()), -ctx.gekko.read_fpr(instr.rb()));
+            fp_write(ctx, &instr, super::neg_unless_nan(t));
+        }
         OP_FADDSX => fp_write_single(
             ctx,
             &instr,
@@ -214,7 +222,7 @@ pub fn fp_ops<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, i
         OP_FMULSX => fp_write_single(
             ctx,
             &instr,
-            (ctx.gekko.read_fpr(instr.ra()) * ctx.gekko.read_fpr(instr.fc())) as f32 as f64,
+            (ctx.gekko.read_fpr(instr.ra()) * super::round_frc(ctx.gekko.read_fpr(instr.fc()))) as f32 as f64,
         ),
         OP_FDIVSX => fp_write_single(
             ctx,
@@ -224,27 +232,33 @@ pub fn fp_ops<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, i
         OP_FMADDSX => fp_write_single(
             ctx,
             &instr,
-            (ctx.gekko.read_fpr(instr.ra()) * ctx.gekko.read_fpr(instr.fc()) + ctx.gekko.read_fpr(instr.rb())) as f32
-                as f64,
+            ctx.gekko.read_fpr(instr.ra()).mul_add(
+                super::round_frc(ctx.gekko.read_fpr(instr.fc())),
+                ctx.gekko.read_fpr(instr.rb()),
+            ) as f32 as f64,
         ),
         OP_FMSUBSX => fp_write_single(
             ctx,
             &instr,
-            (ctx.gekko.read_fpr(instr.ra()) * ctx.gekko.read_fpr(instr.fc()) - ctx.gekko.read_fpr(instr.rb())) as f32
-                as f64,
+            ctx.gekko.read_fpr(instr.ra()).mul_add(
+                super::round_frc(ctx.gekko.read_fpr(instr.fc())),
+                -ctx.gekko.read_fpr(instr.rb()),
+            ) as f32 as f64,
         ),
-        OP_FNMADDSX => fp_write_single(
-            ctx,
-            &instr,
-            (-(ctx.gekko.read_fpr(instr.ra()) * ctx.gekko.read_fpr(instr.fc()) + ctx.gekko.read_fpr(instr.rb()))) as f32
-                as f64,
-        ),
-        OP_FNMSUBSX => fp_write_single(
-            ctx,
-            &instr,
-            (-(ctx.gekko.read_fpr(instr.ra()) * ctx.gekko.read_fpr(instr.fc()) - ctx.gekko.read_fpr(instr.rb()))) as f32
-                as f64,
-        ),
+        OP_FNMADDSX => {
+            let t = ctx.gekko.read_fpr(instr.ra()).mul_add(
+                super::round_frc(ctx.gekko.read_fpr(instr.fc())),
+                ctx.gekko.read_fpr(instr.rb()),
+            ) as f32 as f64;
+            fp_write_single(ctx, &instr, super::neg_unless_nan(t));
+        }
+        OP_FNMSUBSX => {
+            let t = ctx.gekko.read_fpr(instr.ra()).mul_add(
+                super::round_frc(ctx.gekko.read_fpr(instr.fc())),
+                -ctx.gekko.read_fpr(instr.rb()),
+            ) as f32 as f64;
+            fp_write_single(ctx, &instr, super::neg_unless_nan(t));
+        }
         OP_FSQRTX => fp_write(ctx, &instr, ctx.gekko.read_fpr(instr.rb()).sqrt()),
         OP_FSQRTSX => fp_write_single(ctx, &instr, (ctx.gekko.read_fpr(instr.rb()).sqrt()) as f32 as f64),
         OP_FRESX => fp_write_single(ctx, &instr, (1.0f32 / ctx.gekko.read_fpr(instr.rb()) as f32) as f64),

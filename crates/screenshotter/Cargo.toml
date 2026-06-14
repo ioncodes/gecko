@@ -10,3 +10,5 @@ backend-wgpu = { path = "../backend-wgpu" }
 wgpu = "29.0.3"
 pollster = "0.4.0"
 png = "0.18.1"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

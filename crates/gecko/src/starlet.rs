@@ -119,6 +119,18 @@ impl Starlet {
         }
     }
 
+    pub fn set_wiimote_accel(&mut self, accel: Option<[f32; 3]>) {
+        if let Some(dev) = self.devices.get_mut(WIIMOTE_DEVICE_PATH) {
+            dev.set_wiimote_accel(accel);
+        }
+    }
+
+    pub fn wiimote_rumble(&self) -> bool {
+        self.devices
+            .get(WIIMOTE_DEVICE_PATH)
+            .is_some_and(|dev| dev.wiimote_rumble())
+    }
+
     pub fn set_nunchuk(&mut self, buttons: u8, stick_x: u8, stick_y: u8) -> bool {
         self.devices
             .get_mut(WIIMOTE_DEVICE_PATH)
@@ -129,6 +141,12 @@ impl Starlet {
         self.devices
             .get_mut(WIIMOTE_DEVICE_PATH)
             .is_some_and(|dev| dev.set_ir_pointer(pointer))
+    }
+
+    pub fn tick_wiimote(&mut self) {
+        if let Some(dev) = self.devices.get_mut(WIIMOTE_DEVICE_PATH) {
+            dev.tick_input_report();
+        }
     }
 
     /// Drop an fd. Calls `close` on the underlying device first; for owned

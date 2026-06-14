@@ -109,6 +109,10 @@ struct Args {
     #[arg(long, default_value = "auto")]
     aspect: String,
 
+    /// Integer internal resolution multiplier: 1 (native) to 4
+    #[arg(long, default_value_t = 1)]
+    upscale: u32,
+
     /// Disable audio output
     #[arg(long)]
     no_audio: bool,
@@ -167,6 +171,10 @@ struct Args {
     #[arg(long)]
     wait: bool,
 
+    /// Wiimote pointer source: auto, gyro, stick, touchpad, or mouse
+    #[arg(long, default_value = "mouse")]
+    pointer: String,
+
     /// Force interpreter dispatch for CPU/DSP/Vertex (default: JIT)
     #[arg(long)]
     interpreter: bool,
@@ -175,6 +183,17 @@ struct Args {
     /// first presented frame until the app exits
     #[arg(long)]
     fifo_record: Option<String>,
+
+    /// Path to a GameCube Slot A memory card image (.raw), created blank if
+    /// missing. No card is attached unless this is given.
+    #[arg(long)]
+    memcard: Option<String>,
+
+    /// Path to a GameCube SRAM image (64 bytes), persisting console settings,
+    /// clock bias and the memory card flash id across runs. Created on first
+    /// write. The IPL boot uses an in-memory default if this is not given.
+    #[arg(long)]
+    sram: Option<String>,
 }
 
 fn main() {
@@ -192,36 +211,40 @@ fn main() {
         wgpu::PresentMode::Fifo
     };
 
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"))
-        .add_directive("cranelift_jit=warn".parse().unwrap())
-        .add_directive("cranelift_codegen=warn".parse().unwrap())
-        .add_directive("cranelift_frontend=warn".parse().unwrap())
-        .add_directive("regalloc2=warn".parse().unwrap())
-        .add_directive("wgpu_core=warn".parse().unwrap())
-        .add_directive("wgpu_hal=warn".parse().unwrap())
-        .add_directive("naga=warn".parse().unwrap());
+    if tracing::level_filters::STATIC_MAX_LEVEL != tracing::level_filters::LevelFilter::OFF {
+        let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"))
+            .add_directive("cranelift_jit=warn".parse().unwrap())
+            .add_directive("cranelift_codegen=warn".parse().unwrap())
+            .add_directive("cranelift_frontend=warn".parse().unwrap())
+            .add_directive("regalloc2=warn".parse().unwrap())
+            .add_directive("wgpu_core=warn".parse().unwrap())
+            .add_directive("wgpu_hal=warn".parse().unwrap())
+            .add_directive("naga=warn".parse().unwrap());
 
-    tracing_subscriber::fmt()
-        .without_time()
-        .with_ansi(!args.no_ansi)
-        .with_env_filter(env_filter)
-        .init();
+        tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(!args.no_ansi)
+            .with_env_filter(env_filter)
+            .init();
+    }
 
     // Boot dispatch:
     //   --dol           : GameCube homebrew (with_image), or Wii if --wii
     //   --ipl [+ --dvd] : GameCube real IPL boot (with_ipl)
     //   --dvd <path>    : autodetect Wii vs GC, HLE boot via apploader
     if let Some(ref dol) = args.dol {
-        let dol = Dol::parse(std::fs::read(dol).expect("failed to read DOL"));
+        let data = std::fs::read(dol).expect("failed to read DOL");
+        let game_id = gecko::jit::cache::dol_cache_id(&data);
+        let dol = Dol::parse(data);
         if args.wii {
             let mut emulator = Wii::with_image(&dol);
             configure(&mut emulator, &args);
-            run(emulator, present_mode, &args, None);
+            run(emulator, present_mode, &args, Some(game_id));
         } else {
             let mut emulator = GameCube::with_image(&dol);
             configure(&mut emulator, &args);
-            run(emulator, present_mode, &args, None);
+            run(emulator, present_mode, &args, Some(game_id));
         }
     } else if let Some(ref ipl_path) = args.ipl {
         let ipl_data = std::fs::read(ipl_path).expect("failed to read IPL");
@@ -275,6 +298,16 @@ fn configure<const SYSTEM: SystemId>(emulator: &mut System<SYSTEM>, args: &Args)
     if let Some(ref coef_path) = args.coef {
         let coef_data = std::fs::read(coef_path).expect("failed to read DSP coefficient ROM");
         emulator.dsp.load_coef(&coef_data);
+    }
+
+    if SYSTEM == gecko::GC {
+        if let Some(path) = &args.memcard {
+            emulator.insert_memory_card(0, Some(std::path::PathBuf::from(path)), 256);
+        }
+
+        if let Some(path) = &args.sram {
+            emulator.set_sram_path(std::path::PathBuf::from(path));
+        }
     }
 
     #[cfg(feature = "scripting")]
@@ -334,8 +367,13 @@ fn run<const SYSTEM: SystemId>(
 
     let surface_format = wgpu::TextureFormat::Bgra8Unorm;
 
-    let (renderer, sink) =
-        backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect);
+    let (renderer, sink) = backend_wgpu::sink::Renderer::new(
+        device.clone(),
+        queue.clone(),
+        surface_format,
+        target_aspect,
+        args.upscale,
+    );
 
     emulator.render_sink = Box::new(sink);
 
@@ -404,6 +442,10 @@ fn run<const SYSTEM: SystemId>(
     let emu_start_gate = start_gate.clone();
     let emu_shutdown = shutdown_requested.clone();
     let fifo_record = args.fifo_record.clone();
+
+    let mut input_config = hostinput::InputConfig::default();
+    input_config.wii.pointer = Some(args.pointer.clone());
+
     drop(proxy);
     let emu_handle = std::thread::Builder::new()
         .name("emu".into())
@@ -411,6 +453,7 @@ fn run<const SYSTEM: SystemId>(
             thread::emu_thread::<SYSTEM>(
                 emulator,
                 emu_input,
+                input_config,
                 game_id,
                 throttle,
                 emu_start_gate,

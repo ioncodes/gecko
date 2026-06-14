@@ -264,7 +264,7 @@ impl ApplicationHandler<UserEvent> for App {
                                 nunchuk_buttons,
                                 nunchuk_stick_x,
                                 nunchuk_stick_y,
-                                ir_pointer: _,
+                                ..
                             } => {
                                 update_wiimote_keys(wiimote_buttons, key, pressed);
                                 update_wiimote_motion_keys(wiimote_shake, key, pressed);
@@ -430,7 +430,9 @@ fn main() {
 
     let mut game_id: Option<String> = None;
     let mut emulator = if let Some(ref dol) = args.dol {
-        let dol = Dol::parse(std::fs::read(dol).expect("failed to read DOL"));
+        let data = std::fs::read(dol).expect("failed to read DOL");
+        game_id = Some(gecko::jit::cache::dol_cache_id(&data));
+        let dol = Dol::parse(data);
         if args.wii {
             EmulatorVariant::Wii(Wii::with_image(&dol))
         } else {
@@ -513,7 +515,7 @@ fn main() {
 
     let target_aspect = TargetAspect::from_arg(&args.aspect, matches!(emulator, EmulatorVariant::Wii(_)));
     let (renderer, sink) =
-        backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect);
+        backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect, 1);
 
     emulator.install_render_sink(Box::new(sink));
 

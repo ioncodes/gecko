@@ -20,6 +20,20 @@ pub use rotate::rotate;
 pub use store_load::{eciwx, ecowx, lswi, lswx, lwarx, store_load, store_load_fp, stswi, stswx, stwcx_dot};
 pub use system::{dcbz, mfsrin, mftb, msr, mtsrin, nop, sc, segment, spr, tw, twi};
 
+pub const FRC_KEEP_MASK: u64 = 0xFFFF_FFFF_F800_0000;
+pub const FRC_ROUND_BIT: u64 = 0x0800_0000;
+
+#[inline(always)]
+pub fn round_frc(d: f64) -> f64 {
+    let bits = d.to_bits();
+    f64::from_bits((bits & FRC_KEEP_MASK) + (bits & FRC_ROUND_BIT))
+}
+
+#[inline(always)]
+pub fn neg_unless_nan(d: f64) -> f64 {
+    if d.is_nan() { d } else { -d }
+}
+
 #[cold]
 #[inline(never)]
 pub fn invalid<const SYSTEM: crate::system::SystemId>(

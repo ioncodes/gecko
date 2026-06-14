@@ -10,6 +10,7 @@ pub const IOCTL_DVD_LOW_UNENCRYPTED_READ: u32 = 0x8D;
 pub const IOCTL_DVD_LOW_GET_STATUS_REGISTER: u32 = 0x95;
 pub const IOCTL_DVD_LOW_GET_CONTROL_REGISTER: u32 = 0x96;
 pub const IOCTL_DVD_LOW_REPORT_KEY: u32 = 0xA4;
+pub const IOCTL_DVD_LOW_READ_DISK_BCA: u32 = 0xDA;
 pub const IOCTL_DVD_LOW_REQUEST_ERROR: u32 = 0xE0;
 pub const IOCTL_DVD_LOW_STOP_MOTOR: u32 = 0xE3;
 
@@ -54,6 +55,7 @@ impl IosDevice for DiskInterface {
             IOCTL_DVD_LOW_GET_COVER_REGISTER => self.dvd_low_get_cover_register(ctx, out_ptr, out_len),
             IOCTL_DVD_LOW_GET_CONTROL_REGISTER => self.dvd_low_get_control_register(ctx, out_ptr, out_len),
             IOCTL_DVD_LOW_STOP_MOTOR => self.dvd_low_stop_motor(ctx, in_ptr, out_ptr, out_len),
+            IOCTL_DVD_LOW_READ_DISK_BCA => self.dvd_low_read_disk_bca(ctx, out_ptr, out_len),
             _ => {
                 tracing::warn!(
                     cmd = format!("{cmd:08X}"),
@@ -223,6 +225,26 @@ impl DiskInterface {
     fn dvd_low_get_control_register(&mut self, ctx: &mut DeviceContext<'_>, out_ptr: u32, out_len: u32) -> i32 {
         let value = ctx.di.control.raw();
         self::write_if_fits(ctx, out_ptr, out_len, value)
+    }
+
+    #[inline(always)]
+    fn dvd_low_read_disk_bca(&mut self, ctx: &mut DeviceContext<'_>, out_ptr: u32, out_len: u32) -> i32 {
+        if (out_ptr & 0x1F) != 0 {
+            return DI_RET_BAD_ALIGNMENT;
+        }
+
+        if out_len < 0x40 {
+            return DI_RET_SECURITY_ERROR;
+        }
+
+        let dst = ctx.mmio.phys_slice_mut(out_ptr, 0x40);
+        dst.fill(0);
+        dst[0x33] = 1;
+        self.last_error = DI_ERROR_OK;
+
+        tracing::debug!(dst = format!("{out_ptr:#010X}"), "DVDLowReadDiskBca");
+
+        DI_RET_OK
     }
 
     #[inline(always)]

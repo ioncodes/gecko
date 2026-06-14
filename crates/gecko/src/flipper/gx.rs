@@ -80,9 +80,24 @@ pub struct GraphicsProcessor {
     // projection or logical viewport.
     pub cur_scissor_offset_x: i32,
     pub cur_scissor_offset_y: i32,
-    // XFB copies accumulated since the last vblank. `present_xfb()` drains
-    // this at each field boundary to emit a PresentXfb action.
-    pub xfb_copies: Vec<XfbCopy>,
+
+    // Every XFB address the game has recently copied to. `present_xfb()`
+    // composes the regions that overlap the buffer the VI is scanning.
+    pub xfb_regions: FxHashMap<u32, XfbRegion>,
+    pub xfb_dirty: bool,
+    pub xfb_copy_seq: u64,
+    pub xfb_present_seq: u64,
+    pub xfb_last_present_base: u32,
+
+    // Page-flip cadence in fields. Frame emission is paced to it so a
+    // generation that completes early can't cut the previous frame short.
+    pub xfb_last_seen_base: u32,
+    pub xfb_prev_base: u32,
+    pub xfb_fields_since_flip: u32,
+    pub xfb_flip_interval: u32,
+    pub xfb_fields_since_emit: u32,
+    pub xfb_last_emit_gen: u64,
+
     #[cfg(feature = "jit")]
     pub jit_vtx: jit::JitVertexEngine,
     #[cfg(feature = "jit")]
@@ -107,12 +122,21 @@ pub struct GraphicsProcessor {
     pub execution_mode: ExecutionMode,
 }
 
-/// A single EFB-to-XFB copy, stored until `present_xfb` computes the layout.
-pub struct XfbCopy {
-    pub dest_addr: u32,
-    pub dest_stride: u32,
-    pub src_h: u32,
+/// One known EFB-to-XFB copy destination. Compositing in `first_seq` order
+/// keeps a split XFB's bottom copy over the top copy's junk padding rows,
+/// like Dolphin. `seen_present_seq` ages out dead regions. As seen in
+/// Another Code: R or whatever it's called, it builds each frame from a
+/// 230+228 line copy pair and showed a black seam plus a lagging bottom half.
+pub struct XfbRegion {
+    pub stride: u32,
+    pub first_seq: u64,
+    pub copy_seq: u64,
+    pub seen_present_seq: u64,
 }
+
+// Drop regions that haven't been re-copied for a few frames so dead layouts
+// don't composite over fresh ones.
+const XFB_REGION_MAX_AGE_PRESENTS: u64 = 8;
 
 #[cfg(feature = "gx-stats")]
 #[derive(Default, Clone)]
@@ -170,7 +194,17 @@ impl GraphicsProcessor {
             cur_scissor: Default::default(),
             cur_scissor_offset_x: 0,
             cur_scissor_offset_y: 0,
-            xfb_copies: Vec::new(),
+            xfb_regions: FxHashMap::default(),
+            xfb_dirty: false,
+            xfb_copy_seq: 0,
+            xfb_present_seq: 0,
+            xfb_last_present_base: 0,
+            xfb_last_seen_base: 0,
+            xfb_prev_base: 0,
+            xfb_fields_since_flip: 0,
+            xfb_flip_interval: 1,
+            xfb_fields_since_emit: 0,
+            xfb_last_emit_gen: 0,
             #[cfg(feature = "jit")]
             jit_vtx: jit::JitVertexEngine::new(),
             #[cfg(feature = "jit")]
@@ -203,9 +237,52 @@ pub fn present_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
         sys.fps_counter.vsync_count += 1;
     }
 
-    if sys.gx.xfb_copies.is_empty() {
+    sys.gx.xfb_fields_since_flip = sys.gx.xfb_fields_since_flip.saturating_add(1);
+    sys.gx.xfb_fields_since_emit = sys.gx.xfb_fields_since_emit.saturating_add(1);
+
+    let (frame_w, frame_h) = sys.vi.frame_dimensions();
+
+    let Some(bytes_per_row) = sys
+        .gx
+        .xfb_regions
+        .values()
+        .max_by_key(|r| r.copy_seq)
+        .map(|r| r.stride as u64)
+    else {
+        return;
+    };
+    if bytes_per_row == 0 {
+        tracing::warn!("present_xfb: zero bytes_per_row, skipping present");
         return;
     }
+
+    let xfb_bytes = bytes_per_row * frame_h as u64;
+    let stride_in_pixels = (bytes_per_row / 2) as u32;
+
+    let vi_base = sys.vi.latched_xfb_base;
+    let frame_base = if sys.vi.dcr.interlaced() && sys.vi.latched_even_field {
+        vi_base.saturating_sub(bytes_per_row as u32)
+    } else {
+        vi_base
+    };
+
+    // Measure the page-flip cadence. Emission is paced to it further down.
+    if frame_base != sys.gx.xfb_last_seen_base {
+        sys.gx.xfb_prev_base = sys.gx.xfb_last_seen_base;
+        sys.gx.xfb_last_seen_base = frame_base;
+        sys.gx.xfb_flip_interval = sys.gx.xfb_fields_since_flip.clamp(1, 4);
+        sys.gx.xfb_fields_since_flip = 0;
+    } else if sys.gx.xfb_fields_since_flip > 8 {
+        sys.gx.xfb_flip_interval = 1;
+    }
+
+    // Present when new copies arrived or the VI flipped to a buffer whose
+    // copies were already consumed (pageflip).
+    if !sys.gx.xfb_dirty && frame_base == sys.gx.xfb_last_present_base {
+        return;
+    }
+    sys.gx.xfb_dirty = false;
+    sys.gx.xfb_present_seq += 1;
 
     if sys.gx.recorder.is_some() {
         let mut rec = sys.gx.recorder.take().unwrap();
@@ -223,33 +300,20 @@ pub fn present_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
         sys.gx.stats.xfb_presents += 1;
     }
 
-    let (frame_w, frame_h) = sys.vi.frame_dimensions();
-    let vi_base = sys.vi.xfb_addr();
+    let seq = sys.gx.xfb_present_seq;
+    sys.gx
+        .xfb_regions
+        .retain(|_, r| seq - r.seen_present_seq <= XFB_REGION_MAX_AGE_PRESENTS);
 
-    // All copies in a frame share the same stride.
-    let bytes_per_row = sys.gx.xfb_copies[0].dest_stride as u64;
-    if bytes_per_row == 0 {
-        tracing::warn!("present_xfb: zero bytes_per_row, dropping XFB copies");
-        sys.gx.xfb_copies.clear();
-        return;
-    }
-    let xfb_bytes = bytes_per_row * frame_h as u64;
-    let stride_in_pixels = (bytes_per_row / 2) as u32;
+    let build_parts = |base_addr: u32| -> Vec<(u64, u64, XfbPart)> {
+        let mut parts = Vec::with_capacity(sys.gx.xfb_regions.len());
 
-    let frame_base = if sys.vi.dcr.interlaced() && sys.vi.in_even_field() {
-        vi_base.saturating_sub(bytes_per_row as u32)
-    } else {
-        vi_base
-    };
-
-    let build_parts = |base_addr: u32| -> Vec<XfbPart> {
-        let mut parts = Vec::with_capacity(sys.gx.xfb_copies.len());
-        for copy in sys.gx.xfb_copies.iter() {
-            if copy.dest_addr < base_addr {
+        for (&addr, region) in sys.gx.xfb_regions.iter() {
+            if addr < base_addr {
                 continue;
             }
 
-            let delta_bytes = (copy.dest_addr - base_addr) as u64;
+            let delta_bytes = (addr - base_addr) as u64;
             if delta_bytes >= xfb_bytes {
                 continue;
             }
@@ -259,38 +323,104 @@ pub fn present_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
             let offset_y = delta_pixels / stride_in_pixels;
 
             // Real XFB copies always land at row boundaries (offset_x == 0).
-            // A non-zero offset_x means this copy belongs to a different
+            // A non-zero offset_x means this region belongs to a different
             // buffer that happens to sit nearby in memory, reject it? TODO
             if offset_x != 0 || offset_y >= frame_h as u32 {
                 tracing::debug!(
-                    copy_dest = copy.dest_addr,
+                    region = addr,
                     base = base_addr,
                     offset_x,
                     offset_y,
-                    "present_xfb: rejecting XFB copy with invalid offset"
+                    "present_xfb: rejecting XFB region with invalid offset"
                 );
                 continue;
             }
 
-            parts.push(XfbPart {
-                id: copy.dest_addr,
-                offset_x,
-                offset_y,
-            });
+            parts.push((
+                region.first_seq,
+                region.copy_seq,
+                XfbPart {
+                    id: addr,
+                    offset_x,
+                    offset_y,
+                },
+            ));
         }
+
+        parts.sort_by_key(|(first_seq, _, _)| *first_seq);
         parts
     };
 
-    let min_base = sys.gx.xfb_copies.iter().map(|c| c.dest_addr).min().unwrap_or(0);
+    // A split XFB generation often completes while the VI is scanning the
+    // other buffer, so consider the window the VI just flipped away from
+    // too. New complete generations are shown oldest first, paced to the
+    // flip cadence so an early completion can't cut the previous frame
+    // short (Another Code: R needs both or it drops to half rate).
+    let mut chosen: Option<(u64, Vec<(u64, u64, XfbPart)>)> = None;
+    let mut bases = [sys.gx.xfb_prev_base, frame_base];
+    if bases[0] == bases[1] {
+        bases[0] = 0;
+    }
+
+    for base in bases {
+        if base == 0 {
+            continue;
+        }
+
+        let parts = build_parts(base);
+        let Some(closer_copy_seq) = parts.last().map(|(_, copy_seq, _)| *copy_seq) else {
+            continue;
+        };
+        if parts.iter().any(|(_, copy_seq, _)| *copy_seq > closer_copy_seq) {
+            continue;
+        }
+        if closer_copy_seq <= sys.gx.xfb_last_emit_gen {
+            continue;
+        }
+
+        if chosen.as_ref().is_none_or(|(g, _)| closer_copy_seq < *g) {
+            chosen = Some((closer_copy_seq, parts));
+        }
+    }
+
+    if let Some((new_gen, parts)) = chosen {
+        if sys.gx.xfb_fields_since_emit < sys.gx.xfb_flip_interval {
+            sys.gx.xfb_dirty = true;
+            return;
+        }
+
+        sys.render_sink.exec(GxAction::PresentXfb {
+            width: frame_w,
+            height: frame_h,
+            parts: parts.into_iter().map(|(_, _, p)| p).collect(),
+        });
+
+        sys.gx.xfb_last_emit_gen = new_gen;
+        sys.gx.xfb_fields_since_emit = 0;
+        sys.gx.xfb_last_present_base = frame_base;
+        return;
+    }
+
+    // Nothing new completed. Present the scanned window when the VI
+    // flipped again, so page flip games still show the buffer it moved to.
+    if frame_base == sys.gx.xfb_last_present_base {
+        return;
+    }
+
+    let min_base = sys.gx.xfb_regions.keys().min().copied().unwrap_or(0);
 
     let parts = if frame_base != 0 {
         let mut p = build_parts(frame_base);
         if p.is_empty() {
-            p.push(XfbPart {
-                id: frame_base,
-                offset_x: 0,
-                offset_y: 0,
-            });
+            p.push((
+                0,
+                0,
+                XfbPart {
+                    id: frame_base,
+                    offset_x: 0,
+                    offset_y: 0,
+                },
+            ));
         }
         p
     } else {
@@ -298,17 +428,21 @@ pub fn present_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     };
 
     if parts.is_empty() {
-        tracing::debug!("present_xfb: no XFB copies matched the frame buffer region");
-        sys.gx.xfb_copies.clear();
+        tracing::debug!("present_xfb: no XFB regions matched the frame buffer region");
+        return;
+    }
+
+    let closer_copy_seq = parts.last().map(|(_, copy_seq, _)| *copy_seq).unwrap_or(0);
+    if parts.iter().any(|(_, copy_seq, _)| *copy_seq > closer_copy_seq) {
         return;
     }
 
     sys.render_sink.exec(GxAction::PresentXfb {
         width: frame_w,
         height: frame_h,
-        parts,
+        parts: parts.into_iter().map(|(_, _, p)| p).collect(),
     });
-    sys.gx.xfb_copies.clear();
+    sys.gx.xfb_last_present_base = frame_base;
 }
 
 impl<const SYSTEM: SystemId> System<SYSTEM> {

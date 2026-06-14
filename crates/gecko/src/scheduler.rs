@@ -156,6 +156,7 @@ impl<const SYSTEM: SystemId> Scheduler<SYSTEM> {
             crate::flipper::cp::PUMP_INTERVAL_CYCLES,
             crate::flipper::cp::pump_handler::<SYSTEM>,
         );
+        s.schedule_at(self::input_poll_interval(SYSTEM), self::input_poll_handler::<SYSTEM>);
         #[cfg(feature = "fps-counter")]
         s.schedule_at(self::cpu_clock(SYSTEM), crate::fps::fps_handler::<SYSTEM>);
         s
@@ -187,6 +188,25 @@ pub fn reseed_vsync<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
 }
 
 #[inline(always)]
+pub const fn input_poll_interval(system: SystemId) -> u64 {
+    self::cpu_clock(system) / crate::hollywood::ipc::usb::REPORT_HZ
+}
+
+/// Reschedules itself at the Wiimote's 200Hz (TODO VERIFY) report rate. Samples
+/// fresh host input on both systems and, on Wii, emits one HID input report
+/// per tick (continuous mode) or only on change (non continuous).
+pub fn input_poll_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    sys.sample_host_input();
+
+    if SYSTEM == system::WII {
+        sys.starlet.tick_wiimote();
+    }
+
+    sys.scheduler
+        .schedule_in(self::input_poll_interval(SYSTEM), self::input_poll_handler::<SYSTEM>);
+}
+
+#[inline(always)]
 pub const fn dsp_batch_interval(system: SystemId) -> u64 {
     self::cpu_cycles_per_dsp_tick(system) * self::DSP_BATCH_SIZE
 }
@@ -197,10 +217,7 @@ pub fn dsp_batch_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
         return;
     }
 
-    let cpu_mail_quiet = !sys.dsp.mailbox_to_dsp_hi.busy();
-    let dsp_mail_full = sys.dsp.mailbox_to_cpu_hi.busy();
-    let (waits_cpu, waits_dsp) = sys.dsp.mailbox_wait_state();
-    let in_idle_wait = (cpu_mail_quiet && waits_cpu) || (dsp_mail_full && waits_dsp);
+    let in_idle_wait = sys.dsp.parked_in_mailbox_wait();
     let pending_interrupt = sys.dsp.csr.pi_interrupt() && sys.dsp.registers.status.external_interrupt_enable();
 
     if in_idle_wait && !pending_interrupt {

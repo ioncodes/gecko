@@ -1,4 +1,4 @@
-use cranelift_codegen::ir::{InstBuilder, MemFlags, Value, types};
+use cranelift_codegen::ir::{InstBuilder, MemFlagsData, Value, types};
 use cranelift_frontend::FunctionBuilder;
 use cranelift_module::Module;
 
@@ -28,12 +28,14 @@ impl<'a, 'b> TranslatorCtx<'a, 'b> {
     fn load_u16(&mut self, offset: i32) -> Value {
         self.builder
             .ins()
-            .load(types::I16, MemFlags::trusted(), self.sys_ptr, offset)
+            .load(types::I16, MemFlagsData::trusted(), self.sys_ptr, offset)
     }
 
     #[inline]
     fn store_u16(&mut self, val: Value, offset: i32) {
-        self.builder.ins().store(MemFlags::trusted(), val, self.sys_ptr, offset);
+        self.builder
+            .ins()
+            .store(MemFlagsData::trusted(), val, self.sys_ptr, offset);
     }
 
     fn simple_reg_offset(slot: u8) -> Option<i32> {
@@ -444,104 +446,448 @@ impl<'a, 'b> TranslatorCtx<'a, 'b> {
         self.store_u16(val, m_off);
     }
 
+    fn store_status_bits(&mut self, bits: Value, clear_mask: i64) {
+        let off = abi::dsp_status_offset() as i32;
+        let sr = self.load_u16(off);
+        let cleared = self.builder.ins().band_imm(sr, clear_mask);
+        let new_sr = self.builder.ins().bor(cleared, bits);
+        self.store_u16(new_sr, off);
+    }
+
+    fn flags40_as32_pos(&mut self, r40: Value) -> Value {
+        use cranelift_codegen::ir::condcodes::IntCC;
+
+        let upper9_raw = self.builder.ins().ushr_imm(r40, 31);
+        let upper9 = self.builder.ins().band_imm(upper9_raw, 0x1FF);
+        let ne0 = self.builder.ins().icmp_imm(IntCC::NotEqual, upper9, 0);
+        let ne1ff = self.builder.ins().icmp_imm(IntCC::NotEqual, upper9, 0x1FF);
+        let as32 = self.builder.ins().band(ne0, ne1ff);
+        let as32_16 = self.builder.ins().uextend(types::I16, as32);
+        self.builder.ins().ishl_imm(as32_16, 4)
+    }
+
+    fn flags40_szat(&mut self, r40: Value) -> Value {
+        use cranelift_codegen::ir::condcodes::IntCC;
+
+        let sign64 = self.builder.ins().ushr_imm(r40, 39);
+        let sign16 = self.builder.ins().ireduce(types::I16, sign64);
+        let s_pos = self.builder.ins().ishl_imm(sign16, 3);
+
+        let z = self.builder.ins().icmp_imm(IntCC::Equal, r40, 0);
+        let z16 = self.builder.ins().uextend(types::I16, z);
+        let z_pos = self.builder.ins().ishl_imm(z16, 2);
+
+        let top2 = self.builder.ins().band_imm(r40, 0xC000_0000_i64);
+        let tb0 = self.builder.ins().icmp_imm(IntCC::Equal, top2, 0);
+        let tb3 = self.builder.ins().icmp_imm(IntCC::Equal, top2, 0xC000_0000_i64);
+        let tb = self.builder.ins().bor(tb0, tb3);
+        let tb16 = self.builder.ins().uextend(types::I16, tb);
+        let tb_pos = self.builder.ins().ishl_imm(tb16, 5);
+
+        let as32_pos = self.flags40_as32_pos(r40);
+
+        let sz = self.builder.ins().bor(s_pos, z_pos);
+        let at = self.builder.ins().bor(as32_pos, tb_pos);
+        self.builder.ins().bor(sz, at)
+    }
+
+    fn flags40_carry_overflow(&mut self, a: Value, b: Value, a40: Value, r40: Value, sub: bool) -> Value {
+        use cranelift_codegen::ir::condcodes::IntCC;
+
+        let carry = if sub {
+            self.builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, a40, r40)
+        } else {
+            self.builder.ins().icmp(IntCC::UnsignedLessThan, r40, a40)
+        };
+        let c_pos = self.builder.ins().uextend(types::I16, carry);
+
+        let a_shift = self.builder.ins().ushr_imm(a, 39);
+        let a_sign = self.builder.ins().band_imm(a_shift, 1);
+        let b_shift = self.builder.ins().ushr_imm(b, 39);
+        let b_sign = self.builder.ins().band_imm(b_shift, 1);
+        let r_sign = self.builder.ins().ushr_imm(r40, 39);
+
+        let ab = if sub {
+            self.builder.ins().icmp(IntCC::NotEqual, a_sign, b_sign)
+        } else {
+            self.builder.ins().icmp(IntCC::Equal, a_sign, b_sign)
+        };
+        let ra = self.builder.ins().icmp(IntCC::NotEqual, r_sign, a_sign);
+        let overflow = self.builder.ins().band(ab, ra);
+        let o16 = self.builder.ins().uextend(types::I16, overflow);
+        let o_pos = self.builder.ins().ishl_imm(o16, 1);
+        let os_pos = self.builder.ins().ishl_imm(o16, 7);
+
+        let co = self.builder.ins().bor(c_pos, o_pos);
+        self.builder.ins().bor(co, os_pos)
+    }
+
     pub fn emit_update_flags_logic(&mut self, result16: Value, ac_full: Value) {
-        let result32 = self.builder.ins().uextend(types::I32, result16);
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.update_flags_logic, self.builder.func);
-        self.builder.ins().call(f, &[self.sys_ptr, result32, ac_full]);
+        use cranelift_codegen::ir::condcodes::IntCC;
+
+        let sign = self.builder.ins().ushr_imm(result16, 15);
+        let s_pos = self.builder.ins().ishl_imm(sign, 3);
+
+        let z = self.builder.ins().icmp_imm(IntCC::Equal, result16, 0);
+        let z16 = self.builder.ins().uextend(types::I16, z);
+        let z_pos = self.builder.ins().ishl_imm(z16, 2);
+
+        let top2 = self.builder.ins().ushr_imm(result16, 14);
+        let tb0 = self.builder.ins().icmp_imm(IntCC::Equal, top2, 0);
+        let tb3 = self.builder.ins().icmp_imm(IntCC::Equal, top2, 3);
+        let tb = self.builder.ins().bor(tb0, tb3);
+        let tb16 = self.builder.ins().uextend(types::I16, tb);
+        let tb_pos = self.builder.ins().ishl_imm(tb16, 5);
+
+        let r40 = self.builder.ins().band_imm(ac_full, 0xFF_FFFF_FFFF_i64);
+        let as32_pos = self.flags40_as32_pos(r40);
+
+        let sz = self.builder.ins().bor(s_pos, z_pos);
+        let at = self.builder.ins().bor(as32_pos, tb_pos);
+        let bits = self.builder.ins().bor(sz, at);
+        self.store_status_bits(bits, !0x003C_i64);
     }
 
     pub fn emit_update_flags_add(&mut self, a: Value, b: Value, result: Value) {
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.update_flags_add, self.builder.func);
-        self.builder.ins().call(f, &[self.sys_ptr, a, b, result]);
+        let r40 = self.builder.ins().band_imm(result, 0xFF_FFFF_FFFF_i64);
+        let a40 = self.builder.ins().band_imm(a, 0xFF_FFFF_FFFF_i64);
+
+        let szat = self.flags40_szat(r40);
+        let co = self.flags40_carry_overflow(a, b, a40, r40, false);
+        let bits = self.builder.ins().bor(szat, co);
+        self.store_status_bits(bits, !0x003F_i64);
     }
 
     pub fn emit_update_flags_sub(&mut self, a: Value, b: Value, result: Value) {
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.update_flags_sub, self.builder.func);
-        self.builder.ins().call(f, &[self.sys_ptr, a, b, result]);
+        let r40 = self.builder.ins().band_imm(result, 0xFF_FFFF_FFFF_i64);
+        let a40 = self.builder.ins().band_imm(a, 0xFF_FFFF_FFFF_i64);
+
+        let szat = self.flags40_szat(r40);
+        let co = self.flags40_carry_overflow(a, b, a40, r40, true);
+        let bits = self.builder.ins().bor(szat, co);
+        self.store_status_bits(bits, !0x003F_i64);
     }
 
     pub fn emit_update_flags_ac(&mut self, ac_full: Value) {
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.update_flags_ac, self.builder.func);
-        self.builder.ins().call(f, &[self.sys_ptr, ac_full]);
+        let r40 = self.builder.ins().band_imm(ac_full, 0xFF_FFFF_FFFF_i64);
+        let bits = self.flags40_szat(r40);
+        self.store_status_bits(bits, !0x003C_i64);
+    }
+
+    fn emit_dmem_word_addr(&mut self, ptr_field_offset: usize, addr: Value, word_bias: i64) -> Value {
+        let base = self.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            self.sys_ptr,
+            ptr_field_offset as i32,
+        );
+
+        let biased = if word_bias != 0 {
+            self.builder.ins().iadd_imm(addr, word_bias)
+        } else {
+            addr
+        };
+        let addr64 = self.builder.ins().uextend(types::I64, biased);
+        let byte_off = self.builder.ins().ishl_imm(addr64, 1);
+
+        self.builder.ins().iadd(base, byte_off)
     }
 
     pub fn emit_read_dmem(&mut self, addr_u32: Value) -> Value {
+        use cranelift_codegen::ir::BlockArg;
+        use cranelift_codegen::ir::condcodes::IntCC;
+
+        let addr = self.builder.ins().band_imm(addr_u32, 0xFFFF);
+
+        let dram_block = self.builder.create_block();
+        let not_dram_block = self.builder.create_block();
+        let coef_block = self.builder.create_block();
+        let slow_block = self.builder.create_block();
+        let merge_block = self.builder.create_block();
+        self.builder.append_block_param(merge_block, types::I32);
+
+        let is_dram = self.builder.ins().icmp_imm(IntCC::UnsignedLessThan, addr, 0x1000);
+        self.builder.ins().brif(is_dram, dram_block, &[], not_dram_block, &[]);
+
+        self.builder.switch_to_block(dram_block);
+        self.builder.seal_block(dram_block);
+        let p = self.emit_dmem_word_addr(abi::dsp_dram_ptr_offset(), addr, 0);
+        let raw = self.builder.ins().load(types::I16, MemFlagsData::trusted(), p, 0);
+        let be = self.builder.ins().bswap(raw);
+        let v = self.builder.ins().uextend(types::I32, be);
+        self.builder.ins().jump(merge_block, &[BlockArg::Value(v)]);
+
+        self.builder.switch_to_block(not_dram_block);
+        self.builder.seal_block(not_dram_block);
+        let is_coef = self.builder.ins().icmp_imm(IntCC::UnsignedLessThan, addr, 0x2000);
+        self.builder.ins().brif(is_coef, coef_block, &[], slow_block, &[]);
+
+        self.builder.switch_to_block(coef_block);
+        self.builder.seal_block(coef_block);
+        let p = self.emit_dmem_word_addr(abi::dsp_coef_ptr_offset(), addr, -0x1000);
+        let raw = self.builder.ins().load(types::I16, MemFlagsData::trusted(), p, 0);
+        let be = self.builder.ins().bswap(raw);
+        let v = self.builder.ins().uextend(types::I32, be);
+        self.builder.ins().jump(merge_block, &[BlockArg::Value(v)]);
+
+        self.builder.switch_to_block(slow_block);
+        self.builder.seal_block(slow_block);
         let f = self
             .module
             .declare_func_in_func(self.extern_funcs.read_dmem, self.builder.func);
-        let inst = self.builder.ins().call(f, &[self.sys_ptr, addr_u32]);
-        self.builder.inst_results(inst)[0]
+        let inst = self.builder.ins().call(f, &[self.sys_ptr, addr]);
+        let v = self.builder.inst_results(inst)[0];
+        self.builder.ins().jump(merge_block, &[BlockArg::Value(v)]);
+
+        self.builder.switch_to_block(merge_block);
+        self.builder.seal_block(merge_block);
+        self.builder.block_params(merge_block)[0]
     }
 
     pub fn emit_write_dmem(&mut self, addr_u32: Value, value_u32: Value) {
+        use cranelift_codegen::ir::condcodes::IntCC;
+
+        let addr = self.builder.ins().band_imm(addr_u32, 0xFFFF);
+
+        let dram_block = self.builder.create_block();
+        let slow_block = self.builder.create_block();
+        let merge_block = self.builder.create_block();
+
+        let is_dram = self.builder.ins().icmp_imm(IntCC::UnsignedLessThan, addr, 0x1000);
+        self.builder.ins().brif(is_dram, dram_block, &[], slow_block, &[]);
+
+        self.builder.switch_to_block(dram_block);
+        self.builder.seal_block(dram_block);
+        let p = self.emit_dmem_word_addr(abi::dsp_dram_ptr_offset(), addr, 0);
+        let v16 = self.builder.ins().ireduce(types::I16, value_u32);
+        let be = self.builder.ins().bswap(v16);
+        self.builder.ins().store(MemFlagsData::trusted(), be, p, 0);
+        self.builder.ins().jump(merge_block, &[]);
+
+        self.builder.switch_to_block(slow_block);
+        self.builder.seal_block(slow_block);
         let f = self
             .module
             .declare_func_in_func(self.extern_funcs.write_dmem, self.builder.func);
-        self.builder.ins().call(f, &[self.sys_ptr, addr_u32, value_u32]);
+        self.builder.ins().call(f, &[self.sys_ptr, addr, value_u32]);
+        self.builder.ins().jump(merge_block, &[]);
+
+        self.builder.switch_to_block(merge_block);
+        self.builder.seal_block(merge_block);
+    }
+
+    fn load_ar_wr_u32(&mut self, reg: u32) -> (Value, Value) {
+        let ar_off = (abi::dsp_ar_base_offset() + reg as usize * 2) as i32;
+        let wr_off = (abi::dsp_wr_base_offset() + reg as usize * 2) as i32;
+        let ar16 = self.load_u16(ar_off);
+        let wr16 = self.load_u16(wr_off);
+        let ar = self.builder.ins().uextend(types::I32, ar16);
+        let wr = self.builder.ins().uextend(types::I32, wr16);
+        (ar, wr)
     }
 
     pub fn emit_inc_ar(&mut self, reg: u32) -> Value {
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.inc_ar, self.builder.func);
-        let reg_v = self.builder.ins().iconst(types::I32, reg as i64);
-        let inst = self.builder.ins().call(f, &[self.sys_ptr, reg_v]);
-        self.builder.inst_results(inst)[0]
+        use cranelift_codegen::ir::condcodes::IntCC;
+
+        let (ar, wr) = self.load_ar_wr_u32(reg);
+
+        let nar = self.builder.ins().iadd_imm(ar, 1);
+        let x = self.builder.ins().bxor(nar, ar);
+        let wr_or1 = self.builder.ins().bor_imm(wr, 1);
+        let limit = self.builder.ins().ishl_imm(wr_or1, 1);
+        let wrap = self.builder.ins().icmp(IntCC::UnsignedGreaterThan, x, limit);
+
+        let wrp1 = self.builder.ins().iadd_imm(wr, 1);
+        let wrapped = self.builder.ins().isub(nar, wrp1);
+        let res = self.builder.ins().select(wrap, wrapped, nar);
+        self.builder.ins().band_imm(res, 0xFFFF)
     }
 
     pub fn emit_dec_ar(&mut self, reg: u32) -> Value {
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.dec_ar, self.builder.func);
-        let reg_v = self.builder.ins().iconst(types::I32, reg as i64);
-        let inst = self.builder.ins().call(f, &[self.sys_ptr, reg_v]);
-        self.builder.inst_results(inst)[0]
+        use cranelift_codegen::ir::condcodes::IntCC;
+
+        let (ar, wr) = self.load_ar_wr_u32(reg);
+
+        let nar = self.builder.ins().iadd(ar, wr);
+        let x = self.builder.ins().bxor(nar, ar);
+        let wr_or1 = self.builder.ins().bor_imm(wr, 1);
+        let limit = self.builder.ins().ishl_imm(wr_or1, 1);
+        let masked = self.builder.ins().band(x, limit);
+        let wrap = self.builder.ins().icmp(IntCC::UnsignedGreaterThan, masked, wr);
+
+        let wrp1 = self.builder.ins().iadd_imm(wr, 1);
+        let wrapped = self.builder.ins().isub(nar, wrp1);
+        let res = self.builder.ins().select(wrap, wrapped, nar);
+        self.builder.ins().band_imm(res, 0xFFFF)
     }
 
     pub fn emit_increase_ar(&mut self, reg: u32, ix_value: Value) -> Value {
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.increase_ar, self.builder.func);
-        let reg_v = self.builder.ins().iconst(types::I32, reg as i64);
-        let ix_u32 = self.builder.ins().uextend(types::I32, ix_value);
-        let inst = self.builder.ins().call(f, &[self.sys_ptr, reg_v, ix_u32]);
-        self.builder.inst_results(inst)[0]
+        use cranelift_codegen::ir::condcodes::IntCC;
+
+        let (ar, wr) = self.load_ar_wr_u32(reg);
+        let ixs = self.builder.ins().sextend(types::I32, ix_value);
+
+        let nar = self.builder.ins().iadd(ar, ixs);
+        let x1 = self.builder.ins().bxor(nar, ar);
+        let x2 = self.builder.ins().bxor(x1, ixs);
+        let wr_or1 = self.builder.ins().bor_imm(wr, 1);
+        let mx = self.builder.ins().ishl_imm(wr_or1, 1);
+        let dar = self.builder.ins().band(x2, mx);
+        let wrp1 = self.builder.ins().iadd_imm(wr, 1);
+
+        let pos_wrap = self.builder.ins().icmp(IntCC::UnsignedGreaterThan, dar, wr);
+        let pos_wrapped = self.builder.ins().isub(nar, wrp1);
+        let res_pos = self.builder.ins().select(pos_wrap, pos_wrapped, nar);
+
+        let t = self.builder.ins().iadd(nar, wrp1);
+        let tx = self.builder.ins().bxor(t, nar);
+        let u = self.builder.ins().band(tx, dar);
+        let neg_wrap = self.builder.ins().icmp(IntCC::UnsignedLessThanOrEqual, u, wr);
+        let res_neg = self.builder.ins().select(neg_wrap, t, nar);
+
+        let ge0 = self.builder.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, ixs, 0);
+        let res = self.builder.ins().select(ge0, res_pos, res_neg);
+        self.builder.ins().band_imm(res, 0xFFFF)
     }
 
     pub fn emit_decrease_ar_ix(&mut self, reg: u32, ix_value: Value) -> Value {
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.decrease_ar_ix, self.builder.func);
-        let reg_v = self.builder.ins().iconst(types::I32, reg as i64);
-        let ix_u32 = self.builder.ins().uextend(types::I32, ix_value);
-        let inst = self.builder.ins().call(f, &[self.sys_ptr, reg_v, ix_u32]);
-        self.builder.inst_results(inst)[0]
+        use cranelift_codegen::ir::condcodes::IntCC;
+
+        let (ar, wr) = self.load_ar_wr_u32(reg);
+
+        let v16 = self.builder.ins().bnot(ix_value);
+        let vs = self.builder.ins().sextend(types::I32, v16);
+        let vu = self.builder.ins().band_imm(vs, 0xFFFF);
+
+        let clz = self.builder.ins().clz(wr);
+        let thirty_two = self.builder.ins().iconst(types::I32, 32);
+        let n_raw = self.builder.ins().isub(thirty_two, clz);
+        let one = self.builder.ins().iconst(types::I32, 1);
+        let n = self.builder.ins().smax(n_raw, one);
+        let shifted = self.builder.ins().ishl(one, n);
+        let mask = self.builder.ins().iadd_imm(shifted, -1);
+
+        let am = self.builder.ins().band(ar, mask);
+        let vm = self.builder.ins().band(vu, mask);
+        let avm = self.builder.ins().iadd(am, vm);
+        let sum = self.builder.ins().iadd_imm(avm, 1);
+        let carry = self.builder.ins().icmp(IntCC::UnsignedGreaterThan, sum, mask);
+
+        let arv = self.builder.ins().iadd(ar, vs);
+        let r0 = self.builder.ins().iadd_imm(arv, 1);
+        let r = self.builder.ins().band_imm(r0, 0xFFFF);
+        let wrp1_raw = self.builder.ins().iadd_imm(wr, 1);
+        let wrp1 = self.builder.ins().band_imm(wrp1_raw, 0xFFFF);
+
+        let vp1 = self.builder.ins().iadd_imm(v16, 1);
+        let gt0 = self.builder.ins().icmp_imm(IntCC::SignedGreaterThan, vp1, 0);
+        let ismin = self.builder.ins().icmp_imm(IntCC::Equal, vp1, -32768);
+        let cond_pos = self.builder.ins().bor(gt0, ismin);
+
+        let r_sub_raw = self.builder.ins().isub(r, wrp1);
+        let r_sub = self.builder.ins().band_imm(r_sub_raw, 0xFFFF);
+        let rp = self.builder.ins().select(carry, r_sub, r);
+
+        let low_sum = self.builder.ins().band(r, mask);
+        let not_wr_raw = self.builder.ins().bnot(wr);
+        let not_wr = self.builder.ins().band_imm(not_wr_raw, 0xFFFF);
+        let low_not_wrap = self.builder.ins().band(not_wr, mask);
+        let carry_again = self.builder.ins().icmp(IntCC::UnsignedLessThan, low_sum, low_not_wrap);
+        let ncarry = self.builder.ins().bxor_imm(carry, 1);
+        let cond_add = self.builder.ins().bor(ncarry, carry_again);
+        let r_add_raw = self.builder.ins().iadd(r, wrp1);
+        let r_add = self.builder.ins().band_imm(r_add_raw, 0xFFFF);
+        let rn = self.builder.ins().select(cond_add, r_add, r);
+
+        self.builder.ins().select(cond_pos, rp, rn)
     }
 
     pub fn emit_dynamic_shift(&mut self, d_const: u32, shift_val: Value, mode_const: u32) {
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.dynamic_shift, self.builder.func);
-        let d_v = self.builder.ins().iconst(types::I32, d_const as i64);
-        let shift_u32 = self.builder.ins().uextend(types::I32, shift_val);
-        let mode_v = self.builder.ins().iconst(types::I32, mode_const as i64);
-        self.builder.ins().call(f, &[self.sys_ptr, d_v, shift_u32, mode_v]);
+        use cranelift_codegen::ir::condcodes::IntCC;
+
+        let logical = mode_const & 1 != 0;
+        let reversed = mode_const & 2 != 0;
+
+        let sv = self.builder.ins().uextend(types::I64, shift_val);
+        let low6 = self.builder.ins().band_imm(sv, 63);
+        let bit6_raw = self.builder.ins().band_imm(sv, 64);
+        let bit6 = self.builder.ins().icmp_imm(IntCC::NotEqual, bit6_raw, 0);
+
+        let sixty_four = self.builder.ins().iconst(types::I64, 64);
+        let rev_amount_raw = self.builder.ins().isub(sixty_four, low6);
+        let rev_amount = self.builder.ins().band_imm(rev_amount_raw, 63);
+        let amount = self.builder.ins().select(bit6, rev_amount, low6);
+
+        let shift_left = if reversed {
+            self.builder.ins().bxor_imm(bit6, 1)
+        } else {
+            bit6
+        };
+
+        let ac = self.read_ac_i64(d_const as u8);
+        let ac40 = self.builder.ins().band_imm(ac, 0xFF_FFFF_FFFF_i64);
+
+        let left = self.builder.ins().ishl(ac40, amount);
+        let right = if logical {
+            self.builder.ins().ushr(ac40, amount)
+        } else {
+            self.builder.ins().sshr(ac, amount)
+        };
+        let result = self.builder.ins().select(shift_left, left, right);
+        self.write_ac_i64(d_const as u8, result);
+
+        let new_ac = self.read_ac_i64(d_const as u8);
+        let r40 = self.builder.ins().band_imm(new_ac, 0xFF_FFFF_FFFF_i64);
+        let bits = self.flags40_szat(r40);
+        self.store_status_bits(bits, !0x003F_i64);
     }
 
     pub fn emit_read_imem(&mut self, addr_u32: Value) -> Value {
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.read_imem, self.builder.func);
-        let inst = self.builder.ins().call(f, &[self.sys_ptr, addr_u32]);
-        self.builder.inst_results(inst)[0]
+        use cranelift_codegen::ir::BlockArg;
+        use cranelift_codegen::ir::condcodes::IntCC;
+
+        let addr = self.builder.ins().band_imm(addr_u32, 0xFFFF);
+
+        let iram_block = self.builder.create_block();
+        let not_iram_block = self.builder.create_block();
+        let irom_block = self.builder.create_block();
+        let zero_block = self.builder.create_block();
+        let merge_block = self.builder.create_block();
+        self.builder.append_block_param(merge_block, types::I32);
+
+        let is_iram = self.builder.ins().icmp_imm(IntCC::UnsignedLessThan, addr, 0x1000);
+        self.builder.ins().brif(is_iram, iram_block, &[], not_iram_block, &[]);
+
+        self.builder.switch_to_block(iram_block);
+        self.builder.seal_block(iram_block);
+        let p = self.emit_dmem_word_addr(abi::dsp_iram_ptr_offset(), addr, 0);
+        let raw = self.builder.ins().load(types::I16, MemFlagsData::trusted(), p, 0);
+        let be = self.builder.ins().bswap(raw);
+        let v = self.builder.ins().uextend(types::I32, be);
+        self.builder.ins().jump(merge_block, &[BlockArg::Value(v)]);
+
+        self.builder.switch_to_block(not_iram_block);
+        self.builder.seal_block(not_iram_block);
+        let bank = self.builder.ins().band_imm(addr, 0xF000);
+        let is_irom = self.builder.ins().icmp_imm(IntCC::Equal, bank, 0x8000);
+        self.builder.ins().brif(is_irom, irom_block, &[], zero_block, &[]);
+
+        self.builder.switch_to_block(irom_block);
+        self.builder.seal_block(irom_block);
+        let p = self.emit_dmem_word_addr(abi::dsp_irom_ptr_offset(), addr, -0x8000);
+        let raw = self.builder.ins().load(types::I16, MemFlagsData::trusted(), p, 0);
+        let be = self.builder.ins().bswap(raw);
+        let v = self.builder.ins().uextend(types::I32, be);
+        self.builder.ins().jump(merge_block, &[BlockArg::Value(v)]);
+
+        self.builder.switch_to_block(zero_block);
+        self.builder.seal_block(zero_block);
+        let zero = self.builder.ins().iconst(types::I32, 0);
+        self.builder.ins().jump(merge_block, &[BlockArg::Value(zero)]);
+
+        self.builder.switch_to_block(merge_block);
+        self.builder.seal_block(merge_block);
+        self.builder.block_params(merge_block)[0]
     }
 
     pub fn emit_write_ac_mid_sxm(&mut self, idx: u32, value: Value) {
@@ -585,28 +931,71 @@ impl<'a, 'b> TranslatorCtx<'a, 'b> {
         self.builder.seal_block(join_block);
     }
 
+    fn stack_slot_addr(&mut self, ptr_v: Value) -> Value {
+        let idx = self.builder.ins().uextend(types::I64, ptr_v);
+        let byte_off = self.builder.ins().ishl_imm(idx, 1);
+        self.builder.ins().iadd(self.sys_ptr, byte_off)
+    }
+
+    fn emit_stack_push(&mut self, base: usize, value16: Value) {
+        use crate::flipper::dsp::core::stack::DspStack;
+
+        let data_off = (base + DspStack::<32>::data_offset()) as i32;
+        let ptr_off = (base + DspStack::<32>::ptr_offset()) as i32;
+
+        let ptr = self
+            .builder
+            .ins()
+            .load(types::I8, MemFlagsData::trusted(), self.sys_ptr, ptr_off);
+        let inc = self.builder.ins().iadd_imm(ptr, 1);
+        let new_ptr = self.builder.ins().band_imm(inc, 31);
+        self.builder
+            .ins()
+            .store(MemFlagsData::trusted(), new_ptr, self.sys_ptr, ptr_off);
+
+        let addr = self.stack_slot_addr(new_ptr);
+        self.builder
+            .ins()
+            .store(MemFlagsData::trusted(), value16, addr, data_off);
+    }
+
+    fn emit_stack_pop_value(&mut self, base: usize) -> Value {
+        use crate::flipper::dsp::core::stack::DspStack;
+
+        let data_off = (base + DspStack::<32>::data_offset()) as i32;
+        let ptr_off = (base + DspStack::<32>::ptr_offset()) as i32;
+
+        let ptr = self
+            .builder
+            .ins()
+            .load(types::I8, MemFlagsData::trusted(), self.sys_ptr, ptr_off);
+        let addr = self.stack_slot_addr(ptr);
+        let value = self
+            .builder
+            .ins()
+            .load(types::I16, MemFlagsData::trusted(), addr, data_off);
+
+        let dec = self.builder.ins().iadd_imm(ptr, -1);
+        let new_ptr = self.builder.ins().band_imm(dec, 31);
+        self.builder
+            .ins()
+            .store(MemFlagsData::trusted(), new_ptr, self.sys_ptr, ptr_off);
+
+        value
+    }
+
     pub fn emit_call_stack_push(&mut self, value: Value) {
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.call_stack_push, self.builder.func);
-        let v_u32 = self.builder.ins().uextend(types::I32, value);
-        self.builder.ins().call(f, &[self.sys_ptr, v_u32]);
+        self.emit_stack_push(abi::dsp_call_stack_offset(), value);
     }
 
     pub fn emit_call_stack_pop(&mut self) -> Value {
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.call_stack_pop, self.builder.func);
-        let inst = self.builder.ins().call(f, &[self.sys_ptr]);
-        self.builder.inst_results(inst)[0]
+        let v = self.emit_stack_pop_value(abi::dsp_call_stack_offset());
+        self.builder.ins().uextend(types::I32, v)
     }
 
     pub fn emit_data_stack_pop(&mut self) -> Value {
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.data_stack_pop, self.builder.func);
-        let inst = self.builder.ins().call(f, &[self.sys_ptr]);
-        self.builder.inst_results(inst)[0]
+        let v = self.emit_stack_pop_value(abi::dsp_data_stack_offset());
+        self.builder.ins().uextend(types::I32, v)
     }
 
     pub fn emit_read_reg_full(&mut self, slot: u32) -> Value {
@@ -643,13 +1032,32 @@ impl<'a, 'b> TranslatorCtx<'a, 'b> {
     }
 
     pub fn emit_loop_setup(&mut self, end_addr_p1: u16, counter: Value, call_stack_val: u16) {
-        let f = self
-            .module
-            .declare_func_in_func(self.extern_funcs.loop_setup, self.builder.func);
-        let end_v = self.builder.ins().iconst(types::I32, end_addr_p1 as i64);
-        let counter_u32 = self.builder.ins().uextend(types::I32, counter);
-        let csv_v = self.builder.ins().iconst(types::I32, call_stack_val as i64);
-        self.builder.ins().call(f, &[self.sys_ptr, end_v, counter_u32, csv_v]);
+        use cranelift_codegen::ir::condcodes::IntCC;
+
+        let push_block = self.builder.create_block();
+        let skip_block = self.builder.create_block();
+        let merge_block = self.builder.create_block();
+
+        let nz = self.builder.ins().icmp_imm(IntCC::NotEqual, counter, 0);
+        self.builder.ins().brif(nz, push_block, &[], skip_block, &[]);
+
+        self.builder.switch_to_block(push_block);
+        self.builder.seal_block(push_block);
+        let csv = self.iconst16(call_stack_val);
+        self.emit_stack_push(abi::dsp_call_stack_offset(), csv);
+        let eap = self.iconst16(end_addr_p1);
+        self.emit_stack_push(abi::dsp_loop_addr_offset(), eap);
+        self.emit_stack_push(abi::dsp_loop_counter_offset(), counter);
+        self.builder.ins().jump(merge_block, &[]);
+
+        self.builder.switch_to_block(skip_block);
+        self.builder.seal_block(skip_block);
+        let eap = self.iconst16(end_addr_p1);
+        self.store_u16(eap, abi::dsp_nia_offset_max() as i32);
+        self.builder.ins().jump(merge_block, &[]);
+
+        self.builder.switch_to_block(merge_block);
+        self.builder.seal_block(merge_block);
     }
 
     pub fn emit_clear_oc(&mut self) {

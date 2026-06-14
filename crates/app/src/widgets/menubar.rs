@@ -6,11 +6,18 @@ use crate::app::Message;
 use crate::game::{CpuMode, Platform, ThemePreference};
 use crate::theme::Palette;
 
+const COMMUNITY_COMPAT_URL: &str = "https://gecko.layle.dev/compat";
+const WII_DB_URL: &str = "https://emu.layle.dev/gecko-wii";
+const GC_DB_URL: &str = "https://emu.layle.dev/gecko-gc";
+
 pub fn menubar(
     palette: &Palette,
     cpu: CpuMode,
     theme_pref: ThemePreference,
     skip_ipl: bool,
+    upscale: u32,
+    memcard_enabled: bool,
+    sram_enabled: bool,
 ) -> Element<'static, Message> {
     let bar_bg = palette.bg_2;
     let border = palette.border;
@@ -20,7 +27,19 @@ pub fn menubar(
         Item::with_menu(self::top_label(palette, "File"), self::file_menu(palette)),
         Item::with_menu(
             self::top_label(palette, "Settings"),
-            self::settings_menu(palette, cpu, theme_pref, skip_ipl),
+            self::settings_menu(
+                palette,
+                cpu,
+                theme_pref,
+                skip_ipl,
+                upscale,
+                memcard_enabled,
+                sram_enabled,
+            ),
+        ),
+        Item::with_menu(
+            self::top_label(palette, "Compatibility"),
+            self::compatibility_menu(palette),
         ),
         Item::with_menu(self::top_label(palette, "About"), self::about_menu(palette)),
     ])
@@ -174,15 +193,29 @@ fn section_header(palette: &Palette, label: &'static str) -> Element<'static, Me
 
 fn file_menu(palette: &Palette) -> Menu<'static, Message, iced::Theme, iced::Renderer> {
     Menu::new(vec![
+        Item::new(self::menu_item(palette, "Open Game", Message::MenuOpenGame, None)),
         Item::new(self::menu_item(
             palette,
-            "Set GameCube Folder…",
+            "Open GameCube DOL",
+            Message::MenuOpenDol(Platform::Gcn),
+            None,
+        )),
+        Item::new(self::menu_item(
+            palette,
+            "Open Wii DOL",
+            Message::MenuOpenDol(Platform::Wii),
+            None,
+        )),
+        Item::new(self::separator(palette)),
+        Item::new(self::menu_item(
+            palette,
+            "Set GameCube Folder",
             Message::MenuChooseLibrary(Platform::Gcn),
             None,
         )),
         Item::new(self::menu_item(
             palette,
-            "Set Wii Folder…",
+            "Set Wii Folder",
             Message::MenuChooseLibrary(Platform::Wii),
             None,
         )),
@@ -200,6 +233,9 @@ fn settings_menu(
     cpu: CpuMode,
     theme_pref: ThemePreference,
     skip_ipl: bool,
+    upscale: u32,
+    memcard_enabled: bool,
+    sram_enabled: bool,
 ) -> Menu<'static, Message, iced::Theme, iced::Renderer> {
     Menu::new(vec![
         Item::new(self::section_header(palette, "Execution Engine")),
@@ -223,6 +259,44 @@ fn settings_menu(
             Message::MenuToggleSkipIpl,
             Some(skip_ipl),
         )),
+        Item::new(self::menu_item(
+            palette,
+            "Memory Card (Slot A)",
+            Message::MenuToggleMemoryCard,
+            Some(memcard_enabled),
+        )),
+        Item::new(self::menu_item(
+            palette,
+            "Persist SRAM",
+            Message::MenuToggleSram,
+            Some(sram_enabled),
+        )),
+        Item::new(self::separator(palette)),
+        Item::new(self::section_header(palette, "Internal Resolution")),
+        Item::new(self::menu_item(
+            palette,
+            "1x (Native)",
+            Message::MenuSetUpscale(1),
+            Some(upscale == 1),
+        )),
+        Item::new(self::menu_item(
+            palette,
+            "2x",
+            Message::MenuSetUpscale(2),
+            Some(upscale == 2),
+        )),
+        Item::new(self::menu_item(
+            palette,
+            "3x",
+            Message::MenuSetUpscale(3),
+            Some(upscale == 3),
+        )),
+        Item::new(self::menu_item(
+            palette,
+            "4x",
+            Message::MenuSetUpscale(4),
+            Some(upscale == 4),
+        )),
         Item::new(self::separator(palette)),
         Item::new(self::section_header(palette, "Theme")),
         Item::new(self::menu_item(
@@ -243,19 +317,64 @@ fn settings_menu(
             Message::MenuSetTheme(ThemePreference::Dark),
             Some(theme_pref == ThemePreference::Dark),
         )),
+        Item::new(self::separator(palette)),
+        Item::new(self::section_header(palette, "Input")),
+        Item::new(self::menu_item(
+            palette,
+            "Controller Bindings",
+            Message::MenuInputSettings,
+            None,
+        )),
     ])
     .max_width(240.0)
     .offset(4.0)
     .spacing(2.0)
 }
 
+fn compatibility_menu(palette: &Palette) -> Menu<'static, Message, iced::Theme, iced::Renderer> {
+    Menu::new(vec![
+        Item::new(self::menu_item(
+            palette,
+            "Community Compatibility List",
+            Message::OpenUrl(COMMUNITY_COMPAT_URL.to_owned()),
+            None,
+        )),
+        Item::new(self::separator(palette)),
+        Item::new(self::menu_item(
+            palette,
+            "Wii Screenshots Database",
+            Message::OpenUrl(WII_DB_URL.to_owned()),
+            None,
+        )),
+        Item::new(self::menu_item(
+            palette,
+            "GameCube Screenshots Database",
+            Message::OpenUrl(GC_DB_URL.to_owned()),
+            None,
+        )),
+    ])
+    .max_width(220.0)
+    .offset(4.0)
+    .spacing(2.0)
+}
+
 fn about_menu(palette: &Palette) -> Menu<'static, Message, iced::Theme, iced::Renderer> {
-    Menu::new(vec![Item::new(self::menu_item(
-        palette,
-        "About Gecko",
-        Message::MenuAbout,
-        None,
-    ))])
+    Menu::new(vec![
+        Item::new(self::menu_item(palette, "About Gecko", Message::MenuAbout, None)),
+        Item::new(self::menu_item(
+            palette,
+            "Check for Updates",
+            Message::CheckForUpdates,
+            None,
+        )),
+        Item::new(self::separator(palette)),
+        Item::new(self::menu_item(
+            palette,
+            "Report an Issue",
+            Message::OpenUrl(crate::app::ISSUE_URL.to_owned()),
+            None,
+        )),
+    ])
     .max_width(200.0)
     .offset(4.0)
     .spacing(2.0)

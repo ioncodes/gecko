@@ -3,20 +3,25 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use backend_wgpu::capture;
 use iced::theme::Mode;
-use iced::widget::{button, column, container, mouse_area, scrollable, stack, text};
+use iced::widget::{Stack, button, column, container, row, scrollable, stack, text};
 use iced::{Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, window};
 
 use crate::cache::{self, LibraryCache};
 use crate::config::{self, Config};
-use crate::game::{CpuMode, Game, Platform, ThemePreference};
+use crate::game::{CpuMode, Format, Game, Platform, ThemePreference};
 use crate::library::{self, ScanProgress};
 use crate::player::{self, PlayerState, PlayerStatus};
 use crate::theme::{self, Palette};
-use crate::widgets::{game_row, menubar, search_bar, statusbar};
+use crate::update::{self, Outcome};
+use crate::widgets::input_settings::{self, BindTarget, InputTab, InvertTarget};
+use crate::widgets::{game_row, menubar, overlay, search_bar, statusbar};
 
 const REPO_URL: &str = "https://github.com/ioncodes/gecko";
+pub(crate) const ISSUE_URL: &str = "https://github.com/ioncodes/gecko/issues/new?template=bug_report.md";
 const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
+const TOAST_DURATION: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -30,23 +35,78 @@ pub enum Message {
     ScanProgress(ScanProgress),
     SearchChanged(String),
     MenuChooseLibrary(Platform),
+    MenuOpenGame,
+    MenuOpenDol(Platform),
+    GameFilePicked(Option<PathBuf>),
+    DolFilePicked(Platform, Option<PathBuf>),
+    GameFileLoaded(Result<Box<Game>, String>),
     MenuRescan,
     MenuQuit,
     MenuToggleCpu(CpuMode),
     MenuToggleSkipIpl,
+    MenuToggleMemoryCard,
+    MenuToggleSram,
     MenuSetTheme(ThemePreference),
+    MenuSetUpscale(u32),
     MenuAbout,
     AboutClose,
-    OpenRepo,
+    MenuInputSettings,
+    InputClose,
+    InputTab(InputTab),
+    InputCapture(BindTarget),
+    InputTick,
+    InputPointer(String),
+    InputSensitivity(f32),
+    InputToggleSideways,
+    InputToggleStickDpad,
+    InputToggleInvert(InvertTarget),
+    InputReset,
+    OpenUrl(String),
+    CheckForUpdates,
+    UpdateChecked(Outcome),
     GameClicked(usize),
     LaunchPlayer(usize),
     SystemThemeLoaded(Mode),
     SystemThemeChanged(Mode),
+    PlayerToggleFullscreen(window::Id),
+    PlayerToggleOverlay(window::Id),
+    PlayerToggleUncapped(window::Id),
+    PlayerTogglePause(window::Id),
+    PlayerScreenshot(window::Id),
+}
+
+#[derive(Debug, Clone)]
+pub enum UpdateState {
+    Idle,
+    Checking,
+    UpToDate,
+    Available(String),
+    Unpublished,
+    Failed,
+}
+
+pub struct Toast {
+    title: String,
+    detail: String,
+    expires: Instant,
+}
+
+impl Toast {
+    fn new(title: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            detail: detail.into(),
+            expires: Instant::now() + TOAST_DURATION,
+        }
+    }
 }
 
 pub struct PlayerWindow {
     pub(crate) game: Game,
     pub(crate) state: Arc<PlayerState>,
+    pub(crate) fullscreen: bool,
+    pub(crate) overlay: bool,
+    pub(crate) toast: Option<Toast>,
 }
 
 pub struct App {
@@ -59,11 +119,17 @@ pub struct App {
     search_lc: String,
     scanning: bool,
     about_open: bool,
+    input_open: bool,
+    input_tab: InputTab,
+    input_capture: Option<BindTarget>,
+    input_capture_baseline: u32,
+    input_pad_name: Option<String>,
     system_mode: Mode,
     palette: Palette,
     last_click: Option<(usize, Instant)>,
     library_window: Option<window::Id>,
     players: HashMap<window::Id, PlayerWindow>,
+    update: UpdateState,
 }
 
 impl App {
@@ -88,11 +154,17 @@ impl App {
             search_lc: String::new(),
             scanning: false,
             about_open: false,
+            input_open: false,
+            input_tab: InputTab::Gc,
+            input_capture: None,
+            input_capture_baseline: 0,
+            input_pad_name: None,
             system_mode: Mode::Light,
             palette,
             last_click: None,
             library_window: None,
             players: HashMap::new(),
+            update: UpdateState::Idle,
         };
 
         let (_, open_lib) = window::open(window::Settings {
@@ -134,6 +206,10 @@ impl App {
             subs.push(window::frames().map(|_| Message::PlayerTick));
         }
 
+        if self.input_open {
+            subs.push(iced::time::every(Duration::from_millis(100)).map(|_| Message::InputTick));
+        }
+
         Subscription::batch(subs)
     }
 
@@ -146,10 +222,27 @@ impl App {
             }
             Message::PlayerWindowOpened(id, game, state) => {
                 tracing::info!(window = ?id, title = %game.title, "player window opened");
-                self.players.insert(id, PlayerWindow { game: *game, state });
+                self.players.insert(
+                    id,
+                    PlayerWindow {
+                        game: *game,
+                        state,
+                        fullscreen: false,
+                        overlay: false,
+                        toast: None,
+                    },
+                );
                 Task::none()
             }
-            Message::PlayerTick => Task::none(),
+            Message::PlayerTick => {
+                let now = Instant::now();
+                for player in self.players.values_mut() {
+                    if player.toast.as_ref().is_some_and(|t| now >= t.expires) {
+                        player.toast = None;
+                    }
+                }
+                Task::none()
+            }
             Message::WindowClosed(id) => {
                 if Some(id) == self.library_window {
                     self.library_window = None;
@@ -224,6 +317,67 @@ impl App {
                     move |opt| Message::LibraryPicked(platform, opt),
                 )
             }
+            Message::MenuOpenGame => Task::perform(
+                async move {
+                    rfd::AsyncFileDialog::new()
+                        .set_title("Open game")
+                        .add_filter("Disc images", &["iso", "rvz", "zip"])
+                        .pick_file()
+                        .await
+                        .map(|h| h.path().to_path_buf())
+                },
+                Message::GameFilePicked,
+            ),
+            Message::MenuOpenDol(platform) => {
+                let title = match platform {
+                    Platform::Gcn => "Open GameCube DOL",
+                    Platform::Wii => "Open Wii DOL",
+                };
+                Task::perform(
+                    async move {
+                        rfd::AsyncFileDialog::new()
+                            .set_title(title)
+                            .add_filter("DOL executables", &["dol"])
+                            .pick_file()
+                            .await
+                            .map(|h| h.path().to_path_buf())
+                    },
+                    move |opt| Message::DolFilePicked(platform, opt),
+                )
+            }
+            Message::GameFilePicked(None) => Task::none(),
+            Message::GameFilePicked(Some(path)) => {
+                let Some(format) = Format::from_path(&path) else {
+                    tracing::warn!(path = %path.display(), "unsupported file type");
+                    return Task::none();
+                };
+
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || library::load_one(&path, format).map(Box::new))
+                            .await
+                            .unwrap_or_else(|err| Err(err.to_string()))
+                    },
+                    Message::GameFileLoaded,
+                )
+            }
+            Message::DolFilePicked(_, None) => Task::none(),
+            Message::DolFilePicked(platform, Some(path)) => Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || library::load_dol(&path, platform).map(Box::new))
+                        .await
+                        .unwrap_or_else(|err| Err(err.to_string()))
+                },
+                Message::GameFileLoaded,
+            ),
+            Message::GameFileLoaded(Err(err)) => {
+                tracing::warn!(%err, "failed to load picked game");
+                Task::none()
+            }
+            Message::GameFileLoaded(Ok(game)) => {
+                tracing::info!(path = %game.path.display(), title = %game.title, "launching picked game");
+                self.launch_game(*game)
+            }
             Message::MenuRescan => {
                 if self.effective_library_roots().is_empty() {
                     Task::done(Message::MenuChooseLibrary(Platform::Gcn))
@@ -242,24 +396,142 @@ impl App {
                 self.persist_config();
                 Task::none()
             }
+            Message::MenuToggleMemoryCard => {
+                self.config.memcard_enabled = !self.config.memcard_enabled;
+                self.persist_config();
+                Task::none()
+            }
+            Message::MenuToggleSram => {
+                self.config.sram_enabled = !self.config.sram_enabled;
+                self.persist_config();
+                Task::none()
+            }
             Message::MenuSetTheme(pref) => {
                 self.config.theme = pref;
                 self.persist_config();
                 self.refresh_palette();
                 Task::none()
             }
+            Message::MenuSetUpscale(scale) => {
+                self.config.upscale = scale;
+                self.persist_config();
+                Task::none()
+            }
             Message::MenuAbout => {
                 self.about_open = true;
+                Task::none()
+            }
+            Message::MenuInputSettings => {
+                self.input_open = true;
+                self.input_capture = None;
+                self.input_pad_name = self::pad_state().1;
+                Task::none()
+            }
+            Message::InputClose => {
+                self.input_open = false;
+                self.input_capture = None;
+                Task::none()
+            }
+            Message::InputTab(tab) => {
+                self.input_tab = tab;
+                self.input_capture = None;
+                Task::none()
+            }
+            Message::InputCapture(target) => {
+                if self.input_capture == Some(target) {
+                    self.input_capture = None;
+                } else {
+                    self.input_capture = Some(target);
+                    self.input_capture_baseline = self::pad_state().0.unwrap_or(0);
+                }
+                Task::none()
+            }
+            Message::InputTick => {
+                let (buttons, name) = self::pad_state();
+                self.input_pad_name = name;
+
+                if let Some(target) = self.input_capture
+                    && let Some(buttons) = buttons
+                {
+                    self.input_capture_baseline &= buttons;
+
+                    let fresh = buttons & !self.input_capture_baseline;
+                    if let Some(button) = input_settings::pressed_button(fresh) {
+                        *input_settings::field(&mut self.config.input, target) =
+                            Some(hostinput::config::button_name(button).to_owned());
+                        self.input_capture = None;
+                        self.persist_config();
+                    }
+                }
+
+                Task::none()
+            }
+            Message::InputPointer(source) => {
+                self.config.input.wii.pointer = Some(source);
+                self.persist_config();
+                Task::none()
+            }
+            Message::InputSensitivity(delta) => {
+                let current = self.config.input.wii.pointer_sensitivity.unwrap_or(1.0);
+                self.config.input.wii.pointer_sensitivity = Some((current + delta).clamp(0.25, 4.0));
+                self.persist_config();
+                Task::none()
+            }
+            Message::InputToggleSideways => {
+                let current = self.config.input.wii.sideways.unwrap_or(false);
+                self.config.input.wii.sideways = Some(!current);
+                self.persist_config();
+                Task::none()
+            }
+            Message::InputToggleStickDpad => {
+                let current = self.config.input.wii.stick_dpad.unwrap_or(true);
+                self.config.input.wii.stick_dpad = Some(!current);
+                self.persist_config();
+                Task::none()
+            }
+            Message::InputToggleInvert(target) => {
+                let field = input_settings::invert_field(&mut self.config.input, target);
+                *field = Some(!field.unwrap_or(false));
+                self.persist_config();
+                Task::none()
+            }
+            Message::InputReset => {
+                self.config.input = hostinput::InputConfig::default();
+                self.input_capture = None;
+                self.persist_config();
                 Task::none()
             }
             Message::AboutClose => {
                 self.about_open = false;
                 Task::none()
             }
-            Message::OpenRepo => {
-                if let Err(err) = webbrowser::open(REPO_URL) {
-                    tracing::warn!(%err, url = REPO_URL, "failed to open repo URL");
+            Message::OpenUrl(url) => {
+                if let Err(err) = webbrowser::open(&url) {
+                    tracing::warn!(%err, %url, "failed to open URL");
                 }
+                Task::none()
+            }
+            Message::CheckForUpdates => {
+                if matches!(self.update, UpdateState::Checking) {
+                    return Task::none();
+                }
+
+                self.update = UpdateState::Checking;
+                Task::perform(update::check(), Message::UpdateChecked)
+            }
+            Message::UpdateChecked(outcome) => {
+                self.update = match outcome {
+                    Outcome::UpToDate => UpdateState::UpToDate,
+                    Outcome::Available(url) => {
+                        tracing::info!(%url, "update available");
+                        UpdateState::Available(url)
+                    }
+                    Outcome::Unpublished => UpdateState::Unpublished,
+                    Outcome::Failed(err) => {
+                        tracing::warn!(%err, "update check failed");
+                        UpdateState::Failed
+                    }
+                };
                 Task::none()
             }
             Message::GameClicked(idx) => {
@@ -284,17 +556,71 @@ impl App {
                     return Task::none();
                 };
 
-                let state = PlayerState::new(&game, &self.config);
-                let (_, open) = window::open(window::Settings {
-                    size: iced::Size::new(960.0, 720.0),
-                    ..window::Settings::default()
-                });
-
-                open.map(move |id| Message::PlayerWindowOpened(id, Box::new(game.clone()), state.clone()))
+                self.launch_game(game)
             }
             Message::SystemThemeLoaded(mode) | Message::SystemThemeChanged(mode) => {
                 self.system_mode = mode;
                 self.refresh_palette();
+                Task::none()
+            }
+            Message::PlayerToggleFullscreen(id) => {
+                let Some(player) = self.players.get_mut(&id) else {
+                    return Task::none();
+                };
+
+                player.fullscreen = !player.fullscreen;
+                let mode = if player.fullscreen {
+                    window::Mode::Fullscreen
+                } else {
+                    window::Mode::Windowed
+                };
+                window::set_mode(id, mode)
+            }
+            Message::PlayerToggleOverlay(id) => {
+                if let Some(player) = self.players.get_mut(&id) {
+                    player.overlay = !player.overlay;
+                }
+                Task::none()
+            }
+            Message::PlayerToggleUncapped(id) => {
+                let Some(player) = self.players.get_mut(&id) else {
+                    return Task::none();
+                };
+
+                let (title, detail) = if player.state.toggle_throttle() {
+                    ("Speed limit on", "Throttled to native speed")
+                } else {
+                    ("Speed limit off", "Running uncapped")
+                };
+
+                player.toast = Some(Toast::new(title, detail));
+                Task::none()
+            }
+            Message::PlayerTogglePause(id) => {
+                if let Some(player) = self.players.get(&id) {
+                    player.state.toggle_pause();
+                }
+                Task::none()
+            }
+            Message::PlayerScreenshot(id) => {
+                let Some(player) = self.players.get_mut(&id) else {
+                    return Task::none();
+                };
+
+                let (title, detail) = match player.state.capture_frame() {
+                    Some(frame) => {
+                        let path = self::screenshot_path(&player.game.game_id);
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        capture::save_png_async(path, frame, true);
+                        ("Screenshot saved", name)
+                    }
+                    None => ("Screenshot failed", "No frame to capture yet".to_owned()),
+                };
+
+                player.toast = Some(Toast::new(title, detail));
                 Task::none()
             }
         }
@@ -304,7 +630,7 @@ impl App {
         if Some(window_id) == self.library_window {
             self.library_view()
         } else if let Some(player) = self.players.get(&window_id) {
-            self.player_view(player)
+            self.player_view(window_id, player)
         } else {
             container(text("")).width(Length::Fill).height(Length::Fill).into()
         }
@@ -315,9 +641,9 @@ impl App {
 
         let body: Element<'_, Message> = if self.games.is_empty() {
             let (msg, hint) = if self.scanning {
-                ("Scanning…", "Reading disc headers")
+                ("Scanning...", "Reading disc headers")
             } else if self.effective_library_roots().is_empty() {
-                ("No libraries set", "File → Set GameCube / Wii Folder…")
+                ("No libraries set", "File → Set GameCube / Wii Folder...")
             } else {
                 ("No games found", "Drop ISO, RVZ, or ZIP files into the library folder")
             };
@@ -336,10 +662,24 @@ impl App {
         let bg = palette.bg;
         let text_color = palette.text;
         let main = column![
-            menubar::menubar(palette, self.config.cpu_mode, self.config.theme, self.config.skip_ipl),
+            menubar::menubar(
+                palette,
+                self.config.cpu_mode,
+                self.config.theme,
+                self.config.skip_ipl,
+                self.config.upscale,
+                self.config.memcard_enabled,
+                self.config.sram_enabled,
+            ),
             search_bar::search_bar(palette, &self.search),
             body,
-            statusbar::statusbar(palette, self.config.cpu_mode, self.games.len(), self.scanning),
+            statusbar::statusbar(
+                palette,
+                self.config.cpu_mode,
+                self.games.len(),
+                self.scanning,
+                &self.update
+            ),
         ];
 
         let root = container(main)
@@ -351,21 +691,34 @@ impl App {
                 ..container::Style::default()
             });
 
-        let root_element: Element<'_, Message> = root.into();
+        let mut root_element: Element<'_, Message> = root.into();
         if self.about_open {
-            stack![root_element, self::about_overlay(palette)].into()
-        } else {
-            root_element
+            root_element = stack![root_element, self::about_overlay(palette)].into();
         }
+        if self.input_open {
+            root_element = stack![
+                root_element,
+                input_settings::overlay(
+                    palette,
+                    &self.config.input,
+                    self.input_tab,
+                    self.input_capture,
+                    self.input_pad_name.as_deref(),
+                )
+            ]
+            .into();
+        }
+
+        root_element
     }
 
-    fn player_view<'a>(&'a self, player: &'a PlayerWindow) -> Element<'a, Message> {
+    fn player_view<'a>(&'a self, window_id: window::Id, player: &'a PlayerWindow) -> Element<'a, Message> {
         let palette = &self.palette;
         let bg = palette.bg;
         let text_color = palette.text;
 
         let status = player.state.status();
-        let shader: Element<'a, Message> = player::shader_widget(player.state.clone()).into();
+        let shader: Element<'a, Message> = player::shader_widget(player.state.clone(), window_id).into();
 
         let overlay: Option<Element<'a, Message>> = match &status {
             PlayerStatus::Ready => None,
@@ -378,11 +731,23 @@ impl App {
             PlayerStatus::Failed(msg) => Some(self::overlay_card(palette, "Cannot start game", Some(msg), true)),
         };
 
-        let body: Element<'a, Message> = if let Some(ov) = overlay {
-            stack![shader, ov].into()
-        } else {
-            shader
-        };
+        let mut layers: Vec<Element<'a, Message>> = vec![shader];
+        if let Some(ov) = overlay {
+            layers.push(ov);
+        }
+        let paused = player.state.is_paused();
+        if player.overlay || paused {
+            let stats = player.overlay.then(|| player.state.fps());
+            layers.push(self::corner_overlay(palette, paused, stats));
+        }
+        if let Some(toast) = &player.toast {
+            layers.push(self::toast_overlay(palette, toast));
+        }
+
+        let body: Element<'a, Message> = Stack::with_children(layers)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
 
         container(body)
             .width(Length::Fill)
@@ -441,6 +806,26 @@ impl App {
     fn refresh_palette(&mut self) {
         self.palette = self::resolve_palette(self.config.theme, self.system_mode);
     }
+
+    fn launch_game(&self, game: Game) -> Task<Message> {
+        let state = PlayerState::new(&game, &self.config);
+        let (_, open) = window::open(window::Settings {
+            size: iced::Size::new(960.0, 720.0),
+            ..window::Settings::default()
+        });
+
+        open.map(move |id| Message::PlayerWindowOpened(id, Box::new(game.clone()), state.clone()))
+    }
+}
+
+fn version_label() -> String {
+    let hash = env!("GECKO_GIT_HASH");
+    let channel = env!("GECKO_CHANNEL");
+    if channel.is_empty() {
+        hash.to_owned()
+    } else {
+        format!("{hash}-{channel}")
+    }
 }
 
 fn resolve_palette(pref: ThemePreference, system_mode: Mode) -> Palette {
@@ -450,6 +835,85 @@ fn resolve_palette(pref: ThemePreference, system_mode: Mode) -> Palette {
         ThemePreference::System => system_mode,
     };
     Palette::for_mode(effective)
+}
+
+fn screenshot_path(game_id: &str) -> PathBuf {
+    config::exe_relative(capture::timestamped_path(game_id))
+}
+
+fn corner_card<'a>(palette: &Palette, content: Element<'a, Message>) -> Element<'a, Message> {
+    let card_bg = Color { a: 0.85, ..palette.bg };
+    let border_2 = palette.border_2;
+
+    container(content)
+        .padding(Padding::from([8, 12]))
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(card_bg)),
+            border: Border {
+                color: border_2,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
+fn corner_overlay(palette: &Palette, paused: bool, stats: Option<(f32, f32)>) -> Element<'static, Message> {
+    let mut cards = column![].spacing(8).align_x(iced::Alignment::End);
+
+    if paused {
+        cards = cards.push(self::corner_card(palette, self::pause_icon(palette)));
+    }
+
+    if let Some((fps, native_pct)) = stats {
+        let label = text(format!("{fps:.1} FPS  {native_pct:.0}%"))
+            .size(13)
+            .color(palette.text);
+        cards = cards.push(self::corner_card(palette, label.into()));
+    }
+
+    container(cards)
+        .width(Length::Fill)
+        .align_x(iced::Alignment::End)
+        .padding(12)
+        .into()
+}
+
+fn pause_icon(palette: &Palette) -> Element<'static, Message> {
+    let bar_color = palette.text;
+    let bar = move || {
+        container(text(""))
+            .width(5)
+            .height(16)
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(bar_color)),
+                border: Border {
+                    radius: 1.5.into(),
+                    ..Border::default()
+                },
+                ..container::Style::default()
+            })
+    };
+
+    row![bar(), bar()].spacing(4).into()
+}
+
+fn toast_overlay<'a>(palette: &Palette, toast: &'a Toast) -> Element<'a, Message> {
+    let content = column![
+        text(&toast.title).size(13).color(palette.text),
+        text(&toast.detail).size(11).color(palette.text_dim),
+    ]
+    .spacing(2);
+    let card = self::corner_card(palette, content.into());
+
+    container(card)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(iced::Alignment::End)
+        .align_y(iced::Alignment::End)
+        .padding(12)
+        .into()
 }
 
 fn overlay_card(palette: &Palette, title: &str, detail: Option<&str>, error: bool) -> Element<'static, Message> {
@@ -511,8 +975,16 @@ fn overlay_card(palette: &Palette, title: &str, detail: Option<&str>, error: boo
     stack![backdrop, centered].into()
 }
 
+fn pad_state() -> (Option<u32>, Option<String>) {
+    let service = hostinput::sdl::service();
+
+    let buttons = service.shared.lock().unwrap().map(|port| port.state.buttons);
+    let name = service.device.lock().unwrap().clone();
+
+    (buttons, name)
+}
+
 fn about_overlay(palette: &Palette) -> Element<'static, Message> {
-    let bg = palette.bg;
     let surface = palette.surface;
     let surface_2 = palette.surface_2;
     let border = palette.border;
@@ -521,13 +993,9 @@ fn about_overlay(palette: &Palette) -> Element<'static, Message> {
     let dim = palette.text_dim;
     let mute = palette.text_mute;
     let link_color = palette.accent;
-    let backdrop_color = Color {
-        a: 0.45,
-        ..(if palette.is_dark { Color::BLACK } else { palette.text })
-    };
 
     let link_button = button(text(REPO_URL).size(12).color(link_color))
-        .on_press(Message::OpenRepo)
+        .on_press(Message::OpenUrl(REPO_URL.to_owned()))
         .padding(Padding::from([2, 4]))
         .style(move |_: &Theme, status| {
             let bg = match status {
@@ -545,88 +1013,56 @@ fn about_overlay(palette: &Palette) -> Element<'static, Message> {
             }
         });
 
-    let card: Element<'static, Message> = container(
-        column![
-            text("Gecko").size(28).color(text_color),
-            text("GameCube / Wii emulator").size(13).color(dim),
-            link_button,
-            container(text(""))
-                .width(Length::Fill)
-                .height(1)
-                .style(move |_: &Theme| container::Style {
-                    background: Some(Background::Color(border)),
-                    ..container::Style::default()
-                }),
-            column![
-                text("Author").size(13).color(text_color),
-                text("Layle").size(12).color(dim),
-            ]
-            .spacing(2)
-            .align_x(iced::Alignment::Center),
-            column![
-                text("Acknowledgements").size(13).color(text_color),
-                text("zayd").size(12).color(dim),
-                text("vxpm").size(12).color(dim),
-                text("hazelwiss").size(12).color(dim),
-                text("Dolphin team").size(12).color(dim),
-            ]
-            .spacing(2)
-            .align_x(iced::Alignment::Center),
-            text("v0.1.0").size(11).color(mute),
-            button(text("Close").size(13))
-                .on_press(Message::AboutClose)
-                .padding(Padding::from([6, 14]))
-                .style(move |_: &Theme, status| {
-                    let button_bg = match status {
-                        button::Status::Hovered | button::Status::Pressed => surface_2,
-                        _ => surface,
-                    };
-                    button::Style {
-                        background: Some(Background::Color(button_bg)),
-                        text_color,
-                        border: Border {
-                            color: border_2,
-                            width: 1.0,
-                            radius: 6.0.into(),
-                        },
-                        ..button::Style::default()
-                    }
-                }),
-        ]
-        .spacing(8)
-        .align_x(iced::Alignment::Center),
-    )
-    .width(Length::Fixed(320.0))
-    .padding(24)
-    .style(move |_: &Theme| container::Style {
-        background: Some(Background::Color(bg)),
-        border: Border {
-            color: border_2,
-            width: 1.0,
-            radius: 12.0.into(),
-        },
-        ..container::Style::default()
-    })
-    .into();
-
-    let backdrop: Element<'static, Message> = mouse_area(
+    let content: Element<'static, Message> = column![
+        text("Gecko").size(28).color(text_color),
+        text("GameCube / Wii emulator").size(13).color(dim),
+        link_button,
         container(text(""))
             .width(Length::Fill)
-            .height(Length::Fill)
+            .height(1)
             .style(move |_: &Theme| container::Style {
-                background: Some(Background::Color(backdrop_color)),
+                background: Some(Background::Color(border)),
                 ..container::Style::default()
             }),
-    )
-    .on_press(Message::AboutClose)
+        column![
+            text("Author").size(13).color(text_color),
+            text("Layle").size(12).color(dim),
+        ]
+        .spacing(2)
+        .align_x(iced::Alignment::Center),
+        column![
+            text("Acknowledgements").size(13).color(text_color),
+            text("zayd").size(12).color(dim),
+            text("vxpm").size(12).color(dim),
+            text("hazelwiss").size(12).color(dim),
+            text("Dolphin team").size(12).color(dim),
+        ]
+        .spacing(2)
+        .align_x(iced::Alignment::Center),
+        text(self::version_label()).size(11).color(mute),
+        button(text("Close").size(13))
+            .on_press(Message::AboutClose)
+            .padding(Padding::from([6, 14]))
+            .style(move |_: &Theme, status| {
+                let button_bg = match status {
+                    button::Status::Hovered | button::Status::Pressed => surface_2,
+                    _ => surface,
+                };
+                button::Style {
+                    background: Some(Background::Color(button_bg)),
+                    text_color,
+                    border: Border {
+                        color: border_2,
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..button::Style::default()
+                }
+            }),
+    ]
+    .spacing(8)
+    .align_x(iced::Alignment::Center)
     .into();
 
-    let centered: Element<'static, Message> = container(card)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .into();
-
-    stack![backdrop, centered].into()
+    overlay::modal(palette, 320.0, 24.0, Message::AboutClose, content)
 }

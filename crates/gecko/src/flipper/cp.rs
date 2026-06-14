@@ -300,4 +300,14 @@ pub fn pump_fifo<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
         sys.cp.refresh_status();
         refresh_interrupts(sys);
     }
+
+    if consumed > 0
+        && sys.cp.control.bp_interrupt_enable()
+        && !sys.cp.status.bp_interrupt()
+        && sys.cp.fifo_rw_distance() == 0
+        && sys.cp.fifo_read_ptr() == sys.cp.fifo_bp()
+    {
+        sys.cp.status = sys.cp.status.with_bp_interrupt(true);
+        refresh_interrupts(sys);
+    }
 }

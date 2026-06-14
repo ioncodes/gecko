@@ -1,17 +1,10 @@
-import super::common::{VsOut, FrameUniforms, frame, tex0, tex1, tex2, tex3, tex4, tex5, tex6, tex7, samp0, samp1, samp2, samp3, samp4, samp5, samp6, samp7};
+import super::common::{VsOut, FrameUniforms, frame, draw};
 import super::tev_helpers::{select_texcoord, stq_to_uv, sample_texmap, read_packed};
 
 fn texmap_size(texmap: u32) -> vec2<f32> {
-    switch texmap {
-        case 0u: { return vec2<f32>(textureDimensions(tex0)); }
-        case 1u: { return vec2<f32>(textureDimensions(tex1)); }
-        case 2u: { return vec2<f32>(textureDimensions(tex2)); }
-        case 3u: { return vec2<f32>(textureDimensions(tex3)); }
-        case 4u: { return vec2<f32>(textureDimensions(tex4)); }
-        case 5u: { return vec2<f32>(textureDimensions(tex5)); }
-        case 6u: { return vec2<f32>(textureDimensions(tex6)); }
-        default: { return vec2<f32>(textureDimensions(tex7)); }
-    }
+    let pair = draw.tex_dims[texmap / 2u];
+    let dims = select(pair.xy, pair.zw, (texmap & 1u) == 1u);
+    return vec2<f32>(max(dims, vec2<u32>(1u, 1u)));
 }
 
 fn ind_quantize_and_bias(

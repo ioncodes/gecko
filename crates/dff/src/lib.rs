@@ -55,6 +55,7 @@ pub struct Frame {
     pub memory_updates: Vec<MemoryUpdate>,
 }
 
+#[derive(Clone)]
 pub struct DffFile {
     pub bp_mem: Vec<u32>,
     pub cp_mem: Vec<u32>,

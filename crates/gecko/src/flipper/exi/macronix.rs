@@ -1,15 +1,15 @@
 // GameCube IPL ROM / SRAM / RTC device (EXI channel 0, device 1)
 // Macronix device according to yagcd, TODO: update name
 // - Address 0x000000..0x1FFFFF: Mask ROM (2 MB)
-// - Address 0x800000..0x800043: SRAM (TODO: 64 or 68 bytes??)
+// - Address 0x800004..0x800043: SRAM (64 bytes; 0x800000..0x800003 is the RTC counter)
 // - Address 0x840000: RTC (seconds since 2000-01-01?)
 
 const IPL_START: u32 = 0x000000;
 const IPL_END: u32 = 0x1FFFFF;
 
-const SRAM_START: u32 = 0x800000;
+const SRAM_START: u32 = 0x800004;
 const SRAM_END: u32 = 0x800043;
-const SRAM_SIZE: usize = 68;
+const SRAM_SIZE: usize = 64;
 
 const RTC_START: u32 = 0x840000;
 const RTC_END: u32 = 0x840004;
@@ -17,6 +17,8 @@ const RTC_END: u32 = 0x840004;
 pub struct ExiMacronix {
     rom: Vec<u8>,
     sram: Sram,
+    sram_path: Option<std::path::PathBuf>,
+    sram_dirty: bool,
     command: u32,
     bytes_received: usize,
     cursor: usize,
@@ -30,9 +32,25 @@ impl ExiMacronix {
         Self {
             rom,
             sram: Sram::ntsc_default(),
+            sram_path: None,
+            sram_dirty: false,
             command: 0,
             bytes_received: 0,
             cursor: 0,
+        }
+    }
+
+    /// Back the SRAM with a file: load it now if present and persist any
+    /// guest writes so console settings, clock bias and the memory card's
+    /// flash id survive across runs.
+    pub fn set_sram_path(&mut self, path: std::path::PathBuf) {
+        super::device::load_backing(&path, &mut self.sram.data, "SRAM");
+        self.sram_path = Some(path);
+    }
+
+    fn flush_sram(&self) {
+        if let Some(path) = &self.sram_path {
+            super::device::persist_backing(path, &self.sram.data, "SRAM");
         }
     }
 
@@ -88,6 +106,7 @@ impl super::device::ExiDevice for ExiMacronix {
                 let offset = ((addr - SRAM_START) as usize + self.cursor) % SRAM_SIZE;
                 if self.is_write() {
                     self.sram.data[offset] = *byte;
+                    self.sram_dirty = true;
                     tracing::debug!(
                         addr = format!("{:06X}", addr),
                         cursor = self.cursor,
@@ -181,7 +200,21 @@ impl super::device::ExiDevice for ExiMacronix {
             for (i, b) in buf.iter().enumerate() {
                 self.sram.data[(base + i) % SRAM_SIZE] = *b;
             }
+            self.sram_dirty = true;
         }
+    }
+
+    fn on_deselect(&mut self) -> Option<u64> {
+        if self.sram_dirty {
+            self.flush_sram();
+            self.sram_dirty = false;
+        }
+
+        None
+    }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
     }
 }
 
@@ -194,7 +227,7 @@ impl Sram {
     /// Dumped from NTSC IPL
     #[rustfmt::skip]
     pub fn ntsc_default() -> Self {
-        Self {
+        let mut sram = Self {
             data: [
                 0x01, 0x04, 0xFE, 0xFB,
                 0x00, 0x14, 0xFF, 0xE8,
@@ -212,28 +245,33 @@ impl Sram {
                 0x00, 0x00, 0x00, 0x00,
                 0x00, 0x00, 0x00, 0x00,
                 0x00, 0x00, 0x00, 0x00,
-                0x01, 0x04, 0xFE, 0xFB, // TODO: start and end is cooked? isnt it supposed to be 64 bytes?
             ],
-        }
+        };
+
+        sram.fix_flash_id_checksums();
+
+        sram
     }
 
     pub fn empty() -> Self {
-        Self { data: [0; SRAM_SIZE] }
+        let mut sram = Self { data: [0; SRAM_SIZE] };
+
+        sram.fix_flash_id_checksums();
+
+        sram
     }
 
-    // TODO: WIP
-    pub fn fix_checksums(&mut self) {
-        let (a, b) = Self::compute_checksums(&self.data);
-        self.data[0x00..0x02].copy_from_slice(&a.to_be_bytes());
-        self.data[0x02..0x04].copy_from_slice(&b.to_be_bytes());
-    }
+    fn fix_flash_id_checksums(&mut self) {
+        const FLASH_ID_BASE: usize = 0x14;
+        const FLASH_ID_LEN: usize = 12;
+        const FLASH_ID_CKSUM: usize = 0x3A;
 
-    fn compute_checksums(data: &[u8; SRAM_SIZE]) -> (u16, u16) {
-        let mut sum: u16 = 0;
-        for i in (0x04..0x40).step_by(2) {
-            let word = u16::from_be_bytes([data[i], data[i + 1]]);
-            sum = sum.wrapping_add(word);
+        for slot in 0..2 {
+            let base = FLASH_ID_BASE + slot * FLASH_ID_LEN;
+            let sum = self.data[base..base + FLASH_ID_LEN]
+                .iter()
+                .fold(0u8, |acc, &b| acc.wrapping_add(b));
+            self.data[FLASH_ID_CKSUM + slot] = sum ^ 0xFF;
         }
-        (sum, !sum)
     }
 }

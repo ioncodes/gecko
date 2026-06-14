@@ -45,6 +45,11 @@ struct FrameUniforms {
 
 struct DrawUniforms {
     mvp: mat4x4<f32>,
+    // Guest-native texmap dimensions, two slots per vector (slot i at
+    // tex_dims[i / 2], xy for even i, zw for odd). Scaled EFB copies bind
+    // a larger GPU texture, so textureDimensions must not be used for
+    // guest texel math.
+    tex_dims: array<vec4<u32>, 4>,
 };
 
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
@@ -87,7 +92,7 @@ struct VsIn {
 };
 
 struct VsOut {
-    @builtin(position) clip_pos: vec4<f32>,
+    @invariant @builtin(position) clip_pos: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) color1: vec4<f32>,
     @location(2) uv0: vec3<f32>,

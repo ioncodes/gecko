@@ -98,7 +98,6 @@ pub struct JitEngine<const SYSTEM: SystemId> {
     trampoline_fn: TrampolineFn,
     block_lookup_table_addr: usize,
     block_seq: u64,
-    dump_pc: Option<u32>,
 }
 
 impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
@@ -313,6 +312,9 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             jit_builder.symbol(name, addr);
         }
 
+        let arena = crate::jit::arena::DenseArena::new(512 << 20).expect("reserve JIT code arena");
+        jit_builder.memory_provider(Box::new(arena));
+
         let mut module = JITModule::new(jit_builder);
 
         let pointer_type = module.target_config().pointer_type();
@@ -519,9 +521,6 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             trampoline_fn,
             block_lookup_table_addr,
             block_seq: 0,
-            dump_pc: std::env::var("GECKO_DUMP_PC")
-                .ok()
-                .and_then(|s| u32::from_str_radix(s.trim().trim_start_matches("0x"), 16).ok()),
         }
     }
 
@@ -546,15 +545,15 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         }
     }
 
-    pub fn cached_blocks(&self) -> Vec<crate::jit_cache::CachedBlockPpc> {
+    pub fn cached_blocks(&self) -> Vec<crate::jit::cache::CachedBlockPpc> {
         self.cache
             .keys()
             .filter_map(|&pc| {
                 let spec = self.block_specs.get(&pc)?;
-                Some(crate::jit_cache::CachedBlockPpc {
+                Some(crate::jit::cache::CachedBlockPpc {
                     pc,
                     instr_count: spec.instrs.len() as u16,
-                    hash: crate::jit_cache::hash_words(spec.instrs.iter().copied()),
+                    hash: crate::jit::cache::hash_words(spec.instrs.iter().copied()),
                 })
             })
             .collect()
@@ -563,7 +562,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
     pub fn precompile_blocks(
         &mut self,
         sys: &mut System<SYSTEM>,
-        blocks: &[crate::jit_cache::CachedBlockPpc],
+        blocks: &[crate::jit::cache::CachedBlockPpc],
     ) -> (usize, usize) {
         let mut compiled = 0usize;
         let mut skipped = 0usize;
@@ -585,7 +584,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
                 buf.push(sys.mmio.fetch_instruction(instr_pc));
             }
 
-            let actual = crate::jit_cache::hash_words(buf.into_iter());
+            let actual = crate::jit::cache::hash_words(buf.into_iter());
             if actual != b.hash {
                 skipped += 1;
                 continue;
@@ -961,53 +960,9 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
 
         drop(chain);
 
-        let want_dump = self.dump_pc == Some(spec.start_pc);
-        if want_dump {
-            self.ctx.set_disasm(true);
-        }
-
         self.module
             .define_function(func_id, &mut self.ctx)
             .expect("define block");
-
-        if want_dump {
-            if let Some(cc) = self.ctx.compiled_code() {
-                let path = format!("./profile-dumps/jit-disasm-{:08x}.txt", spec.start_pc);
-                let mut s = String::new();
-
-                use std::fmt::Write as _;
-
-                let _ = writeln!(
-                    s,
-                    "; PPC block at {:#010x}, len={} instrs, terminator={:?}",
-                    spec.start_pc,
-                    spec.instrs.len(),
-                    spec.terminator
-                );
-
-                for (i, &raw) in spec.instrs.iter().enumerate() {
-                    let pc = spec.pc_of(i);
-                    let _ = writeln!(s, ";   {:08x}  {:08x}", pc, raw);
-                }
-
-                let _ = writeln!(s, "; --- cranelift vcode ---");
-                if let Some(vcode) = cc.vcode.as_ref() {
-                    s.push_str(vcode);
-                }
-
-                let _ = writeln!(s, "\n; --- emitted bytes ({} bytes) ---", cc.code_buffer().len());
-                for chunk in cc.code_buffer().chunks(16) {
-                    s.push_str("; ");
-                    for b in chunk {
-                        let _ = write!(s, "{:02x} ", b);
-                    }
-                    s.push('\n');
-                }
-
-                let _ = std::fs::write(&path, s);
-                tracing::info!(pc = format_args!("{:#010x}", spec.start_pc).to_string(), %path, "dumped JIT disasm");
-            }
-        }
 
         self.module.finalize_definitions().expect("finalize");
         let entry = self.module.get_finalized_function(func_id) as usize;

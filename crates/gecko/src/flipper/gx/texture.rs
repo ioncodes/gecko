@@ -1099,7 +1099,7 @@ fn encode_rg8(rgba: &[u8], out: &mut [u8], w: usize, h: usize) {
                     unsafe {
                         let s = ((base_y + ty) * w + base_x + tx) * 4;
                         let off = blk + (ty * BW + tx) * 2;
-                        std::ptr::write(dst.add(off).cast::<[u8; 2]>(), [*src.add(s), *src.add(s + 1)]);
+                        std::ptr::write(dst.add(off).cast::<[u8; 2]>(), [*src.add(s + 1), *src.add(s)]);
                     }
                 }
             }

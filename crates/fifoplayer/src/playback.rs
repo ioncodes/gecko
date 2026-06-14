@@ -36,6 +36,10 @@ impl RenderSink for PlayerSink {
         self.inner.flush_efb_copies(ram);
     }
 
+    fn reset_efb(&mut self) {
+        self.inner.reset_efb();
+    }
+
     fn take_draw_data(&mut self) -> Box<DrawData> {
         self.inner.take_draw_data()
     }
@@ -100,32 +104,36 @@ impl<const SYSTEM: SystemId> Playback<SYSTEM> {
         self.feed(&stream, sink);
     }
 
-    fn feed(&mut self, bytes: &[u8], sink: &mut PlayerSink) {
+    pub fn feed(&mut self, bytes: &[u8], sink: &mut PlayerSink) {
         self.gx.fifo.extend_from_slice(bytes);
         self.gx.drain_fifo(&mut self.mmio, sink);
     }
 
     pub fn play_frame(&mut self, frame: &dff::Frame, sink: &mut PlayerSink) -> bool {
+        self.play_frame_with(&frame.fifo_data, &frame.memory_updates, sink)
+    }
+
+    pub fn play_frame_with(&mut self, fifo_data: &[u8], updates: &[dff::MemoryUpdate], sink: &mut PlayerSink) -> bool {
         let mut pos = 0usize;
 
-        for update in &frame.memory_updates {
-            let p = (update.fifo_position as usize).min(frame.fifo_data.len());
+        for update in updates {
+            let p = (update.fifo_position as usize).min(fifo_data.len());
             if p > pos {
-                self.feed(&frame.fifo_data[pos..p], sink);
+                self.feed(&fifo_data[pos..p], sink);
                 pos = p;
             }
 
             self.apply_update(update, sink);
         }
 
-        if pos < frame.fifo_data.len() {
-            self.feed(&frame.fifo_data[pos..], sink);
+        if pos < fifo_data.len() {
+            self.feed(&fifo_data[pos..], sink);
         }
 
         self.present(sink)
     }
 
-    fn apply_update(&mut self, update: &dff::MemoryUpdate, sink: &mut PlayerSink) {
+    pub fn apply_update(&mut self, update: &dff::MemoryUpdate, sink: &mut PlayerSink) {
         {
             let mut ram = self.mmio.ram_view_mut();
             match ram.slice_mut(update.address as usize, update.data.len()) {
@@ -150,52 +158,73 @@ impl<const SYSTEM: SystemId> Playback<SYSTEM> {
     fn update_overlaps_bound_texture(&self, update: &dff::MemoryUpdate) -> bool {
         let a = update.address as usize;
         let a_end = a + update.data.len();
+
         self.gx.cur_textures.iter().flatten().any(|desc| {
             let t = desc.ram_addr;
             let t_end = t + texture::raw_data_size(desc.width, desc.height, desc.format);
+
             a < t_end && t < a_end
         })
     }
 
-    fn present(&mut self, sink: &mut PlayerSink) -> bool {
+    pub fn present(&mut self, sink: &mut PlayerSink) -> bool {
         let heights = std::mem::take(&mut sink.xfb_heights);
-        if self.gx.xfb_copies.is_empty() {
+
+        if !self.gx.xfb_dirty {
             return false;
         }
+        self.gx.xfb_dirty = false;
 
-        let bytes_per_row = self.gx.xfb_copies[0].dest_stride.max(2);
+        let bytes_per_row = self
+            .gx
+            .xfb_regions
+            .values()
+            .max_by_key(|r| r.copy_seq)
+            .map(|r| r.stride.max(2))
+            .unwrap();
         let stride_px = bytes_per_row / 2;
-        let min_base = self.gx.xfb_copies.iter().map(|c| c.dest_addr).min().unwrap();
+        let min_base = self.gx.xfb_regions.keys().min().copied().unwrap();
 
-        let mut parts: Vec<XfbPart> = Vec::new();
+        let mut parts: Vec<(u64, XfbPart)> = Vec::new();
         let mut frame_h = 0u32;
-        for copy in &self.gx.xfb_copies {
-            let delta_px = (copy.dest_addr - min_base) / 2;
+
+        for (&addr, region) in self.gx.xfb_regions.iter() {
+            let delta_px = (addr - min_base) / 2;
             let offset_x = delta_px % stride_px;
             let offset_y = delta_px / stride_px;
+
             if offset_x != 0 {
                 continue;
             }
+
             let dst_h = heights
                 .iter()
                 .rev()
-                .find(|(id, _)| *id == copy.dest_addr)
+                .find(|(id, _)| *id == addr)
                 .map(|(_, h)| *h)
-                .unwrap_or(copy.src_h);
+                .unwrap_or(0);
+
             frame_h = frame_h.max(offset_y + dst_h);
-            if !parts.iter().any(|p| p.id == copy.dest_addr) {
-                parts.push(XfbPart {
-                    id: copy.dest_addr,
+
+            parts.push((
+                region.first_seq,
+                XfbPart {
+                    id: addr,
                     offset_x: 0,
                     offset_y,
-                });
-            }
+                },
+            ));
         }
-        self.gx.xfb_copies.clear();
+
+        self.gx.xfb_regions.clear();
+
+        parts.sort_by_key(|(first_seq, _)| *first_seq);
+        let parts: Vec<XfbPart> = parts.into_iter().map(|(_, p)| p).collect();
 
         if parts.is_empty() || frame_h == 0 {
             return false;
         }
+
         sink.exec(GxAction::PresentXfb {
             width: stride_px,
             height: frame_h,

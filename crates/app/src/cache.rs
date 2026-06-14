@@ -4,6 +4,7 @@ use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 
+use crate::config;
 use crate::game::Game;
 
 const CACHE_VERSION: u32 = 1;
@@ -54,13 +55,7 @@ impl Default for LibraryCache {
 }
 
 pub fn cache_path() -> PathBuf {
-    match std::env::current_exe() {
-        Ok(exe) => exe
-            .parent()
-            .map(|p| p.join(CACHE_DIR).join(CACHE_FILE))
-            .unwrap_or_else(|| PathBuf::from(CACHE_FILE)),
-        Err(_) => PathBuf::from(CACHE_FILE),
-    }
+    config::exe_relative(Path::new(CACHE_DIR).join(CACHE_FILE))
 }
 
 pub fn load(path: &Path) -> LibraryCache {

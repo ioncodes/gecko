@@ -22,8 +22,8 @@ pub fn ps_ops<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, i
             ps_write(ctx, &instr, ps0, ps1);
         }
         OP_PS_MUL => {
-            let ps0 = (ctx.gekko.read_fpr(instr.ra()) * ctx.gekko.read_fpr(instr.fc())) as f32 as f64;
-            let ps1 = (ctx.gekko.read_ps1(instr.ra()) * ctx.gekko.read_ps1(instr.fc())) as f32 as f64;
+            let ps0 = (ctx.gekko.read_fpr(instr.ra()) * super::round_frc(ctx.gekko.read_fpr(instr.fc()))) as f32 as f64;
+            let ps1 = (ctx.gekko.read_ps1(instr.ra()) * super::round_frc(ctx.gekko.read_ps1(instr.fc()))) as f32 as f64;
             ps_write(ctx, &instr, ps0, ps1);
         }
         OP_PS_DIV => {
@@ -32,55 +32,87 @@ pub fn ps_ops<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, i
             ps_write(ctx, &instr, ps0, ps1);
         }
         OP_PS_MADD => {
-            let ps0 = (ctx.gekko.read_fpr(instr.ra()) * ctx.gekko.read_fpr(instr.fc()) + ctx.gekko.read_fpr(instr.rb()))
-                as f32 as f64;
-            let ps1 = (ctx.gekko.read_ps1(instr.ra()) * ctx.gekko.read_ps1(instr.fc()) + ctx.gekko.read_ps1(instr.rb()))
-                as f32 as f64;
+            let ps0 = ctx.gekko.read_fpr(instr.ra()).mul_add(
+                super::round_frc(ctx.gekko.read_fpr(instr.fc())),
+                ctx.gekko.read_fpr(instr.rb()),
+            ) as f32 as f64;
+            let ps1 = ctx.gekko.read_ps1(instr.ra()).mul_add(
+                super::round_frc(ctx.gekko.read_ps1(instr.fc())),
+                ctx.gekko.read_ps1(instr.rb()),
+            ) as f32 as f64;
             ps_write(ctx, &instr, ps0, ps1);
         }
         OP_PS_MSUB => {
-            let ps0 = (ctx.gekko.read_fpr(instr.ra()) * ctx.gekko.read_fpr(instr.fc()) - ctx.gekko.read_fpr(instr.rb()))
-                as f32 as f64;
-            let ps1 = (ctx.gekko.read_ps1(instr.ra()) * ctx.gekko.read_ps1(instr.fc()) - ctx.gekko.read_ps1(instr.rb()))
-                as f32 as f64;
+            let ps0 = ctx.gekko.read_fpr(instr.ra()).mul_add(
+                super::round_frc(ctx.gekko.read_fpr(instr.fc())),
+                -ctx.gekko.read_fpr(instr.rb()),
+            ) as f32 as f64;
+            let ps1 = ctx.gekko.read_ps1(instr.ra()).mul_add(
+                super::round_frc(ctx.gekko.read_ps1(instr.fc())),
+                -ctx.gekko.read_ps1(instr.rb()),
+            ) as f32 as f64;
             ps_write(ctx, &instr, ps0, ps1);
         }
         OP_PS_NMADD => {
-            let ps0 = -(ctx.gekko.read_fpr(instr.ra()) * ctx.gekko.read_fpr(instr.fc())
-                + ctx.gekko.read_fpr(instr.rb())) as f32 as f64;
-            let ps1 = -(ctx.gekko.read_ps1(instr.ra()) * ctx.gekko.read_ps1(instr.fc())
-                + ctx.gekko.read_ps1(instr.rb())) as f32 as f64;
+            let t0 = ctx.gekko.read_fpr(instr.ra()).mul_add(
+                super::round_frc(ctx.gekko.read_fpr(instr.fc())),
+                ctx.gekko.read_fpr(instr.rb()),
+            ) as f32 as f64;
+            let t1 = ctx.gekko.read_ps1(instr.ra()).mul_add(
+                super::round_frc(ctx.gekko.read_ps1(instr.fc())),
+                ctx.gekko.read_ps1(instr.rb()),
+            ) as f32 as f64;
+            let ps0 = super::neg_unless_nan(t0);
+            let ps1 = super::neg_unless_nan(t1);
             ps_write(ctx, &instr, ps0, ps1);
         }
         OP_PS_NMSUB => {
-            let ps0 = -(ctx.gekko.read_fpr(instr.ra()) * ctx.gekko.read_fpr(instr.fc())
-                - ctx.gekko.read_fpr(instr.rb())) as f32 as f64;
-            let ps1 = -(ctx.gekko.read_ps1(instr.ra()) * ctx.gekko.read_ps1(instr.fc())
-                - ctx.gekko.read_ps1(instr.rb())) as f32 as f64;
+            let t0 = ctx.gekko.read_fpr(instr.ra()).mul_add(
+                super::round_frc(ctx.gekko.read_fpr(instr.fc())),
+                -ctx.gekko.read_fpr(instr.rb()),
+            ) as f32 as f64;
+            let t1 = ctx.gekko.read_ps1(instr.ra()).mul_add(
+                super::round_frc(ctx.gekko.read_ps1(instr.fc())),
+                -ctx.gekko.read_ps1(instr.rb()),
+            ) as f32 as f64;
+            let ps0 = super::neg_unless_nan(t0);
+            let ps1 = super::neg_unless_nan(t1);
             ps_write(ctx, &instr, ps0, ps1);
         }
         OP_PS_MULS0 => {
-            let c0 = ctx.gekko.read_fpr(instr.fc());
+            let c0 = super::round_frc(ctx.gekko.read_fpr(instr.fc()));
             let ps0 = (ctx.gekko.read_fpr(instr.ra()) * c0) as f32 as f64;
             let ps1 = (ctx.gekko.read_ps1(instr.ra()) * c0) as f32 as f64;
             ps_write(ctx, &instr, ps0, ps1);
         }
         OP_PS_MULS1 => {
-            let c1 = ctx.gekko.read_ps1(instr.fc());
+            let c1 = super::round_frc(ctx.gekko.read_ps1(instr.fc()));
             let ps0 = (ctx.gekko.read_fpr(instr.ra()) * c1) as f32 as f64;
             let ps1 = (ctx.gekko.read_ps1(instr.ra()) * c1) as f32 as f64;
             ps_write(ctx, &instr, ps0, ps1);
         }
         OP_PS_MADDS0 => {
-            let c0 = ctx.gekko.read_fpr(instr.fc());
-            let ps0 = (ctx.gekko.read_fpr(instr.ra()) * c0 + ctx.gekko.read_fpr(instr.rb())) as f32 as f64;
-            let ps1 = (ctx.gekko.read_ps1(instr.ra()) * c0 + ctx.gekko.read_ps1(instr.rb())) as f32 as f64;
+            let c0 = super::round_frc(ctx.gekko.read_fpr(instr.fc()));
+            let ps0 = ctx
+                .gekko
+                .read_fpr(instr.ra())
+                .mul_add(c0, ctx.gekko.read_fpr(instr.rb())) as f32 as f64;
+            let ps1 = ctx
+                .gekko
+                .read_ps1(instr.ra())
+                .mul_add(c0, ctx.gekko.read_ps1(instr.rb())) as f32 as f64;
             ps_write(ctx, &instr, ps0, ps1);
         }
         OP_PS_MADDS1 => {
-            let c1 = ctx.gekko.read_ps1(instr.fc());
-            let ps0 = (ctx.gekko.read_fpr(instr.ra()) * c1 + ctx.gekko.read_fpr(instr.rb())) as f32 as f64;
-            let ps1 = (ctx.gekko.read_ps1(instr.ra()) * c1 + ctx.gekko.read_ps1(instr.rb())) as f32 as f64;
+            let c1 = super::round_frc(ctx.gekko.read_ps1(instr.fc()));
+            let ps0 = ctx
+                .gekko
+                .read_fpr(instr.ra())
+                .mul_add(c1, ctx.gekko.read_fpr(instr.rb())) as f32 as f64;
+            let ps1 = ctx
+                .gekko
+                .read_ps1(instr.ra())
+                .mul_add(c1, ctx.gekko.read_ps1(instr.rb())) as f32 as f64;
             ps_write(ctx, &instr, ps0, ps1);
         }
         OP_PS_SUM0 => {

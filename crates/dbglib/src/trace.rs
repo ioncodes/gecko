@@ -16,7 +16,7 @@ pub fn format_trace_line<const SYSTEM: SystemId>(emulator: &System<SYSTEM>) -> S
 
     if let Some((instr, _)) = GekkoInstruction::decode(emulator.mmio.virt_slice(pc, 4)) {
         let text = format!("{}", instr);
-        let comment = reg_comment(&text, &emulator.gekko.gprs, &emulator.gekko.fprs);
+        let comment = reg_comment(&text, &emulator.gekko.gprs, &emulator.gekko.fpr_array());
         let pad = COMMENT_COL.saturating_sub(DISASM_COL + text.len());
         if comment.is_empty() {
             format!("{:08X}  {:08X}  {}", pc, raw, text)

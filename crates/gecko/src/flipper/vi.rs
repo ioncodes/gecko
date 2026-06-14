@@ -45,6 +45,9 @@ pub struct VideoInterface {
     pub half_line_count: u32,
     pub ticks_last_line_start: u64,
     pub half_line_scheduled: bool,
+
+    pub latched_xfb_base: u32,
+    pub latched_even_field: bool,
 }
 
 impl VideoInterface {
@@ -87,6 +90,8 @@ impl VideoInterface {
             half_line_count: 0,
             ticks_last_line_start: 0,
             half_line_scheduled: false,
+            latched_xfb_base: 0,
+            latched_even_field: false,
         }
     }
 
@@ -117,6 +122,20 @@ impl VideoInterface {
 
     fn total_half_lines(&self) -> u32 {
         self.half_lines_per_even_field() + self.half_lines_per_odd_field()
+    }
+
+    fn odd_field_active_half_lines(&self) -> (u32, u32) {
+        let equ = self.vtr.equalization_pulse() as u32;
+        let acv = self.vtr.active_video() as u32;
+        let start = 3 * equ + self.vto.pre_blanking_in_half_lines() as u32;
+        (start, start + 2 * acv)
+    }
+
+    fn even_field_active_half_lines(&self) -> (u32, u32) {
+        let equ = self.vtr.equalization_pulse() as u32;
+        let acv = self.vtr.active_video() as u32;
+        let start = self.half_lines_per_odd_field() + 3 * equ + self.vte.pre_blanking_in_half_lines() as u32;
+        (start, start + 2 * acv)
     }
 
     /// Returns true if any DI register has both IR_INT and IR_MASK set.
@@ -276,11 +295,21 @@ pub fn ensure_half_line_scheduled<const SYSTEM: SystemId>(sys: &mut System<SYSTE
                 sys.vi.half_line_scheduled = false;
 
                 let curr_hl = sys.vi.half_line_count;
-                let total_hl = sys.vi.total_half_lines();
-                let odd_field_start = 0u32;
-                let even_field_start = sys.vi.half_lines_per_odd_field();
-                if total_hl > 0 && (curr_hl == odd_field_start || curr_hl == even_field_start) && curr_hl != prev_hl {
-                    crate::flipper::gx::present_xfb(sys);
+                if curr_hl != prev_hl {
+                    let (odd_av_start, odd_av_end) = sys.vi.odd_field_active_half_lines();
+                    let (even_av_start, even_av_end) = sys.vi.even_field_active_half_lines();
+
+                    if curr_hl == odd_av_start || curr_hl == even_av_start {
+                        sys.vi.latched_xfb_base = sys.vi.xfb_addr();
+                        sys.vi.latched_even_field = sys.vi.in_even_field();
+                    }
+
+                    // Present at the end of active video so copies made while
+                    // the field is scanning out are included (Another Code: R
+                    // copies its split XFB halves mid-frame).
+                    if curr_hl == odd_av_end || curr_hl == even_av_end {
+                        crate::flipper::gx::present_xfb(sys);
+                    }
                 }
 
                 self::ensure_half_line_scheduled(sys);
