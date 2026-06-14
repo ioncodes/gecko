@@ -16,6 +16,7 @@ jit = [
     "dep:cranelift-jit",
     "dep:cranelift-module",
     "dep:cranelift-native",
+    "dep:region",
 ]
 jit-stats = ["jit", "dep:backtrace"]
 # Run both interpreter and JIT for every draw call, reports drift
@@ -50,7 +51,7 @@ cranelift-codegen = { version = "0.134.0", optional = true }
 cranelift-frontend = { version = "0.134.0", optional = true }
 cranelift-jit = { version = "0.134.0", optional = true }
 libc = "0.2.186"
-region = "3.0.2"
+region = { version = "3.0.2", optional = true }
 cranelift-module = { version = "0.134.0", optional = true }
 cranelift-native = { version = "0.134.0", optional = true }
 backtrace = { version = "0.3.76", optional = true }
