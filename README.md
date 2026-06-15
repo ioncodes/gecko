@@ -104,6 +104,8 @@ On Wii, the pointer source is picked automatically based on what the connected g
 
 Bindings, pointer source, sensitivity and axis inversion are configurable in `gecko` under `Settings > Controller Bindings`, persisted in the `[input]` section of `config.toml` (see [`other/example.conf`](other/example.conf) for every option). `tinyapp` uses the default bindings and points with the mouse. Pass `--pointer gyro|stick|touchpad|auto` to override.
 
+Keyboard and player-window hotkeys are configurable the same way under `Settings > Keyboard Bindings`, persisted in the `[keyboard]` section of `config.toml`. The keyboard and hotkey tables below are the defaults.
+
 > [!NOTE]
 > DualSense motion sensors and rumble on Linux require hidraw permissions. Install the `steam-devices` package (or an equivalent udev rule for `054c:0ce6`) and replug the controller. Without it the pad still works, but falls back to buttons and sticks only.
 
@@ -161,16 +163,18 @@ Bindings, pointer source, sensitivity and axis inversion are configurable in `ge
 
 `gecko` player window:
 
-| Key   | Action                                                                |
-| ----- | --------------------------------------------------------------------- |
-| `F10` | Toggle borderless fullscreen                                          |
-| `F11` | Toggle the FPS and emulation speed overlay                            |
-| `F12` | Screenshot the emulated framebuffer to `<gecko exe dir>/screenshots/` |
+| Key     | Action                                                                |
+| ------- | --------------------------------------------------------------------- |
+| `Space` | Pause / resume emulation                                              |
+| `Tab`   | Toggle the speed limit (run uncapped)                                 |
+| `F10`   | Toggle borderless fullscreen                                          |
+| `F11`   | Toggle the FPS and emulation speed overlay                            |
+| `F12`   | Screenshot the emulated framebuffer to `<gecko exe dir>/screenshots/` |
 
 </details>
 
 <details>
-<summary>Keyboard bindings (hardcoded)</summary>
+<summary>Keyboard bindings</summary>
 
 #### GameCube
 

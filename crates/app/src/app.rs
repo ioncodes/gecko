@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use backend_wgpu::capture;
+use iced::keyboard::key::Code;
 use iced::theme::Mode;
 use iced::widget::{Stack, button, column, container, row, scrollable, stack, text};
 use iced::{Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, window};
@@ -11,11 +12,12 @@ use iced::{Background, Border, Color, Element, Length, Padding, Subscription, Ta
 use crate::cache::{self, LibraryCache};
 use crate::config::{self, Config};
 use crate::game::{CpuMode, Format, Game, Platform, ThemePreference};
+use crate::keybinds::{self, KeyTarget};
 use crate::library::{self, ScanProgress};
 use crate::player::{self, PlayerState, PlayerStatus};
 use crate::theme::{self, Palette};
 use crate::update::{self, Outcome};
-use crate::widgets::input_settings::{self, BindTarget, InputTab, InvertTarget};
+use crate::widgets::input_settings::{self, BindTarget, InputTab, InvertTarget, KeyboardTab};
 use crate::widgets::{game_row, menubar, overlay, search_bar, statusbar};
 
 const REPO_URL: &str = "https://github.com/ioncodes/gecko";
@@ -51,6 +53,7 @@ pub enum Message {
     MenuAbout,
     AboutClose,
     MenuInputSettings,
+    MenuKeyboardSettings,
     InputClose,
     InputTab(InputTab),
     InputCapture(BindTarget),
@@ -61,6 +64,11 @@ pub enum Message {
     InputToggleStickDpad,
     InputToggleInvert(InvertTarget),
     InputReset,
+    KeyboardClose,
+    KeyboardTab(KeyboardTab),
+    KeyboardCapture(KeyTarget),
+    KeyboardCaptured(Code),
+    KeyboardReset,
     OpenUrl(String),
     CheckForUpdates,
     UpdateChecked(Outcome),
@@ -123,6 +131,9 @@ pub struct App {
     input_tab: InputTab,
     input_capture: Option<BindTarget>,
     input_capture_baseline: u32,
+    keyboard_open: bool,
+    keyboard_tab: KeyboardTab,
+    key_capture: Option<KeyTarget>,
     input_pad_name: Option<String>,
     system_mode: Mode,
     palette: Palette,
@@ -158,6 +169,9 @@ impl App {
             input_tab: InputTab::Gc,
             input_capture: None,
             input_capture_baseline: 0,
+            keyboard_open: false,
+            keyboard_tab: KeyboardTab::Gc,
+            key_capture: None,
             input_pad_name: None,
             system_mode: Mode::Light,
             palette,
@@ -208,6 +222,10 @@ impl App {
 
         if self.input_open {
             subs.push(iced::time::every(Duration::from_millis(100)).map(|_| Message::InputTick));
+        }
+
+        if self.keyboard_open && self.key_capture.is_some() {
+            subs.push(iced::event::listen_with(self::capture_key_event));
         }
 
         Subscription::batch(subs)
@@ -424,6 +442,7 @@ impl App {
             Message::MenuInputSettings => {
                 self.input_open = true;
                 self.input_capture = None;
+                self.keyboard_open = false;
                 self.input_pad_name = self::pad_state().1;
                 Task::none()
             }
@@ -444,6 +463,22 @@ impl App {
                     self.input_capture = Some(target);
                     self.input_capture_baseline = self::pad_state().0.unwrap_or(0);
                 }
+                Task::none()
+            }
+            Message::MenuKeyboardSettings => {
+                self.keyboard_open = true;
+                self.key_capture = None;
+                self.input_open = false;
+                Task::none()
+            }
+            Message::KeyboardClose => {
+                self.keyboard_open = false;
+                self.key_capture = None;
+                Task::none()
+            }
+            Message::KeyboardTab(tab) => {
+                self.keyboard_tab = tab;
+                self.key_capture = None;
                 Task::none()
             }
             Message::InputTick => {
@@ -498,6 +533,30 @@ impl App {
             Message::InputReset => {
                 self.config.input = hostinput::InputConfig::default();
                 self.input_capture = None;
+                self.persist_config();
+                Task::none()
+            }
+            Message::KeyboardCapture(target) => {
+                self.key_capture = if self.key_capture == Some(target) {
+                    None
+                } else {
+                    Some(target)
+                };
+                Task::none()
+            }
+            Message::KeyboardCaptured(code) => {
+                if let Some(target) = self.key_capture
+                    && let Some(name) = keybinds::key_name(code)
+                {
+                    *keybinds::field(&mut self.config.keyboard, target) = Some(name.to_owned());
+                    self.key_capture = None;
+                    self.persist_config();
+                }
+                Task::none()
+            }
+            Message::KeyboardReset => {
+                self.config.keyboard = keybinds::KeyboardConfig::default();
+                self.key_capture = None;
                 self.persist_config();
                 Task::none()
             }
@@ -705,6 +764,13 @@ impl App {
                     self.input_capture,
                     self.input_pad_name.as_deref(),
                 )
+            ]
+            .into();
+        }
+        if self.keyboard_open {
+            root_element = stack![
+                root_element,
+                input_settings::keyboard_overlay(palette, &self.config.keyboard, self.keyboard_tab, self.key_capture)
             ]
             .into();
         }
@@ -982,6 +1048,14 @@ fn pad_state() -> (Option<u32>, Option<String>) {
     let name = service.device.lock().unwrap().clone();
 
     (buttons, name)
+}
+
+fn capture_key_event(event: iced::Event, _status: iced::event::Status, _window: window::Id) -> Option<Message> {
+    if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { physical_key, .. }) = event {
+        player::physical_to_code(&physical_key).map(Message::KeyboardCaptured)
+    } else {
+        None
+    }
 }
 
 fn about_overlay(palette: &Palette) -> Element<'static, Message> {

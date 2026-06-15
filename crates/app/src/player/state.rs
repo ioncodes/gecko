@@ -15,6 +15,7 @@ use iced::mouse::Button as MouseButton;
 
 use crate::config::{self, Config, DSP_COEF_FILE, DSP_ROM_FILE, IPL_FILE, MEMCARD_A_FILE, SRAM_FILE};
 use crate::game::{Format, Game, Platform};
+use crate::keybinds::{Hotkey, Keymap};
 use crate::player::{audio, emu_thread, input};
 
 struct BootParams {
@@ -44,6 +45,7 @@ pub struct PlayerState {
     aspect: TargetAspect,
     upscale: u32,
     input: Arc<Mutex<HostInput>>,
+    keymap: Keymap,
     platform: Platform,
     boot_error: Option<String>,
     first_frame: Arc<AtomicBool>,
@@ -100,6 +102,7 @@ impl PlayerState {
             aspect,
             upscale: config.upscale,
             input: Arc::new(Mutex::new(neutral)),
+            keymap: config.keyboard.resolve(),
             platform: game.platform,
             boot_error,
             first_frame: Arc::new(AtomicBool::new(false)),
@@ -149,7 +152,7 @@ impl PlayerState {
     pub fn handle_keyboard(&self, key: Code, pressed: bool) {
         let mut input_guard = self.input.lock().unwrap();
         match &mut *input_guard {
-            HostInput::Gc(pad) => input::update_pad(pad, key, pressed),
+            HostInput::Gc(pad) => input::update_pad(pad, &self.keymap.gc, key, pressed),
             HostInput::Wii {
                 wiimote_buttons,
                 wiimote_shake,
@@ -158,11 +161,22 @@ impl PlayerState {
                 nunchuk_stick_y,
                 ..
             } => {
-                input::update_wiimote_keys(wiimote_buttons, key, pressed);
-                input::update_wiimote_motion_keys(wiimote_shake, key, pressed);
-                input::update_nunchuk_keys(nunchuk_buttons, nunchuk_stick_x, nunchuk_stick_y, key, pressed);
+                input::update_wiimote_keys(wiimote_buttons, &self.keymap.wii, key, pressed);
+                input::update_wiimote_motion_keys(wiimote_shake, &self.keymap.wii, key, pressed);
+                input::update_nunchuk_keys(
+                    nunchuk_buttons,
+                    nunchuk_stick_x,
+                    nunchuk_stick_y,
+                    &self.keymap.wii,
+                    key,
+                    pressed,
+                );
             }
         }
+    }
+
+    pub fn hotkey(&self, key: Code) -> Option<Hotkey> {
+        self.keymap.hotkeys.lookup(key)
     }
 
     pub fn handle_mouse_button(&self, button: MouseButton, pressed: bool) {
