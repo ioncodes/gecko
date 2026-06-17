@@ -412,11 +412,24 @@ pub fn present_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     let parts = if frame_base != 0 {
         let mut p = build_parts(frame_base);
         if p.is_empty() {
+            // The VI can scan from an address that lands *inside* a copy
+            // region rather than at its start: Animal Crossing copies the
+            // full frame to the buffer base, then points the scan a few rows
+            // in.
+            let containing = sys
+                .gx
+                .xfb_regions
+                .iter()
+                .filter(|&(&addr, _)| addr <= frame_base && (frame_base as u64) < addr as u64 + xfb_bytes)
+                .max_by_key(|&(&addr, _)| addr)
+                .map(|(&addr, region)| (region.first_seq, region.copy_seq, addr));
+
+            let (first_seq, copy_seq, id) = containing.unwrap_or((0, 0, frame_base));
             p.push((
-                0,
-                0,
+                first_seq,
+                copy_seq,
                 XfbPart {
-                    id: frame_base,
+                    id,
                     offset_x: 0,
                     offset_y: 0,
                 },
