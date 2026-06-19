@@ -242,6 +242,12 @@ pub fn present_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
 
     let (frame_w, frame_h) = sys.vi.frame_dimensions();
 
+    if sys.gx.xfb_copy_seq == 0 {
+        let base = sys.vi.latched_xfb_base;
+        self::present_raw_xfb(sys, base, frame_w, frame_h);
+        return;
+    }
+
     let Some(bytes_per_row) = sys
         .gx
         .xfb_regions
@@ -456,6 +462,34 @@ pub fn present_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
         parts: parts.into_iter().map(|(_, _, p)| p).collect(),
     });
     sys.gx.xfb_last_present_base = frame_base;
+}
+
+fn present_raw_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, base: u32, width: u32, height: u32) {
+    if base == 0 || width == 0 || height == 0 {
+        return;
+    }
+
+    let pixel_count = (width as usize) * (height as usize);
+    let mut pixels = vec![0u32; pixel_count];
+
+    let to_bgra = |y: f32, cb: f32, cr: f32| -> u32 {
+        let r = (1.164 * y + 1.596 * cr).clamp(0.0, 255.0) as u32;
+        let g = (1.164 * y - 0.813 * cr - 0.391 * cb).clamp(0.0, 255.0) as u32;
+        let b = (1.164 * y + 2.018 * cb).clamp(0.0, 255.0) as u32;
+        0xFF00_0000 | (r << 16) | (g << 8) | b
+    };
+
+    for i in 0..pixel_count / 2 {
+        let word = sys.mmio.phys_read_u32(base + (i as u32) * 4);
+        let y0 = ((word >> 24) & 0xFF) as f32 - 16.0;
+        let cb = ((word >> 16) & 0xFF) as f32 - 128.0;
+        let y1 = ((word >> 8) & 0xFF) as f32 - 16.0;
+        let cr = (word & 0xFF) as f32 - 128.0;
+        pixels[i * 2] = to_bgra(y0, cb, cr);
+        pixels[i * 2 + 1] = to_bgra(y1, cb, cr);
+    }
+
+    sys.render_sink.exec(GxAction::PresentRawXfb { width, height, pixels });
 }
 
 impl<const SYSTEM: SystemId> System<SYSTEM> {

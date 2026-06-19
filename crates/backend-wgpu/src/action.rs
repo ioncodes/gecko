@@ -449,6 +449,11 @@ impl GxRenderer {
                 self.execute_present_xfb(device, queue, *width, *height, parts);
             }
 
+            GxAction::PresentRawXfb { width, height, pixels } => {
+                self.flush_pending_draws(device, queue);
+                self.execute_present_raw_xfb(device, queue, *width, *height, pixels);
+            }
+
             GxAction::CopyEfbToTexture {
                 dest_addr,
                 src_x,

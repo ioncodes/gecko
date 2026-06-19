@@ -129,7 +129,7 @@ impl RenderWorker {
         self.gx.process_action(&self.device, &self.queue, &message.action);
 
         match message.action {
-            GxAction::PresentXfb { .. } => {
+            GxAction::PresentXfb { .. } | GxAction::PresentRawXfb { .. } => {
                 #[cfg(feature = "renderdoc-capture")]
                 if let Ok(mut rd) = self.renderdoc.lock() {
                     rd.end_emulated_frame();
@@ -303,6 +303,7 @@ pub fn action_resets_vertex_scratch(action: &GxAction) -> bool {
         GxAction::InvalidateCaches
         | GxAction::CopyXfb { .. }
         | GxAction::PresentXfb { .. }
+        | GxAction::PresentRawXfb { .. }
         | GxAction::CopyEfbToTexture { .. } => true,
         #[cfg(not(target_arch = "wasm32"))]
         GxAction::DumpTextures { .. } => true,

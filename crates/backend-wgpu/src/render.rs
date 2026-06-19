@@ -478,6 +478,33 @@ impl GxRenderer {
         }
     }
 
+    fn ensure_xfb_texture(&mut self, device: &wgpu::Device, width: u32, height: u32, label_prefix: &str) {
+        let cur = self.xfb_texture.size();
+        if cur.width == width && cur.height == height {
+            return;
+        }
+
+        let texture_label = format!("{label_prefix} size={width}x{height}");
+        self.xfb_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(&texture_label),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.surface_format,
+            usage: wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        self.xfb_view = self.xfb_texture.create_view(&Default::default());
+    }
+
     pub(crate) fn execute_present_xfb(
         &mut self,
         device: &wgpu::Device,
@@ -489,29 +516,7 @@ impl GxRenderer {
         let width = self.scaled(width.max(1));
         let height = self.scaled(height.max(1));
 
-        // Resize the XFB output texture if the frame dimensions changed.
-        let cur = self.xfb_texture.size();
-        if cur.width != width || cur.height != height {
-            let texture_label = format!("xfb_accum size={width}x{height}");
-            self.xfb_texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(&texture_label),
-                size: wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: self.surface_format,
-                usage: wgpu::TextureUsages::COPY_DST
-                    | wgpu::TextureUsages::COPY_SRC
-                    | wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
-                view_formats: &[],
-            });
-            self.xfb_view = self.xfb_texture.create_view(&Default::default());
-        }
+        self.ensure_xfb_texture(device, width, height, "xfb_accum");
 
         let group_label = format!("PresentXfb size={width}x{height} parts={}", parts.len());
         let mut encoder = self.take_or_create_encoder(device);
@@ -580,6 +585,49 @@ impl GxRenderer {
         // The staging buffer's in-flight references have just been submitted;
         // now's the safe moment to grow it if this frame exceeded capacity.
         self.maybe_grow_texture_staging(device);
+        self.xfb_has_content = true;
+    }
+
+    pub(crate) fn execute_present_raw_xfb(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+        pixels: &[u32],
+    ) {
+        let width = width.max(1);
+        let height = height.max(1);
+
+        if (pixels.len() as u64) < width as u64 * height as u64 {
+            tracing::warn!(
+                width,
+                height,
+                len = pixels.len(),
+                "present_raw_xfb: pixel buffer too small, skipping"
+            );
+            return;
+        }
+
+        // The raw path never upscales: these pixels are the final image.
+        self.ensure_xfb_texture(device, width, height, "xfb_raw");
+
+        queue.write_texture(
+            self.xfb_texture.as_image_copy(),
+            bytemuck::cast_slice(&pixels[..(width as usize * height as usize)]),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        self.submit_pending(queue);
         self.xfb_has_content = true;
     }
 

@@ -106,6 +106,14 @@ pub enum GxAction {
         parts: Vec<XfbPart>,
     },
 
+    /// Present a CPU-drawn external framebuffer read straight from guest RAM
+    /// (no GX EFB copy happened, e.g. consoletest).
+    PresentRawXfb {
+        width: u32,
+        height: u32,
+        pixels: Vec<u32>,
+    },
+
     /// Copy an EFB region back into system RAM, encoded in a GX texture
     /// format. The renderer does a GPU readback, converts the pixels to
     /// `copy_format`, and ships the encoded bytes back over the writeback
