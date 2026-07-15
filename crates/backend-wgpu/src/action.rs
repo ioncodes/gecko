@@ -4,7 +4,8 @@ use crate::{
     BindGroupCacheKey, DRAW_UNIFORMS_SIZE, DrawUniforms, FRAME_UNIFORMS_SIZE, FrameUniforms, GxRenderer, SamplerKey,
     helpers,
 };
-use gecko::flipper::gx::regs::{MagFilter, MinFilter, WrapMode};
+use gecko::flipper::gx::draw::Primitive;
+use gecko::flipper::gx::regs::{CullMode, MagFilter, MinFilter, WrapMode};
 use gecko::flipper::gx::texture::CopyFormat;
 use gecko::host::{DrawData, GxAction};
 use glam::{Mat4, UVec4, Vec4};
@@ -28,6 +29,14 @@ fn draw_active_slot_mask(draw: &DrawData) -> u8 {
     }
 
     mask
+}
+
+fn cull_all_suppresses_draw(cull_mode: CullMode, primitive: Primitive) -> bool {
+    cull_mode == CullMode::All
+        && matches!(
+            primitive,
+            Primitive::Quads | Primitive::Triangles | Primitive::TriangleStrip | Primitive::TriangleFan
+        )
 }
 
 fn trim_bg_key(mut key: BindGroupCacheKey, active: u8) -> BindGroupCacheKey {
@@ -262,6 +271,11 @@ impl GxRenderer {
             }
 
             GxAction::Draw(draw) => {
+                if cull_all_suppresses_draw(self.current_cull_mode, draw.primitive) {
+                    self.last_frame_uniform_index = None;
+                    return;
+                }
+
                 let shader_key = ShaderKey::from_draw(draw, self.current_alpha_compare);
                 if !self.shader_cache.contains_key(&shader_key) {
                     let wgsl = shader_specialization::compile_variant(shader_key);
