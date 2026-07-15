@@ -121,23 +121,23 @@ struct Args {
     #[arg(long)]
     no_cap: bool,
 
-    /// Enable per-block JIT heatmap CSV dumps (requires --features jit-stats)
-    #[cfg(feature = "jit-stats")]
+    /// Enable periodic profiling dumps.
+    #[cfg(any(feature = "jit-stats", feature = "gx-stats"))]
     #[arg(long)]
     heatmap: bool,
 
     /// Frames between heatmap CSV writes
-    #[cfg(feature = "jit-stats")]
+    #[cfg(any(feature = "jit-stats", feature = "gx-stats"))]
     #[arg(long, default_value_t = 60)]
     heatmap_interval_frames: u32,
 
     /// Output directory for heatmap CSV files
-    #[cfg(feature = "jit-stats")]
+    #[cfg(any(feature = "jit-stats", feature = "gx-stats"))]
     #[arg(long, default_value = "./profile-dumps")]
     heatmap_out: String,
 
     /// Top-K rows per heatmap CSV
-    #[cfg(feature = "jit-stats")]
+    #[cfg(any(feature = "jit-stats", feature = "gx-stats"))]
     #[arg(long, default_value_t = 64)]
     heatmap_top_k: usize,
 
@@ -322,7 +322,7 @@ fn configure<const SYSTEM: SystemId>(emulator: &mut System<SYSTEM>, args: &Args)
 
     emulator.apply_host_input(&HostInput::neutral_for(SYSTEM));
 
-    #[cfg(feature = "jit-stats")]
+    #[cfg(any(feature = "jit-stats", feature = "gx-stats"))]
     {
         emulator.heatmap = gecko::profile::HeatmapConfig {
             enabled: args.heatmap,

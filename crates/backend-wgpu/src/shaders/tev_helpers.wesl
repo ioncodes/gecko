@@ -1,11 +1,4 @@
-import super::common::{VsOut, frame, tex0, tex1, tex2, tex3, tex4, tex5, tex6, tex7, samp0, samp1, samp2, samp3, samp4, samp5, samp6, samp7};
-
-// Index into a packed array<vec4<u32>, 4> by flat index
-fn read_packed(arr: array<vec4<u32>, 4>, idx: u32) -> u32 {
-    let vi = idx / 4u;
-    let ci = idx % 4u;
-    return arr[vi][ci];
-}
+import super::common::{VsOut, tex0, tex1, tex2, tex3, tex4, tex5, tex6, tex7, samp0, samp1, samp2, samp3, samp4, samp5, samp6, samp7};
 
 fn extract_bits(val: u32, lo: u32, width: u32) -> u32 {
     return (val >> lo) & ((1u << width) - 1u);
@@ -20,9 +13,7 @@ fn select_color_channel(color: vec4<f32>, channel: u32) -> f32 {
     }
 }
 
-fn swizzle_tev_color(swap_table: u32, color: vec4<f32>) -> vec4<f32> {
-    let rg = read_packed(frame.tev_ksel, swap_table * 2u);
-    let ba = read_packed(frame.tev_ksel, swap_table * 2u + 1u);
+fn swizzle_tev_color(rg: u32, ba: u32, color: vec4<f32>) -> vec4<f32> {
     let r = extract_bits(rg, 0u, 2u);
     let g = extract_bits(rg, 2u, 2u);
     let b = extract_bits(ba, 0u, 2u);

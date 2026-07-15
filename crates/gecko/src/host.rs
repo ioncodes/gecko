@@ -227,6 +227,44 @@ pub struct LightData {
     pub direction: [f32; 4],
 }
 
+/// Cumulative renderer-side profiling counters. Backends that do not expose
+/// profiling data return the all-zero default through [`RenderSink`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RenderStats {
+    pub actions_sent: u64,
+    pub batches_sent: u64,
+    pub channel_len: usize,
+    pub channel_cap: usize,
+    pub channel_high_water: usize,
+    pub queue_wait_ns: u64,
+    pub efb_drain_wait_ns: u64,
+    pub efb_drain_requests: u64,
+    pub efb_drain_nonempty: u64,
+    pub efb_writebacks: u64,
+    pub efb_writeback_cpu_ns: u64,
+    pub worker_batch_cpu_ns: u64,
+    pub draws_encoded: u64,
+    pub draw_render_passes: u64,
+    pub pipeline_changes: u64,
+    pub pipelines_created: u64,
+    pub pipeline_create_cpu_ns: u64,
+    pub shader_modules_created: u64,
+    pub shader_create_cpu_ns: u64,
+    pub bind_group_sets: u64,
+    pub bind_groups_created: u64,
+    pub bind_group_key_changes: u64,
+    pub frame_uniform_changes: u64,
+    pub draw_uniform_changes: u64,
+    pub vertex_stride_changes: u64,
+    pub potential_merged_draws: u64,
+    pub viewport_changes: u64,
+    pub scissor_changes: u64,
+    pub draw_pass_encode_ns: u64,
+    pub queue_submits: u64,
+    pub command_buffers_submitted: u64,
+    pub queue_submit_cpu_ns: u64,
+}
+
 /// One-way sink for GX actions. The emulator pushes actions here.
 pub trait RenderSink: Send {
     /// Submit a single action.
@@ -253,6 +291,11 @@ pub trait RenderSink: Send {
     /// don't need to be reset.
     fn take_draw_data(&mut self) -> Box<DrawData> {
         Box::default()
+    }
+
+    /// Return a cheap, non-blocking snapshot of cumulative renderer metrics.
+    fn render_stats(&self) -> RenderStats {
+        RenderStats::default()
     }
 }
 

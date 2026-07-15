@@ -19,12 +19,95 @@ use gecko::flipper::gx::regs::{AlphaCompare, BlendMode, CompareFunc, CullMode, M
 
 use gecko::host::TextureKey;
 use glam::Mat4;
-use pipeline::FullPipelineKey;
+use pipeline::{FullPipelineKey, UberPipelineKey};
 use rustc_hash::FxHashMap;
+#[cfg(not(target_arch = "wasm32"))]
+use rustc_hash::FxHashSet;
 use shader_specialization::ShaderKey;
 use std::num::NonZeroU64;
+#[cfg(feature = "gx-stats")]
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 pub(crate) type GpuVertex = gecko::host::DrawVertex;
+
+#[cfg(feature = "gx-stats")]
+#[derive(Default)]
+pub(crate) struct RendererStats {
+    pub(crate) actions_sent: AtomicU64,
+    pub(crate) batches_sent: AtomicU64,
+    pub(crate) channel_high_water: AtomicU64,
+    pub(crate) queue_wait_ns: AtomicU64,
+    pub(crate) efb_drain_wait_ns: AtomicU64,
+    pub(crate) efb_drain_requests: AtomicU64,
+    pub(crate) efb_drain_nonempty: AtomicU64,
+    pub(crate) efb_writebacks: AtomicU64,
+    pub(crate) efb_writeback_cpu_ns: AtomicU64,
+    pub(crate) worker_batch_cpu_ns: AtomicU64,
+    pub(crate) draws_encoded: AtomicU64,
+    pub(crate) draw_render_passes: AtomicU64,
+    pub(crate) pipeline_changes: AtomicU64,
+    pub(crate) pipelines_created: AtomicU64,
+    pub(crate) pipeline_create_cpu_ns: AtomicU64,
+    pub(crate) shader_modules_created: AtomicU64,
+    pub(crate) shader_create_cpu_ns: AtomicU64,
+    pub(crate) bind_group_sets: AtomicU64,
+    pub(crate) bind_groups_created: AtomicU64,
+    pub(crate) bind_group_key_changes: AtomicU64,
+    pub(crate) frame_uniform_changes: AtomicU64,
+    pub(crate) draw_uniform_changes: AtomicU64,
+    pub(crate) vertex_stride_changes: AtomicU64,
+    pub(crate) potential_merged_draws: AtomicU64,
+    pub(crate) viewport_changes: AtomicU64,
+    pub(crate) scissor_changes: AtomicU64,
+    pub(crate) draw_pass_encode_ns: AtomicU64,
+    pub(crate) queue_submits: AtomicU64,
+    pub(crate) command_buffers_submitted: AtomicU64,
+    pub(crate) queue_submit_cpu_ns: AtomicU64,
+}
+
+#[cfg(feature = "gx-stats")]
+impl RendererStats {
+    pub(crate) fn snapshot(&self, channel_len: usize, channel_cap: usize) -> gecko::host::RenderStats {
+        let load = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
+        gecko::host::RenderStats {
+            actions_sent: load(&self.actions_sent),
+            batches_sent: load(&self.batches_sent),
+            channel_len,
+            channel_cap,
+            channel_high_water: load(&self.channel_high_water) as usize,
+            queue_wait_ns: load(&self.queue_wait_ns),
+            efb_drain_wait_ns: load(&self.efb_drain_wait_ns),
+            efb_drain_requests: load(&self.efb_drain_requests),
+            efb_drain_nonempty: load(&self.efb_drain_nonempty),
+            efb_writebacks: load(&self.efb_writebacks),
+            efb_writeback_cpu_ns: load(&self.efb_writeback_cpu_ns),
+            worker_batch_cpu_ns: load(&self.worker_batch_cpu_ns),
+            draws_encoded: load(&self.draws_encoded),
+            draw_render_passes: load(&self.draw_render_passes),
+            pipeline_changes: load(&self.pipeline_changes),
+            pipelines_created: load(&self.pipelines_created),
+            pipeline_create_cpu_ns: load(&self.pipeline_create_cpu_ns),
+            shader_modules_created: load(&self.shader_modules_created),
+            shader_create_cpu_ns: load(&self.shader_create_cpu_ns),
+            bind_group_sets: load(&self.bind_group_sets),
+            bind_groups_created: load(&self.bind_groups_created),
+            bind_group_key_changes: load(&self.bind_group_key_changes),
+            frame_uniform_changes: load(&self.frame_uniform_changes),
+            draw_uniform_changes: load(&self.draw_uniform_changes),
+            vertex_stride_changes: load(&self.vertex_stride_changes),
+            potential_merged_draws: load(&self.potential_merged_draws),
+            viewport_changes: load(&self.viewport_changes),
+            scissor_changes: load(&self.scissor_changes),
+            draw_pass_encode_ns: load(&self.draw_pass_encode_ns),
+            queue_submits: load(&self.queue_submits),
+            command_buffers_submitted: load(&self.command_buffers_submitted),
+            queue_submit_cpu_ns: load(&self.queue_submit_cpu_ns),
+        }
+    }
+}
 
 pub(crate) fn align_up(value: u64, alignment: u64) -> u64 {
     (value + alignment - 1) & !(alignment - 1)
@@ -175,8 +258,17 @@ pub(crate) struct DrawBufferLayout {
 }
 
 pub struct GxRenderer {
+    #[cfg(feature = "gx-stats")]
+    pub(crate) stats: Arc<RendererStats>,
     pub(crate) pipeline_cache: FxHashMap<FullPipelineKey, wgpu::RenderPipeline>,
+    pub(crate) uber_pipeline_cache: FxHashMap<UberPipelineKey, wgpu::RenderPipeline>,
     pub(crate) shader_cache: FxHashMap<ShaderKey, wgpu::ShaderModule>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) pipeline_compiler: pipeline::PipelineCompiler,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) pending_pipeline_keys: FxHashSet<FullPipelineKey>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) pipeline_generation: u64,
     pub(crate) pipeline_layout: wgpu::PipelineLayout,
     pub(crate) surface_format: wgpu::TextureFormat,
     pub(crate) bind_group_layout: wgpu::BindGroupLayout,
@@ -784,10 +876,24 @@ impl GxRenderer {
 
         let pipeline_cache: FxHashMap<pipeline::FullPipelineKey, wgpu::RenderPipeline> =
             FxHashMap::with_capacity_and_hasher(64, Default::default());
+        let uber_pipeline_cache: FxHashMap<pipeline::UberPipelineKey, wgpu::RenderPipeline> =
+            FxHashMap::with_capacity_and_hasher(64, Default::default());
+        #[cfg(not(target_arch = "wasm32"))]
+        let pipeline_compiler =
+            pipeline::PipelineCompiler::new(device.clone(), pipeline_layout.clone(), surface_format);
 
         GxRenderer {
+            #[cfg(feature = "gx-stats")]
+            stats: Arc::new(RendererStats::default()),
             pipeline_cache,
+            uber_pipeline_cache,
             shader_cache,
+            #[cfg(not(target_arch = "wasm32"))]
+            pipeline_compiler,
+            #[cfg(not(target_arch = "wasm32"))]
+            pending_pipeline_keys: FxHashSet::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            pipeline_generation: 0,
             pipeline_layout,
             surface_format,
             bind_group_layout,
@@ -957,7 +1063,23 @@ impl GxRenderer {
             return;
         }
 
+        #[cfg(feature = "gx-stats")]
+        let command_buffer_count = self.pending_command_buffers.len() as u64;
+        #[cfg(feature = "gx-stats")]
+        let submit_started = std::time::Instant::now();
+
         queue.submit(self.pending_command_buffers.drain(..));
+
+        #[cfg(feature = "gx-stats")]
+        {
+            self.stats.queue_submits.fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .command_buffers_submitted
+                .fetch_add(command_buffer_count, Ordering::Relaxed);
+            self.stats
+                .queue_submit_cpu_ns
+                .fetch_add(submit_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
 
         self.draw_bufs_write_pending = false;
         self.xfb_copy_uniform_write_pending = false;
@@ -1107,6 +1229,44 @@ impl GxRenderer {
         Ok(keys.len())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn poll_compiled_pipelines(&mut self) {
+        while let Some(result) = self.pipeline_compiler.try_recv() {
+            if result.generation != self.pipeline_generation {
+                continue;
+            }
+            self.pending_pipeline_keys.remove(&result.key);
+            self.pipeline_cache.insert(result.key, result.pipeline);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn poll_compiled_pipelines(&mut self) {}
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn request_specialized_pipeline(&mut self, key: FullPipelineKey) {
+        if self.pipeline_cache.contains_key(&key) || self.pending_pipeline_keys.contains(&key) {
+            return;
+        }
+        let shader = self.shader_cache[&key.shader].clone();
+        if self.pipeline_compiler.request(self.pipeline_generation, key, shader) {
+            self.pending_pipeline_keys.insert(key);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn request_specialized_pipeline(&mut self, _key: FullPipelineKey) {}
+
+    pub(crate) fn invalidate_pipeline_caches(&mut self) {
+        self.pipeline_cache.clear();
+        self.uber_pipeline_cache.clear();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.pipeline_generation = self.pipeline_generation.wrapping_add(1);
+            self.pending_pipeline_keys.clear();
+        }
+    }
+
     pub fn prewarm_pipeline_cache(&mut self, device: &wgpu::Device) {
         let path = std::path::Path::new(pipeline::PIPELINE_CACHE_PATH);
         let keys: Vec<pipeline::FullPipelineKey> = pipeline::load_cached_pipeline_keys(path)
@@ -1141,7 +1301,16 @@ impl GxRenderer {
                                 .iter()
                                 .map(|&k| {
                                     let module = &self_ref.shader_cache[&k.shader];
-                                    (k, self_ref.create_pipeline(device, module, &k))
+                                    (
+                                        k,
+                                        pipeline::create_specialized_pipeline(
+                                            device,
+                                            &self_ref.pipeline_layout,
+                                            self_ref.surface_format,
+                                            module,
+                                            &k,
+                                        ),
+                                    )
                                 })
                                 .collect::<Vec<_>>()
                         })
@@ -1156,7 +1325,16 @@ impl GxRenderer {
             .iter()
             .map(|&k| {
                 let module = &self.shader_cache[&k.shader];
-                (k, self.create_pipeline(device, module, &k))
+                (
+                    k,
+                    pipeline::create_specialized_pipeline(
+                        device,
+                        &self.pipeline_layout,
+                        self.surface_format,
+                        module,
+                        &k,
+                    ),
+                )
             })
             .collect();
 

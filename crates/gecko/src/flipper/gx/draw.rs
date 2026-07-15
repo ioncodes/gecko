@@ -116,7 +116,7 @@ pub struct TextureDescriptor {
     pub min_filter: MinFilter,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Viewport {
     pub x: f32,
     pub y: f32,
@@ -139,7 +139,7 @@ impl Default for Viewport {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Scissor {
     pub x: u32,
     pub y: u32,

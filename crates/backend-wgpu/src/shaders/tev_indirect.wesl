@@ -1,5 +1,5 @@
-import super::common::{VsOut, FrameUniforms, frame, draw};
-import super::tev_helpers::{select_texcoord, stq_to_uv, sample_texmap, read_packed};
+import super::common::{VsOut, frame, draw};
+import super::tev_helpers::{select_texcoord, stq_to_uv, sample_texmap};
 
 fn texmap_size(texmap: u32) -> vec2<f32> {
     let pair = draw.tex_dims[texmap / 2u];
@@ -65,10 +65,10 @@ struct IndirectSamples {
     samples: array<vec3<f32>, 4>,
 }
 
-fn sample_indirect_one(i: u32, in: VsOut, result: ptr<function, IndirectSamples>) {
+fn sample_indirect_one(i: u32, in: VsOut, indirect_refs: u32, result: ptr<function, IndirectSamples>) {
     let shift = i * 6u;
-    let texmap = (frame.indirect_refs >> shift) & 7u;
-    let texcoord = (frame.indirect_refs >> (shift + 3u)) & 7u;
+    let texmap = (indirect_refs >> shift) & 7u;
+    let texcoord = (indirect_refs >> (shift + 3u)) & 7u;
     let scale_pair = frame.indirect_scales[i / 2u];
     let scale_s: u32 = select(scale_pair.x, scale_pair.z, (i & 1u) == 1u);
     let scale_t: u32 = select(scale_pair.y, scale_pair.w, (i & 1u) == 1u);
@@ -83,17 +83,17 @@ fn sample_indirect_one(i: u32, in: VsOut, result: ptr<function, IndirectSamples>
     (*result).samples[i] = sample.abg;
 }
 
-fn sample_indirect_textures(in: VsOut) -> IndirectSamples {
+fn sample_indirect_textures(in: VsOut, indirect_refs: u32) -> IndirectSamples {
     var result: IndirectSamples;
     result.samples[0] = vec3<f32>(0.0);
     result.samples[1] = vec3<f32>(0.0);
     result.samples[2] = vec3<f32>(0.0);
     result.samples[3] = vec3<f32>(0.0);
 
-    @if(IND_STAGE_0_ENABLED) { sample_indirect_one(0u, in, &result); }
-    @if(IND_STAGE_1_ENABLED) { sample_indirect_one(1u, in, &result); }
-    @if(IND_STAGE_2_ENABLED) { sample_indirect_one(2u, in, &result); }
-    @if(IND_STAGE_3_ENABLED) { sample_indirect_one(3u, in, &result); }
+    @if(IND_STAGE_0_ENABLED) { sample_indirect_one(0u, in, indirect_refs, &result); }
+    @if(IND_STAGE_1_ENABLED) { sample_indirect_one(1u, in, indirect_refs, &result); }
+    @if(IND_STAGE_2_ENABLED) { sample_indirect_one(2u, in, indirect_refs, &result); }
+    @if(IND_STAGE_3_ENABLED) { sample_indirect_one(3u, in, indirect_refs, &result); }
     return result;
 }
 
