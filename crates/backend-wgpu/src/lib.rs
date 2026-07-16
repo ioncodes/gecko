@@ -295,10 +295,11 @@ pub struct GxRenderer {
     pub(crate) efb_copy_cache: FxHashMap<Address, EfbCopyEntry>,
     pub(crate) efb_copy_pool: FxHashMap<(u32, u32), Vec<(wgpu::Texture, wgpu::TextureView)>>,
     pub(crate) efb_pack_pipelines: render::EfbPackPipelines,
-    pub(crate) efb_depth_resolve_bg_layout: wgpu::BindGroupLayout,
+    pub(crate) efb_depth_pack_pipelines: render::EfbDepthPackPipelines,
     pub(crate) efb_depth_resolve_uniform_buffer: wgpu::Buffer,
-
-    pub(crate) efb_depth_writeback_pipeline: wgpu::RenderPipeline,
+    pub(crate) efb_depth_resolve_bind_group: wgpu::BindGroup,
+    pub(crate) efb_depth_cache_uniform_buffer: wgpu::Buffer,
+    pub(crate) efb_depth_cache_bind_group: wgpu::BindGroup,
     /// Reusable Rgba8Unorm intermediate the Z24 pack writes into before
     /// being copied to staging for the deferred RAM writeback.
     pub(crate) efb_depth_writeback_target: Option<(wgpu::Texture, wgpu::TextureView)>,
@@ -372,6 +373,7 @@ pub struct GxRenderer {
     pub(crate) efb_color_readback_uniform_write_pending: bool,
     pub(crate) efb_clear_uniform_write_pending: bool,
     pub(crate) efb_depth_resolve_uniform_write_pending: bool,
+    pub(crate) efb_depth_cache_uniform_write_pending: bool,
     pub(crate) efb_readback_staging_pool: FxHashMap<u64, Vec<wgpu::Buffer>>,
     pub(crate) pending_writebacks: Vec<PendingWriteback>,
 }
@@ -436,13 +438,18 @@ impl GxRenderer {
             label: Some("xfb_copy_shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/xfb_copy.wgsl").into()),
         });
+        let pack_formats_wgsl = include_str!("shaders/efb_pack_formats.wgsl");
         let efb_depth_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("efb_depth_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/efb_depth.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{}\n{}", include_str!("shaders/efb_depth.wgsl"), pack_formats_wgsl).into(),
+            ),
         });
         let efb_pack_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("efb_pack_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/efb_pack.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{}\n{}", include_str!("shaders/efb_pack.wgsl"), pack_formats_wgsl).into(),
+            ),
         });
 
         // Bindings: 0=FrameUniforms, 1=DrawUniforms, 2-9=textures 0-7, 10-17=samplers 0-7
@@ -724,19 +731,16 @@ impl GxRenderer {
             ..Default::default()
         });
 
-        let xfb_copy_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("xfb_copy_uniforms"),
-            size: std::mem::size_of::<render::XfbCopyUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let efb_color_readback_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("efb_color_readback_uniforms"),
-            size: std::mem::size_of::<render::XfbCopyUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let make_copy_uniform_buffer = |label: &str| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: std::mem::size_of::<render::XfbCopyUniforms>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let xfb_copy_uniform_buffer = make_copy_uniform_buffer("xfb_copy_uniforms");
+        let efb_color_readback_uniform_buffer = make_copy_uniform_buffer("efb_color_readback_uniforms");
 
         let make_efb_sample_bg = |label: &str, buffer: &wgpu::Buffer| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -792,12 +796,28 @@ impl GxRenderer {
             bind_group_layouts: &[Some(&efb_depth_resolve_bg_layout)],
             immediate_size: 0,
         });
-        let efb_depth_resolve_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("efb_depth_resolve_uniforms"),
-            size: std::mem::size_of::<render::XfbCopyUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let efb_depth_resolve_uniform_buffer = make_copy_uniform_buffer("efb_depth_resolve_uniforms");
+        let efb_depth_cache_uniform_buffer = make_copy_uniform_buffer("efb_depth_cache_uniforms");
+
+        let make_depth_pack_bg = |label: &str, buffer: &wgpu::Buffer| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(label),
+                layout: &efb_depth_resolve_bg_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&efb_depth_view),
+                    },
+                ],
+            })
+        };
+        let efb_depth_resolve_bind_group =
+            make_depth_pack_bg("efb_depth_resolve_bg", &efb_depth_resolve_uniform_buffer);
+        let efb_depth_cache_bind_group = make_depth_pack_bg("efb_depth_cache_bg", &efb_depth_cache_uniform_buffer);
 
         let make_pack_pipeline =
             |label: &str, entry: &str, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule| {
@@ -851,12 +871,21 @@ impl GxRenderer {
             r8: color_pack("efb_pack_r8", "fs_r8"),
             rg8: color_pack("efb_pack_rg8", "fs_rg8"),
         };
-        let efb_depth_writeback_pipeline = make_pack_pipeline(
-            "efb_depth_writeback_pipeline",
-            "fs_writeback_z24",
-            &efb_depth_resolve_pipeline_layout,
-            &efb_depth_shader,
-        );
+        let depth_pack = |label: &str, entry: &str| {
+            make_pack_pipeline(label, entry, &efb_depth_resolve_pipeline_layout, &efb_depth_shader)
+        };
+        let efb_depth_pack_pipelines = render::EfbDepthPackPipelines {
+            z24x8: depth_pack("efb_depth_pack_z24x8", "fs_rgba8"),
+            i8: depth_pack("efb_depth_pack_i8", "fs_i8"),
+            i4: depth_pack("efb_depth_pack_i4", "fs_i4"),
+            ia8: depth_pack("efb_depth_pack_ia8", "fs_ia8"),
+            ia4: depth_pack("efb_depth_pack_ia4", "fs_ia4"),
+            rgb565: depth_pack("efb_depth_pack_rgb565", "fs_rgb565"),
+            rgb5a3: depth_pack("efb_depth_pack_rgb5a3", "fs_rgb5a3"),
+            a8: depth_pack("efb_depth_pack_a8", "fs_a8"),
+            r8: depth_pack("efb_depth_pack_r8", "fs_r8"),
+            rg8: depth_pack("efb_depth_pack_rg8", "fs_rg8"),
+        };
         let efb_clear = clear::EfbClear::new(
             device,
             surface_format,
@@ -923,8 +952,11 @@ impl GxRenderer {
             efb_copy_cache: FxHashMap::default(),
             efb_copy_pool: FxHashMap::default(),
             efb_pack_pipelines,
-            efb_depth_resolve_bg_layout,
+            efb_depth_pack_pipelines,
             efb_depth_resolve_uniform_buffer,
+            efb_depth_resolve_bind_group,
+            efb_depth_cache_uniform_buffer,
+            efb_depth_cache_bind_group,
             fallback_view,
             scratch_vertices: Vec::new(),
             scratch_draws: Vec::new(),
@@ -975,11 +1007,11 @@ impl GxRenderer {
             efb_color_readback_uniform_write_pending: false,
             efb_clear_uniform_write_pending: false,
             efb_depth_resolve_uniform_write_pending: false,
+            efb_depth_cache_uniform_write_pending: false,
 
             efb_readback_staging_pool: FxHashMap::default(),
             pending_writebacks: Vec::new(),
 
-            efb_depth_writeback_pipeline,
             efb_depth_writeback_target: None,
             efb_color_readback_target: None,
         }
@@ -1086,6 +1118,7 @@ impl GxRenderer {
         self.efb_color_readback_uniform_write_pending = false;
         self.efb_clear_uniform_write_pending = false;
         self.efb_depth_resolve_uniform_write_pending = false;
+        self.efb_depth_cache_uniform_write_pending = false;
     }
 
     /// Append `rgba` (W*H*4 tight, no row padding) into

@@ -6,7 +6,6 @@ use crate::{
 };
 use gecko::flipper::gx::draw::Primitive;
 use gecko::flipper::gx::regs::{CullMode, MagFilter, MinFilter, WrapMode};
-use gecko::flipper::gx::texture::CopyFormat;
 use gecko::host::{DrawData, GxAction};
 use glam::{Mat4, UVec4, Vec4};
 #[cfg(feature = "gx-stats")]
@@ -577,25 +576,8 @@ impl GxRenderer {
                     *mipmap,
                     *stride,
                     *depth_copy,
+                    *is_intensity,
                 );
-
-                if !*depth_copy
-                    && !*mipmap
-                    && let Some(copy_fmt) = CopyFormat::from_u8_color(*raw_copy_format)
-                {
-                    self.cache_efb_copy_color(
-                        device,
-                        queue,
-                        *dest_addr,
-                        *src_x,
-                        *src_y,
-                        *src_w,
-                        *src_h,
-                        *mipmap,
-                        copy_fmt,
-                        *is_intensity,
-                    );
-                }
 
                 if *clear {
                     self.clear_efb_region(
