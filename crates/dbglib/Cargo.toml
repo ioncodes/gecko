@@ -8,4 +8,5 @@ gecko = { path = "../gecko", default-features = false }
 disasm = { path = "../disasm" }
 image = { path = "../image", default-features = false }
 egui = "0.34.2"
+glam = "0.33.2"
 egui-phosphor = "0.12.0"

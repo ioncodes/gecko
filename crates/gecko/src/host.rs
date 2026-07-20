@@ -34,6 +34,14 @@ pub enum GxAction {
     },
     SetViewport(Viewport),
 
+    /// Debug action: extra free-look view transform composed with the
+    /// projection on perspective draws (freecam). Disabled restores normal
+    /// rendering.
+    SetFreelook {
+        matrix: [[f32; 4]; 4],
+        enabled: bool,
+    },
+
     // BP
     SetScissor(Scissor),
     SetDepthMode(ZMode),

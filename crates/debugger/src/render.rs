@@ -276,8 +276,10 @@ impl RenderState {
                     mmio,
                     &mut debugger_ui.gx_invalidate_requested,
                     &mut debugger_ui.gx_dump_requested,
+                    &mut debugger_ui.freecam,
                 );
             }
+            debugger_ui.freecam.update_input(&ctx);
             if debugger_ui.show_mmio {
                 dbglib::windows::mmio::show_mmio(
                     &ctx,
@@ -379,6 +381,10 @@ impl RenderState {
         if std::mem::take(&mut debugger_ui.gx_invalidate_requested) {
             emulator.gx.texture_hashes.clear();
             emulator.render_sink.exec(gecko::host::GxAction::InvalidateCaches);
+        }
+
+        if let Some((matrix, enabled)) = debugger_ui.freecam.take_action() {
+            emulator.render_sink.exec(gecko::host::GxAction::SetFreelook { matrix, enabled });
         }
         #[cfg(not(target_arch = "wasm32"))]
         if std::mem::take(&mut debugger_ui.gx_dump_requested) {

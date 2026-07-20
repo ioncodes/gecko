@@ -138,8 +138,13 @@ impl GxRenderer {
         let frame_struct_size = FRAME_UNIFORMS_SIZE.get() as usize;
 
         match action {
-            GxAction::SetProjection { matrix, .. } => {
+            GxAction::SetProjection { matrix, is_perspective } => {
                 self.current_projection = Mat4::from_cols_array_2d(matrix);
+                self.current_projection_perspective = *is_perspective;
+            }
+            GxAction::SetFreelook { matrix, enabled } => {
+                self.freelook = Mat4::from_cols_array_2d(matrix);
+                self.freelook_enabled = *enabled;
             }
             GxAction::SetViewport(vp) => {
                 self.current_viewport = *vp;
@@ -334,8 +339,14 @@ impl GxRenderer {
                     return;
                 }
 
-                // Build per-draw uniform using tracked projection.
-                let mvp = self.current_projection;
+                // Build per-draw uniform using tracked projection. The
+                // freecam view transform only applies to perspective draws
+                // so 2D/HUD passes stay glued to the screen.
+                let mvp = if self.freelook_enabled && self.current_projection_perspective {
+                    self.current_projection * self.freelook
+                } else {
+                    self.current_projection
+                };
                 let active = draw_active_slot_mask(draw);
 
                 let mut tex_dims = [UVec4::splat(1); 4];

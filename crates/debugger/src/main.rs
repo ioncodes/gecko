@@ -115,6 +115,7 @@ struct App {
     state: Option<RenderState>,
     present_mode: wgpu::PresentMode,
     init: Option<AppInit>,
+    freecam_input_blocked: bool,
 }
 
 struct AppInit {
@@ -145,6 +146,23 @@ impl App {
         match &mut self.emulator {
             EmulatorVariant::Gc(emu) => state.render(emu, &mut self.ui, window),
             EmulatorVariant::Wii(emu) => state.render(emu, &mut self.ui, window),
+        }
+
+        if self.ui.freecam.enabled != self.freecam_input_blocked {
+            self.freecam_input_blocked = self.ui.freecam.enabled;
+
+            if self.freecam_input_blocked {
+                let neutral = self.emulator.neutral_input();
+                self.emulator.apply_host_input(&neutral);
+            } else {
+                self.emulator.apply_host_input(&self.input);
+            }
+        }
+    }
+
+    fn apply_game_input(&mut self) {
+        if !self.ui.freecam.enabled {
+            self.emulator.apply_host_input(&self.input);
         }
     }
 }
@@ -271,7 +289,7 @@ impl ApplicationHandler<UserEvent> for App {
                                 update_nunchuk_keys(nunchuk_buttons, nunchuk_stick_x, nunchuk_stick_y, key, pressed);
                             }
                         }
-                        self.emulator.apply_host_input(&self.input);
+                        self.apply_game_input();
                     }
                 }
             }
@@ -287,7 +305,7 @@ impl ApplicationHandler<UserEvent> for App {
                     && let HostInput::Wii { wiimote_buttons, .. } = &mut self.input
                 {
                     set_bit(wiimote_buttons, mask, pressed);
-                    self.emulator.apply_host_input(&self.input);
+                    self.apply_game_input();
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
@@ -317,13 +335,13 @@ impl ApplicationHandler<UserEvent> for App {
                     && *ir_pointer != Some((ir_x, ir_y))
                 {
                     *ir_pointer = Some((ir_x, ir_y));
-                    self.emulator.apply_host_input(&self.input);
+                    self.apply_game_input();
                 }
             }
             WindowEvent::CursorLeft { .. } => {
                 if let HostInput::Wii { ir_pointer, .. } = &mut self.input {
                     *ir_pointer = None;
-                    self.emulator.apply_host_input(&self.input);
+                    self.apply_game_input();
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -554,6 +572,7 @@ fn main() {
         window: None,
         state: None,
         present_mode,
+        freecam_input_blocked: false,
         init: Some(AppInit {
             instance,
             adapter,
