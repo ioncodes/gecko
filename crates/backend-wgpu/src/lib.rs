@@ -907,8 +907,7 @@ impl GxRenderer {
             EFB_SAMPLE_COUNT,
         );
 
-        let cache_path = std::path::Path::new(shader_specialization::SHADER_CACHE_PATH);
-        let cached_keys = shader_specialization::load_cached_keys(cache_path);
+        let cached_keys = shader_specialization::load_cached_keys(&shader_specialization::shader_cache_path());
         let prewarmed = prewarm_shader_variants(device, &cached_keys);
 
         let mut shader_cache: FxHashMap<ShaderKey, wgpu::ShaderModule> =
@@ -1271,16 +1270,16 @@ impl GxRenderer {
     }
 
     pub fn save_shader_cache(&self) -> std::io::Result<usize> {
-        let path = std::path::Path::new(shader_specialization::SHADER_CACHE_PATH);
+        let path = shader_specialization::shader_cache_path();
         let keys: Vec<ShaderKey> = self.shader_cache.keys().copied().collect();
-        shader_specialization::save_keys(path, &keys)?;
+        shader_specialization::save_keys(&path, &keys)?;
         Ok(keys.len())
     }
 
     pub fn save_pipeline_cache(&self) -> std::io::Result<usize> {
-        let path = std::path::Path::new(pipeline::PIPELINE_CACHE_PATH);
+        let path = pipeline::pipeline_cache_path();
         let keys: Vec<pipeline::FullPipelineKey> = self.pipeline_cache.keys().copied().collect();
-        pipeline::save_pipeline_keys(path, &keys)?;
+        pipeline::save_pipeline_keys(&path, &keys)?;
         Ok(keys.len())
     }
 
@@ -1323,8 +1322,8 @@ impl GxRenderer {
     }
 
     pub fn prewarm_pipeline_cache(&mut self, device: &wgpu::Device) {
-        let path = std::path::Path::new(pipeline::PIPELINE_CACHE_PATH);
-        let keys: Vec<pipeline::FullPipelineKey> = pipeline::load_cached_pipeline_keys(path)
+        let path = pipeline::pipeline_cache_path();
+        let keys: Vec<pipeline::FullPipelineKey> = pipeline::load_cached_pipeline_keys(&path)
             .into_iter()
             .filter(|k| !self.pipeline_cache.contains_key(k) && self.shader_cache.contains_key(&k.shader))
             .collect();

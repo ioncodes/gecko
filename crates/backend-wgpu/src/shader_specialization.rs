@@ -17,7 +17,9 @@ pub(crate) const KEY_BYTES: usize = 6;
 pub(crate) const SPECIALIZATION_KEY_BYTES: usize = 82 * size_of::<u32>();
 const CACHE_MAGIC: [u8; 4] = *b"GSKC";
 pub(crate) const CACHE_VERSION: u32 = 8;
-pub(crate) const SHADER_CACHE_PATH: &str = "cache/shader_keys.bin";
+pub(crate) fn shader_cache_path() -> std::path::PathBuf {
+    gecko::paths::cache("shader_keys.bin")
+}
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
 pub(crate) struct ShaderKey {
@@ -436,10 +438,10 @@ pub(crate) fn compile_variant(key: ShaderKey) -> String {
         .to_string();
     #[cfg(feature = "dump-wgsl")]
     {
-        let dir = "cache/wgsl";
-        let _ = std::fs::create_dir_all(dir);
+        let dir = gecko::paths::cache("wgsl");
+        let _ = std::fs::create_dir_all(&dir);
         let name: String = key.to_bytes().iter().map(|b| format!("{b:02X}")).collect();
-        let _ = std::fs::write(format!("{dir}/variant_{name}.wgsl"), &out);
+        let _ = std::fs::write(dir.join(format!("variant_{name}.wgsl")), &out);
     }
     out
 }

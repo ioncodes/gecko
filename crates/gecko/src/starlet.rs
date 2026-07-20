@@ -173,13 +173,7 @@ fn default_host_fs_root() -> PathBuf {
         return PathBuf::from(custom);
     }
 
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            return dir.join("fs");
-        }
-    }
-
-    PathBuf::from("fs")
+    crate::paths::resolve("fs")
 }
 
 impl System<{ crate::WII }> {

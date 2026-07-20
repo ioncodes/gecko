@@ -88,11 +88,7 @@ impl Config {
 }
 
 pub fn exe_relative(rel: impl AsRef<Path>) -> PathBuf {
-    let rel = rel.as_ref();
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|p| p.join(rel)))
-        .unwrap_or_else(|| rel.to_path_buf())
+    gecko::paths::resolve(rel)
 }
 
 pub fn config_path() -> PathBuf {

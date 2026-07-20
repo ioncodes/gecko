@@ -924,7 +924,7 @@ fn resolve_palette(pref: ThemePreference, system_mode: Mode) -> Palette {
 }
 
 fn screenshot_path(game_id: &str) -> PathBuf {
-    config::exe_relative(capture::timestamped_path(game_id))
+    capture::timestamped_path(game_id)
 }
 
 fn corner_card<'a>(palette: &Palette, content: Element<'a, Message>) -> Element<'a, Message> {
