@@ -42,6 +42,8 @@ pub struct PlayerState {
     shutdown: Arc<AtomicBool>,
     throttle: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    save_state: Arc<AtomicBool>,
+    load_state: Arc<AtomicBool>,
     aspect: TargetAspect,
     upscale: u32,
     input: Arc<Mutex<HostInput>>,
@@ -99,6 +101,8 @@ impl PlayerState {
             shutdown: Arc::new(AtomicBool::new(false)),
             throttle: Arc::new(AtomicBool::new(true)),
             paused: Arc::new(AtomicBool::new(false)),
+            save_state: Arc::new(AtomicBool::new(false)),
+            load_state: Arc::new(AtomicBool::new(false)),
             aspect,
             upscale: config.upscale,
             input: Arc::new(Mutex::new(neutral)),
@@ -233,6 +237,14 @@ impl PlayerState {
         self.paused.fetch_xor(true, Ordering::Relaxed);
     }
 
+    pub fn request_save_state(&self) {
+        self.save_state.store(true, Ordering::Relaxed);
+    }
+
+    pub fn request_load_state(&self) {
+        self.load_state.store(true, Ordering::Relaxed);
+    }
+
     pub fn is_paused(&self) -> bool {
         self.paused.load(Ordering::Relaxed)
     }
@@ -320,6 +332,8 @@ fn finish_boot<const S: gecko::system::SystemId>(
     let _ = emu.load_jit_cache(&game_id);
     self::set_initialized(&state, renderer, audio, &game_id);
 
+    let savestate_path = gecko::savestate::state_path(Some(&game_id));
+
     emu_thread::run::<S>(
         emu,
         state.input.clone(),
@@ -328,6 +342,9 @@ fn finish_boot<const S: gecko::system::SystemId>(
         state.throttle.clone(),
         state.paused.clone(),
         state.shutdown.clone(),
+        savestate_path,
+        state.save_state.clone(),
+        state.load_state.clone(),
     );
 }
 

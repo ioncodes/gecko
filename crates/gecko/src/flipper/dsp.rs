@@ -664,7 +664,7 @@ pub fn wake_dsp_scheduler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     sys.dsp.scheduler_suspended = false;
     sys.scheduler.schedule_in(
         crate::scheduler::dsp_batch_interval(SYSTEM),
-        crate::scheduler::dsp_batch_handler::<SYSTEM>,
+        crate::scheduler::Handler::DspBatch,
     );
 
     #[cfg(feature = "jit-stats")]
@@ -919,5 +919,91 @@ impl<const SYSTEM: SystemId> DspJitHandle for jit::JitEngine<SYSTEM> {
         }
         #[cfg(not(feature = "jit-stats"))]
         tracing::warn!("feature `jit-stats` is not enabled. Rebuild with `--features jit-stats`.");
+    }
+}
+
+impl Dsp {
+    pub fn save_state(&self, w: &mut crate::savestate::StateWriter) {
+        w.pod(&self.registers);
+
+        w.bytes(&*self.iram);
+        w.bytes(&*self.irom);
+        w.bytes(&*self.dram);
+        w.bytes(&*self.coef);
+        w.bytes(&*self.ifx);
+        w.bytes(&*self.aram);
+
+        w.pod(&self.csr);
+        w.pod(&self.mailbox_to_dsp_hi);
+        w.pod(&self.mailbox_to_dsp_lo);
+        w.pod(&self.mailbox_to_cpu_hi);
+        w.pod(&self.mailbox_to_cpu_lo);
+        w.pod(&self.aram_info);
+        w.pod(&self.aram_mode);
+        w.pod(&self.aram_refresh);
+        w.pod(&self.aram_dma_mmio_addr);
+        w.pod(&self.aram_dma_aram_addr);
+        w.pod(&self.aram_dma_control);
+        w.pod(&self.audio_dma_start_addr);
+        w.pod(&self.audio_dma_control);
+
+        w.pod(&self.dma_control);
+        w.u16(self.dma_length);
+        w.u16(self.dma_dsp_addr);
+        w.u16(self.dma_ram_addr_hi);
+        w.u16(self.dma_ram_addr_lo);
+
+        w.pod(&self.accelerator);
+        w.bool(self.scheduler_suspended);
+    }
+
+    pub fn load_state(
+        &mut self,
+        r: &mut crate::savestate::StateReader<'_>,
+    ) -> Result<(), crate::savestate::StateError> {
+        self.registers = r.pod()?;
+
+        r.bytes_into(&mut *self.iram)?;
+        r.bytes_into(&mut *self.irom)?;
+        r.bytes_into(&mut *self.dram)?;
+        r.bytes_into(&mut *self.coef)?;
+        r.bytes_into(&mut *self.ifx)?;
+        r.bytes_into(&mut *self.aram)?;
+
+        self.csr = r.pod()?;
+        self.mailbox_to_dsp_hi = r.pod()?;
+        self.mailbox_to_dsp_lo = r.pod()?;
+        self.mailbox_to_cpu_hi = r.pod()?;
+        self.mailbox_to_cpu_lo = r.pod()?;
+        self.aram_info = r.pod()?;
+        self.aram_mode = r.pod()?;
+        self.aram_refresh = r.pod()?;
+        self.aram_dma_mmio_addr = r.pod()?;
+        self.aram_dma_aram_addr = r.pod()?;
+        self.aram_dma_control = r.pod()?;
+        self.audio_dma_start_addr = r.pod()?;
+        self.audio_dma_control = r.pod()?;
+
+        self.dma_control = r.pod()?;
+        self.dma_length = r.u16()?;
+        self.dma_dsp_addr = r.u16()?;
+        self.dma_ram_addr_hi = r.u16()?;
+        self.dma_ram_addr_lo = r.u16()?;
+
+        self.accelerator = r.pod()?;
+        self.scheduler_suspended = r.bool()?;
+
+        self.rebuild_wait_table();
+
+        #[cfg(feature = "jit")]
+        {
+            if let Some(jit) = self.jit.as_mut() {
+                jit.flush();
+            }
+            self.chain_budget = 0;
+            self.instr_count = 0;
+        }
+
+        Ok(())
     }
 }

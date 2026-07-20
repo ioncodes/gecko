@@ -15,6 +15,8 @@ pub fn emu_thread<const SYSTEM: SystemId>(
     start_gate: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
     fifo_record: Option<String>,
+    savestate_path: std::path::PathBuf,
+    savestate_requests: Arc<crate::SavestateRequests>,
 ) {
     let sleeper = SpinSleeper::default();
     let throttle_step = Duration::from_micros(5);
@@ -46,6 +48,20 @@ pub fn emu_thread<const SYSTEM: SystemId>(
         }
 
         emulator.run_until_vsync();
+
+        if savestate_requests.save.swap(false, Ordering::Relaxed) {
+            match emulator.save_state_to_file(&savestate_path) {
+                Ok(()) => tracing::info!(path = %savestate_path.display(), "savestate saved"),
+                Err(err) => tracing::error!(%err, "savestate save failed"),
+            }
+        }
+
+        if savestate_requests.load.swap(false, Ordering::Relaxed) {
+            match emulator.load_state_from_file(&savestate_path) {
+                Ok(()) => tracing::info!(path = %savestate_path.display(), "savestate loaded"),
+                Err(err) => tracing::error!(%err, "savestate load failed"),
+            }
+        }
     }
 
     if let Some(path) = fifo_record

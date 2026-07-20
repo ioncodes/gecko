@@ -164,19 +164,24 @@ pub struct XfbPart {
     pub offset_y: u32,
 }
 
-/// Per-draw data: primitive type, vertex range, modelview transform,
-/// and TEV/lighting configuration (snapshotted at draw time since TEV is
-/// built up incrementally via BP writes). Vertices live in the renderer's
-/// scratch buffer (see [`RenderSink::vertex_scratch`]); `base_vertex` is
-/// the index into that buffer where this draw's vertices start and
-/// `vertex_count` is how many of them belong to this draw.
+/// Per-draw data: primitive type, vertex range, and an optional snapshot of
+/// TEV/lighting state. Vertices live in the renderer's scratch buffer (see
+/// [`RenderSink::vertex_scratch`]); `base_vertex` is the index into that
+/// buffer where this draw's vertices start and `vertex_count` is how many of
+/// them belong to this draw.
 #[derive(Debug, Default)]
 pub struct DrawData {
     pub primitive: Primitive,
     pub base_vertex: u32,
     pub vertex_count: u32,
+    /// Present only when GX frame state changed since the preceding draw.
+    /// Renderers retain the last snapshot across draw-buffer flushes.
+    pub state: Option<DrawState>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DrawState {
     pub active_texcoords: u8,
-    pub modelview: [[f32; 4]; 4],
     // TEV combiner state
     pub tev_color_env: [u32; 16],
     pub tev_alpha_env: [u32; 16],
@@ -207,7 +212,6 @@ pub struct DrawData {
     pub ztex_bias: u32,
     pub ztex_type: u8,
     pub ztex_op: u8,
-    pub frame_dirty: bool,
 }
 
 /// Per-vertex data after decode, ready for the renderer. Field order

@@ -44,7 +44,7 @@ pub struct Xer {
     pub byte_count: u8,
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct Spr {
     pub xer: Xer,
     pub lr: u32,

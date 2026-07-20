@@ -86,6 +86,14 @@ impl IosDevice for Bluetooth {
     fn tick_input_report(&mut self) {
         Bluetooth::tick_input_report(self)
     }
+
+    fn save_state(&mut self, w: &mut crate::savestate::StateWriter) {
+        Bluetooth::save_state(self, w)
+    }
+
+    fn load_state(&mut self, r: &mut crate::savestate::StateReader<'_>) -> Result<(), crate::savestate::StateError> {
+        Bluetooth::load_state(self, r)
+    }
 }
 
 impl Bluetooth {
@@ -229,6 +237,69 @@ impl Bluetooth {
 
         let report = self.wiimote.make_input_report();
         self.queue_hid_input_report(report);
+    }
+
+    fn save_state(&mut self, w: &mut crate::savestate::StateWriter) {
+        w.u32(self.pending_hci.len() as u32);
+        for frame in &self.pending_hci {
+            w.bytes(frame);
+        }
+
+        w.u32(self.pending_acl.len() as u32);
+        for frame in &self.pending_acl {
+            w.bytes(frame);
+        }
+
+        self.wiimote.save_state(w);
+
+        w.bool(self.scanning);
+        w.bool(self.connection_requested);
+        w.bool(self.connected);
+
+        match self.host_hid_control_cid {
+            Some(cid) => {
+                w.bool(true);
+                w.u16(cid);
+            }
+            None => w.bool(false),
+        }
+
+        match self.host_hid_interrupt_cid {
+            Some(cid) => {
+                w.bool(true);
+                w.u16(cid);
+            }
+            None => w.bool(false),
+        }
+
+        w.u8(self.next_l2cap_ident);
+    }
+
+    fn load_state(&mut self, r: &mut crate::savestate::StateReader<'_>) -> Result<(), crate::savestate::StateError> {
+        self.pending_hci.clear();
+        let hci_count = r.u32()?;
+        for _ in 0..hci_count {
+            self.pending_hci.push_back(r.bytes()?.to_vec());
+        }
+
+        self.pending_acl.clear();
+        let acl_count = r.u32()?;
+        for _ in 0..acl_count {
+            self.pending_acl.push_back(r.bytes()?.to_vec());
+        }
+
+        self.wiimote.load_state(r)?;
+
+        self.scanning = r.bool()?;
+        self.connection_requested = r.bool()?;
+        self.connected = r.bool()?;
+
+        self.host_hid_control_cid = if r.bool()? { Some(r.u16()?) } else { None };
+        self.host_hid_interrupt_cid = if r.bool()? { Some(r.u16()?) } else { None };
+
+        self.next_l2cap_ident = r.u8()?;
+
+        Ok(())
     }
 }
 

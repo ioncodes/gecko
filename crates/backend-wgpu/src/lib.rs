@@ -17,13 +17,13 @@ use gecko::flipper::gx::draw::Primitive;
 use gecko::flipper::gx::draw::{Scissor, TextureFormat, Viewport};
 use gecko::flipper::gx::regs::{AlphaCompare, BlendMode, CompareFunc, CullMode, MagFilter, MinFilter, WrapMode, ZMode};
 
-use gecko::host::TextureKey;
+use gecko::host::{DrawState, TextureKey};
 use glam::Mat4;
 use pipeline::{FullPipelineKey, UberPipelineKey};
 use rustc_hash::FxHashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use rustc_hash::FxHashSet;
-use shader_specialization::ShaderKey;
+use shader_specialization::{ShaderKey, ShaderSpecializationKey};
 use std::num::NonZeroU64;
 #[cfg(feature = "gx-stats")]
 use std::sync::{
@@ -340,6 +340,11 @@ pub struct GxRenderer {
     pub(crate) current_blend_mode: BlendMode,
     pub(crate) current_alpha_compare: AlphaCompare,
     pub(crate) current_cull_mode: CullMode,
+    pub(crate) current_draw_state: DrawState,
+    pub(crate) current_shader_key: Option<ShaderKey>,
+    pub(crate) current_specialization_key: ShaderSpecializationKey,
+    pub(crate) current_active_texture_mask: u8,
+    pub(crate) draw_fast_path_compatible: bool,
     pub(crate) current_texture_ids: [Option<TextureKey>; 8],
     pub(crate) current_sampler_keys: [Option<SamplerKey>; 8],
     // XFB output texture: composited from per-copy snapshots by PresentXfb.
@@ -394,9 +399,15 @@ pub(crate) struct DrawRecord {
     /// section of `draw_buffer` (relative to section start, not buffer
     /// start). Used to compute the buffer slice for `set_vertex_buffer`.
     pub packed_vertex_byte_offset: u32,
-    /// Bytes per vertex in the packed stream
-    /// (`68 + 12 * active_texcoords`).
+    /// Bytes per vertex in the packed stream, see [`packed_vertex_stride`].
     pub packed_vertex_stride: u32,
+}
+
+/// Bytes per vertex in the packed stream. Matches the WESL `VsIn` layout
+/// gated by `TEXCOORD_N_ENABLED`: 5 fixed attrs (68b) + N texcoord attrs
+/// (12 bytes each).
+pub(crate) fn packed_vertex_stride(active_texcoords: u8) -> u32 {
+    68 + 12 * active_texcoords as u32
 }
 
 pub(crate) struct PendingWriteback {
@@ -990,6 +1001,11 @@ impl GxRenderer {
             current_alpha_compare: AlphaCompare::from_raw(0)
                 .with_comp0(CompareFunc::Always)
                 .with_comp1(CompareFunc::Always),
+            current_draw_state: DrawState::default(),
+            current_shader_key: None,
+            current_specialization_key: ShaderSpecializationKey::default(),
+            current_active_texture_mask: 0,
+            draw_fast_path_compatible: false,
             current_texture_ids: Default::default(),
             current_sampler_keys: Default::default(),
             xfb_texture,

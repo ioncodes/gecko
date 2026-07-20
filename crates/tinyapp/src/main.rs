@@ -194,6 +194,17 @@ struct Args {
     /// write. The IPL boot uses an in-memory default if this is not given.
     #[arg(long)]
     sram: Option<String>,
+
+    /// Load a savestate file right after boot. F5 saves and F7 loads at any
+    /// time; the state file lives in the per-game cache directory next to the
+    /// JIT caches.
+    #[arg(long)]
+    load_state: Option<String>,
+}
+
+pub struct SavestateRequests {
+    pub save: AtomicBool,
+    pub load: AtomicBool,
 }
 
 fn main() {
@@ -421,6 +432,19 @@ fn run<const SYSTEM: SystemId>(
     }
 
     let emu_input = input.clone();
+    let savestate_requests = Arc::new(SavestateRequests {
+        save: AtomicBool::new(false),
+        load: AtomicBool::new(false),
+    });
+    let savestate_path = gecko::savestate::state_path(game_id.as_deref());
+
+    if let Some(ref path) = args.load_state {
+        match emulator.load_state_from_file(std::path::Path::new(path)) {
+            Ok(()) => tracing::info!(path, "savestate loaded"),
+            Err(err) => tracing::error!(%err, path, "failed to load savestate, booting normally"),
+        }
+    }
+
     if let Some(ref id) = game_id {
         let (ppc_c, ppc_s, dsp_c, dsp_s, vtx_c, vtx_s) = emulator.load_jit_cache(id);
         if ppc_c > 0 || dsp_c > 0 || vtx_c > 0 || ppc_s > 0 || dsp_s > 0 || vtx_s > 0 {
@@ -447,6 +471,7 @@ fn run<const SYSTEM: SystemId>(
     input_config.wii.pointer = Some(args.pointer.clone());
 
     drop(proxy);
+    let emu_savestate_requests = savestate_requests.clone();
     let emu_handle = std::thread::Builder::new()
         .name("emu".into())
         .spawn(move || {
@@ -459,6 +484,8 @@ fn run<const SYSTEM: SystemId>(
                 emu_start_gate,
                 emu_shutdown,
                 fifo_record,
+                savestate_path,
+                emu_savestate_requests,
             )
         })
         .expect("failed to spawn emulator thread");
@@ -479,6 +506,7 @@ fn run<const SYSTEM: SystemId>(
         _audio_stream: audio_stream,
         shutdown_requested,
         start_gate,
+        savestate_requests,
         #[cfg(feature = "fps-counter")]
         fps_shared,
     };

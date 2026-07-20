@@ -6,6 +6,8 @@ pub mod regs;
 use crate::flipper::exi::regs::TransferType;
 use crate::system::{System, SystemId};
 
+const DEVICE_STATE_CAPACITY: usize = 256;
+
 pub struct ExternalInterface {
     // Channel 0
     pub ch0_csr: regs::Channel0Status,
@@ -264,14 +266,14 @@ pub fn on_chip_select_written<const CHANNEL: usize, const SYSTEM: SystemId>(sys:
             && let Some(delay) = sys.exi.devices[CHANNEL][slot].as_mut().and_then(|d| d.on_deselect())
         {
             sys.scheduler
-                .schedule_in(delay, self::memcard_cmd_done::<CHANNEL, SYSTEM>);
+                .schedule_in(delay, crate::scheduler::Handler::memcard_cmd_done(CHANNEL));
         }
     }
 
     sys.exi.prev_cs[CHANNEL] = new_cs;
 }
 
-fn memcard_cmd_done<const CHANNEL: usize, const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+pub(crate) fn memcard_cmd_done<const CHANNEL: usize, const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     let raise = sys.exi.devices[CHANNEL][0]
         .as_mut()
         .is_some_and(|d| d.complete_command());
@@ -370,4 +372,77 @@ pub fn run_dma<const CHANNEL: usize, const SYSTEM: SystemId>(sys: &mut System<SY
     }
 
     sys.exi.finish_transfer::<CHANNEL>();
+}
+
+impl ExternalInterface {
+    pub fn save_state(&mut self, w: &mut crate::savestate::StateWriter) {
+        w.pod(&self.ch0_csr);
+        w.pod(&self.ch0_mar);
+        w.pod(&self.ch0_length);
+        w.pod(&self.ch0_cr);
+        w.pod(&self.ch0_data);
+        w.pod(&self.ch1_csr);
+        w.pod(&self.ch1_mar);
+        w.pod(&self.ch1_length);
+        w.pod(&self.ch1_cr);
+        w.pod(&self.ch1_data);
+        w.pod(&self.ch2_csr);
+        w.pod(&self.ch2_mar);
+        w.pod(&self.ch2_length);
+        w.pod(&self.ch2_cr);
+        w.pod(&self.ch2_data);
+        w.pod(&self.prev_cs);
+
+        for device in self.devices.iter_mut().flatten() {
+            match device {
+                Some(device) => {
+                    w.bool(true);
+
+                    let mut inner = crate::savestate::StateWriter::with_capacity(DEVICE_STATE_CAPACITY);
+                    device.save_state(&mut inner);
+                    w.bytes(&inner.into_inner());
+                }
+                None => w.bool(false),
+            }
+        }
+    }
+
+    pub fn load_state(
+        &mut self,
+        r: &mut crate::savestate::StateReader<'_>,
+    ) -> Result<(), crate::savestate::StateError> {
+        self.ch0_csr = r.pod()?;
+        self.ch0_mar = r.pod()?;
+        self.ch0_length = r.pod()?;
+        self.ch0_cr = r.pod()?;
+        self.ch0_data = r.pod()?;
+        self.ch1_csr = r.pod()?;
+        self.ch1_mar = r.pod()?;
+        self.ch1_length = r.pod()?;
+        self.ch1_cr = r.pod()?;
+        self.ch1_data = r.pod()?;
+        self.ch2_csr = r.pod()?;
+        self.ch2_mar = r.pod()?;
+        self.ch2_length = r.pod()?;
+        self.ch2_cr = r.pod()?;
+        self.ch2_data = r.pod()?;
+        self.prev_cs = r.pod()?;
+
+        for device in self.devices.iter_mut().flatten() {
+            let present = r.bool()?;
+            if present != device.is_some() {
+                return Err(crate::savestate::StateError::Corrupt(
+                    "EXI device topology mismatch (different boot configuration?)",
+                ));
+            }
+
+            if let Some(device) = device {
+                let payload = r.bytes()?;
+                let mut inner = crate::savestate::StateReader::new(payload);
+                device.load_state(&mut inner)?;
+            }
+        }
+
+        Ok(())
+    }
 }

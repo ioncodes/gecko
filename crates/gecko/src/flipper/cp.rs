@@ -8,6 +8,7 @@ pub const PUMP_INTERVAL_CYCLES: u64 = 1 << 16;
 
 const GP_PIPE_CAPACITY: usize = 64;
 
+#[derive(Clone, Copy)]
 pub struct CommandProcessor {
     pub status: regs::CpStatus,
     pub control: regs::CpControl,
@@ -262,7 +263,7 @@ pub fn gather_pipe_bursted<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
 pub fn pump_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     self::pump_fifo(sys);
     sys.scheduler
-        .schedule_in(PUMP_INTERVAL_CYCLES, self::pump_handler::<SYSTEM>);
+        .schedule_in(PUMP_INTERVAL_CYCLES, crate::scheduler::Handler::CpPump);
 }
 
 pub fn pump_fifo<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {

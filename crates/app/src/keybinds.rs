@@ -59,6 +59,8 @@ pub struct HotkeysConfig {
     pub fullscreen: Option<String>,
     pub overlay: Option<String>,
     pub screenshot: Option<String>,
+    pub save_state: Option<String>,
+    pub load_state: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -154,6 +156,8 @@ pub struct Hotkeys {
     pub fullscreen: Code,
     pub overlay: Code,
     pub screenshot: Code,
+    pub save_state: Code,
+    pub load_state: Code,
 }
 
 impl Default for Hotkeys {
@@ -164,6 +168,8 @@ impl Default for Hotkeys {
             fullscreen: Code::F10,
             overlay: Code::F11,
             screenshot: Code::F12,
+            save_state: Code::F5,
+            load_state: Code::F7,
         }
     }
 }
@@ -182,6 +188,8 @@ pub enum Hotkey {
     Fullscreen,
     Overlay,
     Screenshot,
+    SaveState,
+    LoadState,
 }
 
 impl Hotkeys {
@@ -196,6 +204,10 @@ impl Hotkeys {
             Some(Hotkey::Overlay)
         } else if key == self.screenshot {
             Some(Hotkey::Screenshot)
+        } else if key == self.save_state {
+            Some(Hotkey::SaveState)
+        } else if key == self.load_state {
+            Some(Hotkey::LoadState)
         } else {
             None
         }
@@ -241,6 +253,8 @@ pub enum KeyTarget {
     HotkeyFullscreen,
     HotkeyOverlay,
     HotkeyScreenshot,
+    HotkeySaveState,
+    HotkeyLoadState,
 }
 
 pub const GC_KEY_TARGETS: &[(KeyTarget, &str)] = &[
@@ -287,6 +301,8 @@ pub const HOTKEY_TARGETS: &[(KeyTarget, &str)] = &[
     (KeyTarget::HotkeyFullscreen, "Fullscreen"),
     (KeyTarget::HotkeyOverlay, "Overlay"),
     (KeyTarget::HotkeyScreenshot, "Screenshot"),
+    (KeyTarget::HotkeySaveState, "Save State"),
+    (KeyTarget::HotkeyLoadState, "Load State"),
 ];
 
 pub fn field(config: &mut KeyboardConfig, target: KeyTarget) -> &mut Option<String> {
@@ -328,6 +344,8 @@ pub fn field(config: &mut KeyboardConfig, target: KeyTarget) -> &mut Option<Stri
         KeyTarget::HotkeyFullscreen => &mut config.hotkeys.fullscreen,
         KeyTarget::HotkeyOverlay => &mut config.hotkeys.overlay,
         KeyTarget::HotkeyScreenshot => &mut config.hotkeys.screenshot,
+        KeyTarget::HotkeySaveState => &mut config.hotkeys.save_state,
+        KeyTarget::HotkeyLoadState => &mut config.hotkeys.load_state,
     }
 }
 
@@ -371,6 +389,8 @@ impl Keymap {
             KeyTarget::HotkeyFullscreen => self.hotkeys.fullscreen,
             KeyTarget::HotkeyOverlay => self.hotkeys.overlay,
             KeyTarget::HotkeyScreenshot => self.hotkeys.screenshot,
+            KeyTarget::HotkeySaveState => self.hotkeys.save_state,
+            KeyTarget::HotkeyLoadState => self.hotkeys.load_state,
         }
     }
 }
@@ -418,6 +438,8 @@ impl KeyboardConfig {
         self::set(&mut keymap.hotkeys.fullscreen, &self.hotkeys.fullscreen);
         self::set(&mut keymap.hotkeys.overlay, &self.hotkeys.overlay);
         self::set(&mut keymap.hotkeys.screenshot, &self.hotkeys.screenshot);
+        self::set(&mut keymap.hotkeys.save_state, &self.hotkeys.save_state);
+        self::set(&mut keymap.hotkeys.load_state, &self.hotkeys.load_state);
 
         keymap
     }

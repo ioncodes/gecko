@@ -32,12 +32,12 @@ pub fn spr<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
             let val = ctx.gekko.read_gpr(instr.rs());
             match spr_num {
                 22 => {
-                    ctx.scheduler.cancel(crate::gekko::dec::underflow_handler::<SYSTEM>);
+                    ctx.scheduler.cancel(crate::scheduler::Handler::DecUnderflow);
                     ctx.gekko.dec.write(ctx.scheduler.cycles, val);
                     ctx.gekko.spr.dec = val;
                     ctx.scheduler.schedule_in(
                         crate::gekko::dec::cycles_until_underflow(val),
-                        crate::gekko::dec::underflow_handler::<SYSTEM>,
+                        crate::scheduler::Handler::DecUnderflow,
                     );
                     tracing::debug!(cycles = ctx.scheduler.cycles, value = val, "decrementer set");
                 }

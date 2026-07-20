@@ -2,7 +2,7 @@ use super::constants::*;
 use super::math::{Vec3, unpack_rgba};
 use super::regs::{self, *};
 use super::{GraphicsProcessor, draw};
-use crate::host::{DrawData, DrawVertex, GxAction, RenderSink};
+use crate::host::{DrawData, DrawState, DrawVertex, GxAction, RenderSink};
 use crate::mmio::{Mmio, RamView};
 use crate::system::{ExecutionMode, SystemId};
 use std::io::{Cursor, Read};
@@ -108,82 +108,76 @@ impl GraphicsProcessor {
         verts.reserve(vertex_count);
         self::dispatch_decode(self, mmio, cmd, data, vertex_count, &vf, verts);
 
-        let modelview = self.build_modelview_matrix(vf.default_pos_mtx_idx);
-
-        let tev_color_regs = self.resolve_tev_color_regs();
-        let tev_orders = self.resolve_tev_orders();
-
-        self.rebuild_lighting_cache_if_dirty();
-
-        if self.konst_dirty {
-            self.resolve_konst_colors();
-            self.konst_dirty = false;
-        }
-
+        boxed.primitive = primitive;
         boxed.base_vertex = base_vertex;
         boxed.vertex_count = vertex_count as u32;
+        boxed.state = self.frame_state_dirty.then(|| {
+            let tev_color_regs = self.resolve_tev_color_regs();
+            let tev_orders = self.resolve_tev_orders();
 
-        // Flatten the three indirect matrices to 6 rows. Row 2M is row
-        // 0 of matrix M, row 2M+1 is row 1. The .w lane carries the
-        // shared scale exponent (positive means right-shift, negative
-        // means left-shift of the mat-mul result).
-        let mut indirect_matrices = [[0i32; 4]; 6];
-        for m in 0..3 {
-            let mtx = &self.cur_indirect_matrices[m];
-            let exp = mtx.scale_exponent();
-            let r0 = mtx.row0();
-            let r1 = mtx.row1();
-            indirect_matrices[2 * m] = [r0[0], r0[1], r0[2], exp];
-            indirect_matrices[2 * m + 1] = [r1[0], r1[1], r1[2], exp];
-        }
+            self.rebuild_lighting_cache_if_dirty();
 
-        let indirect_scales = [
-            [
-                self.cur_indirect_scales[0].ss0() as u32,
-                self.cur_indirect_scales[0].ts0() as u32,
-                self.cur_indirect_scales[0].ss1() as u32,
-                self.cur_indirect_scales[0].ts1() as u32,
-            ],
-            [
-                self.cur_indirect_scales[1].ss0() as u32,
-                self.cur_indirect_scales[1].ts0() as u32,
-                self.cur_indirect_scales[1].ss1() as u32,
-                self.cur_indirect_scales[1].ts1() as u32,
-            ],
-        ];
+            if self.konst_dirty {
+                self.resolve_konst_colors();
+                self.konst_dirty = false;
+            }
 
-        boxed.primitive = primitive;
-        boxed.modelview = modelview.0;
-        boxed.tev_color_env = std::array::from_fn(|i| self.cur_tev_color_env[i].raw());
-        boxed.tev_alpha_env = std::array::from_fn(|i| self.cur_tev_alpha_env[i].raw());
-        boxed.tev_orders = std::array::from_fn(|i| tev_orders[i].raw());
-        boxed.tev_ksel = std::array::from_fn(|i| self.bp_regs[BP_TEV_KSEL_0 + i]);
-        boxed.tev_color_regs = tev_color_regs;
-        boxed.tev_konst_colors = self.cur_tev_konst_colors;
-        boxed.num_tev_stages = self.cur_num_tev_stages;
-        boxed.indirect_matrices = indirect_matrices;
-        boxed.indirect_scales = indirect_scales;
-        boxed.indirect_refs = self.cur_indirect_refs.raw();
-        boxed.num_indirect_stages = self.cur_num_indirect_stages;
-        boxed.bump_imask = self.cur_bump_imask;
-        boxed.tev_indirect = std::array::from_fn(|i| self.cur_tev_indirect[i].raw());
-        boxed.color_ctrl = self.cached_color_ctrl;
-        boxed.alpha_ctrl = self.cached_alpha_ctrl;
-        boxed.ambient_color = self.cached_ambient_color;
-        boxed.material_color = self.cached_material_color;
-        boxed.lights = self.cached_lights;
-        boxed.active_texcoords = (self.xf_mem[crate::flipper::gx::constants::XF_NUM_TEXGENS] as u8).min(8);
-        // Z texture: only applied by hardware on the late-Z path; collapse to
-        // disabled under early-Z so the backend can keep early-Z pipelines.
-        let ztex2 = TevZtex2::from_raw(self.bp_regs[BP_TEV_ZTEX2]);
-        boxed.ztex_bias = TevZtex1::from_raw(self.bp_regs[BP_TEV_ZTEX1]).bias();
-        boxed.ztex_type = ztex2.tex_type();
-        boxed.ztex_op = if self.cur_pe_control.early_ztest() {
-            0
-        } else {
-            ztex2.op()
-        };
-        boxed.frame_dirty = self.frame_state_dirty;
+            let mut indirect_matrices = [[0i32; 4]; 6];
+            for (m, rows) in indirect_matrices.chunks_exact_mut(2).enumerate() {
+                let mtx = &self.cur_indirect_matrices[m];
+                let exp = mtx.scale_exponent();
+                let r0 = mtx.row0();
+                let r1 = mtx.row1();
+                rows[0] = [r0[0], r0[1], r0[2], exp];
+                rows[1] = [r1[0], r1[1], r1[2], exp];
+            }
+
+            let indirect_scales = [
+                [
+                    self.cur_indirect_scales[0].ss0() as u32,
+                    self.cur_indirect_scales[0].ts0() as u32,
+                    self.cur_indirect_scales[0].ss1() as u32,
+                    self.cur_indirect_scales[0].ts1() as u32,
+                ],
+                [
+                    self.cur_indirect_scales[1].ss0() as u32,
+                    self.cur_indirect_scales[1].ts0() as u32,
+                    self.cur_indirect_scales[1].ss1() as u32,
+                    self.cur_indirect_scales[1].ts1() as u32,
+                ],
+            ];
+
+            let ztex2 = TevZtex2::from_raw(self.bp_regs[BP_TEV_ZTEX2]);
+
+            DrawState {
+                tev_color_env: std::array::from_fn(|i| self.cur_tev_color_env[i].raw()),
+                tev_alpha_env: std::array::from_fn(|i| self.cur_tev_alpha_env[i].raw()),
+                tev_orders: std::array::from_fn(|i| tev_orders[i].raw()),
+                tev_ksel: std::array::from_fn(|i| self.bp_regs[BP_TEV_KSEL_0 + i]),
+                tev_color_regs,
+                tev_konst_colors: self.cur_tev_konst_colors,
+                num_tev_stages: self.cur_num_tev_stages,
+                indirect_matrices,
+                indirect_scales,
+                indirect_refs: self.cur_indirect_refs.raw(),
+                num_indirect_stages: self.cur_num_indirect_stages,
+                bump_imask: self.cur_bump_imask,
+                tev_indirect: std::array::from_fn(|i| self.cur_tev_indirect[i].raw()),
+                color_ctrl: self.cached_color_ctrl,
+                alpha_ctrl: self.cached_alpha_ctrl,
+                ambient_color: self.cached_ambient_color,
+                material_color: self.cached_material_color,
+                lights: self.cached_lights,
+                active_texcoords: (self.xf_mem[crate::flipper::gx::constants::XF_NUM_TEXGENS] as u8).min(8),
+                ztex_bias: TevZtex1::from_raw(self.bp_regs[BP_TEV_ZTEX1]).bias(),
+                ztex_type: ztex2.tex_type(),
+                ztex_op: if self.cur_pe_control.early_ztest() {
+                    0
+                } else {
+                    ztex2.op()
+                },
+            }
+        });
         self.frame_state_dirty = false;
         renderer.exec(GxAction::Draw(boxed));
 
@@ -505,36 +499,6 @@ impl GraphicsProcessor {
             pos_view: [pos_view.0, pos_view.1, pos_view.2],
             texcoords,
         }
-    }
-
-    fn build_modelview_matrix(&self, pos_mtx_idx: u8) -> draw::Matrix4 {
-        let default_mtx_base = pos_mtx_idx as usize * XF_POS_MTX_STRIDE;
-        draw::Matrix4([
-            [
-                f32::from_bits(self.xf_mem[default_mtx_base]),
-                f32::from_bits(self.xf_mem[default_mtx_base + 4]),
-                f32::from_bits(self.xf_mem[default_mtx_base + 8]),
-                0.0,
-            ],
-            [
-                f32::from_bits(self.xf_mem[default_mtx_base + 1]),
-                f32::from_bits(self.xf_mem[default_mtx_base + 5]),
-                f32::from_bits(self.xf_mem[default_mtx_base + 9]),
-                0.0,
-            ],
-            [
-                f32::from_bits(self.xf_mem[default_mtx_base + 2]),
-                f32::from_bits(self.xf_mem[default_mtx_base + 6]),
-                f32::from_bits(self.xf_mem[default_mtx_base + 10]),
-                0.0,
-            ],
-            [
-                f32::from_bits(self.xf_mem[default_mtx_base + 3]),
-                f32::from_bits(self.xf_mem[default_mtx_base + 7]),
-                f32::from_bits(self.xf_mem[default_mtx_base + 11]),
-                1.0,
-            ],
-        ])
     }
 
     fn rebuild_lighting_cache_if_dirty(&mut self) {

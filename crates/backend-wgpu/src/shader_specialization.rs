@@ -1,5 +1,5 @@
 use gecko::flipper::gx::regs::{AlphaCompare, AlphaOp, CompareFunc};
-use gecko::host::DrawData;
+use gecko::host::DrawState;
 use std::fs::File;
 use std::io::{BufWriter, Read, Write as IoWrite};
 use std::path::Path;
@@ -130,7 +130,7 @@ const TEV_INDIRECT_NAMES: [&str; 16] = [
 ];
 
 impl ShaderSpecializationKey {
-    pub(crate) fn from_draw(draw: &DrawData, alpha_cmp: AlphaCompare, shader: ShaderKey) -> Self {
+    pub(crate) fn from_draw(draw: &DrawState, alpha_cmp: AlphaCompare, shader: ShaderKey) -> Self {
         let tev_stages = usize::from(shader.num_tev_stages.min(16));
         let indirect_stages = u32::from(shader.num_indirect_stages.min(4));
 
@@ -307,7 +307,7 @@ impl ShaderSpecializationKey {
 }
 
 impl ShaderKey {
-    pub(crate) fn from_draw(draw: &DrawData, alpha_cmp: AlphaCompare) -> Self {
+    pub(crate) fn from_draw(draw: &DrawState, alpha_cmp: AlphaCompare) -> Self {
         let num_tev_stages = draw.num_tev_stages.clamp(1, 16);
         let num_indirect_stages = draw.num_indirect_stages.min(4);
         let has_lighting_c0 = draw.color_ctrl[0].enable() || draw.alpha_ctrl[0].enable();

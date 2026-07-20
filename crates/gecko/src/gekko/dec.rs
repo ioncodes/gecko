@@ -3,6 +3,7 @@ use crate::system::{System, SystemId};
 
 const DEC_INTERRUPT_BIT: u32 = 0x8000_0000;
 
+#[derive(Clone, Copy)]
 pub struct Decrementer {
     start_cycle: u64,
     start_value: u32,
@@ -57,8 +58,10 @@ pub fn cycles_until_underflow(value: u32) -> u64 {
 pub fn underflow_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     sys.gekko.dec.underflow(sys.scheduler.cycles);
     sys.gekko.spr.dec = u32::MAX;
-    sys.scheduler
-        .schedule_in(cycles_until_underflow(u32::MAX), self::underflow_handler);
+    sys.scheduler.schedule_in(
+        cycles_until_underflow(u32::MAX),
+        crate::scheduler::Handler::DecUnderflow,
+    );
     tracing::debug!(
         cycles = sys.scheduler.cycles,
         ee = sys.gekko.msr.external_interrupt_enable(),

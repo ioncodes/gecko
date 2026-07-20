@@ -5,6 +5,7 @@ use crate::system::{System, SystemId};
 
 const CLOCK_FREQUENCIES: [u64; 2] = [27_000_000, 54_000_000];
 
+#[derive(Clone, Copy)]
 pub struct VideoInterface {
     pub vtr: regs::VerticalTiming,
     pub htr0: regs::HorizontalTiming0,
@@ -289,34 +290,37 @@ pub fn ensure_half_line_scheduled<const SYSTEM: SystemId>(sys: &mut System<SYSTE
         let ticks_per_hl = sys.vi.ticks_per_half_line(SYSTEM);
         if ticks_per_hl > 0 {
             sys.vi.half_line_scheduled = true;
-            sys.scheduler.schedule_in(ticks_per_hl, |sys| {
-                let prev_hl = sys.vi.half_line_count;
-                sys.vi.on_half_line(sys.scheduler.cycles);
-                sys.vi.half_line_scheduled = false;
-
-                let curr_hl = sys.vi.half_line_count;
-                if curr_hl != prev_hl {
-                    let (odd_av_start, odd_av_end) = sys.vi.odd_field_active_half_lines();
-                    let (even_av_start, even_av_end) = sys.vi.even_field_active_half_lines();
-
-                    if curr_hl == odd_av_start || curr_hl == even_av_start {
-                        sys.vi.latched_xfb_base = sys.vi.xfb_addr();
-                        sys.vi.latched_even_field = sys.vi.in_even_field();
-                    }
-
-                    // Present at the end of active video so copies made while
-                    // the field is scanning out are included (Another Code: R
-                    // copies its split XFB halves mid-frame).
-                    if curr_hl == odd_av_end || curr_hl == even_av_end {
-                        crate::flipper::gx::present_xfb(sys);
-                    }
-                }
-
-                self::ensure_half_line_scheduled(sys);
-                self::refresh_interrupts(sys);
-            });
+            sys.scheduler
+                .schedule_in(ticks_per_hl, crate::scheduler::Handler::ViHalfLine);
         }
     }
+}
+
+pub fn half_line_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    let prev_hl = sys.vi.half_line_count;
+    sys.vi.on_half_line(sys.scheduler.cycles);
+    sys.vi.half_line_scheduled = false;
+
+    let curr_hl = sys.vi.half_line_count;
+    if curr_hl != prev_hl {
+        let (odd_av_start, odd_av_end) = sys.vi.odd_field_active_half_lines();
+        let (even_av_start, even_av_end) = sys.vi.even_field_active_half_lines();
+
+        if curr_hl == odd_av_start || curr_hl == even_av_start {
+            sys.vi.latched_xfb_base = sys.vi.xfb_addr();
+            sys.vi.latched_even_field = sys.vi.in_even_field();
+        }
+
+        // Present at the end of active video so copies made while
+        // the field is scanning out are included (Another Code: R
+        // copies its split XFB halves mid-frame).
+        if curr_hl == odd_av_end || curr_hl == even_av_end {
+            crate::flipper::gx::present_xfb(sys);
+        }
+    }
+
+    self::ensure_half_line_scheduled(sys);
+    self::refresh_interrupts(sys);
 }
 
 #[inline(always)]

@@ -271,6 +271,12 @@ impl ApplicationHandler<UserEvent> for App {
                                 _ => {}
                             }
                         }
+
+                        match key {
+                            KeyCode::F5 => self.ui.save_state_requested = true,
+                            KeyCode::F7 => self.ui.load_state_requested = true,
+                            _ => {}
+                        }
                     }
 
                     if !egui_consumed {
@@ -409,6 +415,10 @@ struct Args {
     /// Force interpreter dispatch for CPU/DSP/Vertex (default: JIT)
     #[arg(long)]
     interpreter: bool,
+
+    /// Load a savestate file right after boot
+    #[arg(long)]
+    load_state: Option<String>,
 }
 
 fn initial_window_size(target_aspect: TargetAspect) -> (u32, u32) {
@@ -539,6 +549,7 @@ fn main() {
 
     let ui = DebuggerUi {
         symbols,
+        savestate_path: gecko::savestate::state_path(game_id.as_deref()),
         ..DebuggerUi::default()
     };
 
@@ -546,6 +557,18 @@ fn main() {
         let (ppc_c, ppc_s, dsp_c, dsp_s, vtx_c, vtx_s) = emulator.load_jit_cache(id);
         if ppc_c > 0 || dsp_c > 0 || vtx_c > 0 || ppc_s > 0 || dsp_s > 0 || vtx_s > 0 {
             eprintln!("JIT cache loaded for {id}: ppc {ppc_c}/{ppc_s}, dsp {dsp_c}/{dsp_s}, vtx {vtx_c}/{vtx_s}");
+        }
+    }
+
+    if let Some(ref path) = args.load_state {
+        let path = std::path::Path::new(path);
+        let result = match &mut emulator {
+            EmulatorVariant::Gc(emu) => emu.load_state_from_file(path),
+            EmulatorVariant::Wii(emu) => emu.load_state_from_file(path),
+        };
+        match result {
+            Ok(()) => eprintln!("savestate loaded from {}", path.display()),
+            Err(err) => eprintln!("failed to load savestate: {err}"),
         }
     }
 

@@ -27,8 +27,10 @@ pub mod lut_wii {
 pub const IPL_RESET_VECTOR: u32 = 0xFFF0_0100;
 
 #[repr(C, align(16))]
+#[derive(Clone, Copy)]
 pub struct FprFile(pub [[f64; 2]; 32]);
 
+#[derive(Clone, Copy)]
 pub struct Gekko {
     pub gprs: [u32; 32],
     pub fprs: FprFile,

@@ -13,6 +13,9 @@ pub fn run<const SYSTEM: SystemId>(
     throttle: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
+    savestate_path: std::path::PathBuf,
+    save_state: Arc<AtomicBool>,
+    load_state: Arc<AtomicBool>,
 ) {
     let sleeper = SpinSleeper::default();
     let throttle_step = Duration::from_micros(5);
@@ -38,6 +41,20 @@ pub fn run<const SYSTEM: SystemId>(
         }
 
         emulator.run_until_vsync();
+
+        if save_state.swap(false, Ordering::Relaxed) {
+            match emulator.save_state_to_file(&savestate_path) {
+                Ok(()) => tracing::info!(path = %savestate_path.display(), "savestate saved"),
+                Err(err) => tracing::error!(%err, "savestate save failed"),
+            }
+        }
+
+        if load_state.swap(false, Ordering::Relaxed) {
+            match emulator.load_state_from_file(&savestate_path) {
+                Ok(()) => tracing::info!(path = %savestate_path.display(), "savestate loaded"),
+                Err(err) => tracing::error!(%err, "savestate load failed"),
+            }
+        }
     }
 
     if let Some(game_id) = game_id.as_deref() {

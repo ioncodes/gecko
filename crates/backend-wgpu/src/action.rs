@@ -6,12 +6,12 @@ use crate::{
 };
 use gecko::flipper::gx::draw::Primitive;
 use gecko::flipper::gx::regs::{CullMode, MagFilter, MinFilter, WrapMode};
-use gecko::host::{DrawData, GxAction};
+use gecko::host::{DrawData, DrawState, GxAction};
 use glam::{Mat4, UVec4, Vec4};
 #[cfg(feature = "gx-stats")]
 use std::sync::atomic::Ordering;
 
-fn draw_active_slot_mask(draw: &DrawData) -> u8 {
+fn draw_active_slot_mask(draw: &DrawState) -> u8 {
     let mut mask: u8 = 0;
 
     let num_stages = (draw.num_tev_stages as usize).min(draw.tev_orders.len());
@@ -60,6 +60,48 @@ fn pack_u32_slice_to_uvec4x4(data: &[u32]) -> [UVec4; 4] {
     ]
 }
 
+fn build_frame_uniform(draw: &DrawState, alpha_cmp: gecko::flipper::gx::regs::AlphaCompare) -> FrameUniforms {
+    FrameUniforms {
+        tev_color_regs: draw.tev_color_regs.map(Vec4::from),
+        tev_konst_colors: draw.tev_konst_colors.map(Vec4::from),
+        tev_color_env: pack_u32_slice_to_uvec4x4(&draw.tev_color_env),
+        tev_alpha_env: pack_u32_slice_to_uvec4x4(&draw.tev_alpha_env),
+        tev_orders: pack_u32_slice_to_uvec4x4(&draw.tev_orders),
+        tev_ksel: pack_u32_slice_to_uvec4x4(&draw.tev_ksel),
+        num_tev_stages: draw.num_tev_stages as u32,
+        alpha_ref0: alpha_cmp.ref0() as f32 / 255.0,
+        alpha_ref1: alpha_cmp.ref1() as f32 / 255.0,
+        alpha_comp0: alpha_cmp.comp0() as u32,
+        alpha_comp1: alpha_cmp.comp1() as u32,
+        alpha_op: alpha_cmp.op() as u32,
+        _pad0: [0; 2],
+        indirect_matrices: draw.indirect_matrices.map(glam::IVec4::from),
+        indirect_scales: draw.indirect_scales.map(glam::UVec4::from),
+        indirect_refs: draw.indirect_refs,
+        num_indirect_stages: draw.num_indirect_stages as u32,
+        bump_imask: draw.bump_imask,
+        _pad1: 0,
+        tev_indirect: pack_u32_slice_to_uvec4x4(&draw.tev_indirect),
+        light_colors: draw.lights.each_ref().map(|l| Vec4::from(l.color)),
+        light_cosatt: draw.lights.each_ref().map(|l| Vec4::from(l.cosatt)),
+        light_distatt: draw.lights.each_ref().map(|l| Vec4::from(l.distatt)),
+        light_pos: draw.lights.each_ref().map(|l| Vec4::from(l.position)),
+        light_dir: draw.lights.each_ref().map(|l| Vec4::from(l.direction)),
+        color_ctrl0: draw.color_ctrl[0].raw(),
+        alpha_ctrl0: draw.alpha_ctrl[0].raw(),
+        color_ctrl1: draw.color_ctrl[1].raw(),
+        alpha_ctrl1: draw.alpha_ctrl[1].raw(),
+        ambient_color0: Vec4::from(draw.ambient_color[0]),
+        ambient_color1: Vec4::from(draw.ambient_color[1]),
+        material_color0: Vec4::from(draw.material_color[0]),
+        material_color1: Vec4::from(draw.material_color[1]),
+        ztex_bias: draw.ztex_bias,
+        ztex_type: draw.ztex_type as u32,
+        ztex_op: draw.ztex_op as u32,
+        _pad2: 0,
+    }
+}
+
 impl GxRenderer {
     fn current_pipeline_key(&self, ztex: bool) -> PipelineKey {
         let blend = self.current_blend_mode;
@@ -86,6 +128,22 @@ impl GxRenderer {
         BindGroupCacheKey {
             tex_keys: self.current_texture_ids,
             sampler_keys: self.current_sampler_keys,
+        }
+    }
+
+    /// Append `draw`'s vertices and indices onto the draw already recorded at
+    /// `previous`, rebasing the indices onto the merged vertex range.
+    fn merge_into_previous(&mut self, previous: usize, draw: &DrawData) {
+        let vertex_bias = self.scratch_draws[previous].vertex_count;
+        let (_, additional_indices) = self::emit_draw_indices(draw, &mut self.scratch_indices, vertex_bias);
+
+        let merged = &mut self.scratch_draws[previous];
+        merged.vertex_count += draw.vertex_count;
+        merged.index_count += additional_indices;
+
+        #[cfg(feature = "renderdoc-capture")]
+        {
+            self.draw_primitives[previous] = Primitive::Triangles;
         }
     }
 
@@ -136,6 +194,10 @@ impl GxRenderer {
         let draw_struct_size = DRAW_UNIFORMS_SIZE.get() as usize;
         let frame_stride = self.frame_stride;
         let frame_struct_size = FRAME_UNIFORMS_SIZE.get() as usize;
+
+        if !matches!(action, GxAction::Draw(_)) {
+            self.draw_fast_path_compatible = false;
+        }
 
         match action {
             GxAction::SetProjection { matrix, is_perspective } => {
@@ -277,12 +339,62 @@ impl GxRenderer {
             }
 
             GxAction::Draw(draw) => {
+                let state_changed = draw.state.is_some();
+                if let Some(state) = draw.state.as_ref() {
+                    self.current_draw_state.clone_from(state);
+                    let shader_key = ShaderKey::from_draw(state, self.current_alpha_compare);
+                    self.current_shader_key = Some(shader_key);
+                    self.current_specialization_key =
+                        ShaderSpecializationKey::from_draw(state, self.current_alpha_compare, shader_key);
+                    self.current_active_texture_mask = draw_active_slot_mask(state);
+                }
+
                 if cull_all_suppresses_draw(self.current_cull_mode, draw.primitive) {
                     self.last_frame_uniform_index = None;
+                    self.draw_fast_path_compatible = false;
                     return;
                 }
 
-                let shader_key = ShaderKey::from_draw(draw, self.current_alpha_compare);
+                if !draw_emits_triangles(draw) {
+                    tracing::warn!("draw call produced zero vertices, skipping");
+                    self.draw_fast_path_compatible = false;
+                    return;
+                }
+
+                if !state_changed
+                    && self.draw_fast_path_compatible
+                    && let Some(previous) = self.scratch_draws.len().checked_sub(1)
+                    && let Some(shader_key) = self.current_shader_key
+                {
+                    let stride = crate::packed_vertex_stride(shader_key.active_texcoords);
+                    let previous_draw = self.scratch_draws[previous];
+                    if previous_draw.src_vertex_index + previous_draw.vertex_count == draw.base_vertex
+                        && previous_draw.packed_vertex_stride == stride
+                    {
+                        self.merge_into_previous(previous, draw);
+                        return;
+                    }
+                }
+
+                let state = &self.current_draw_state;
+
+                let shader_key = self
+                    .current_shader_key
+                    .unwrap_or_else(|| ShaderKey::from_draw(state, self.current_alpha_compare));
+                let specialization = if self.current_shader_key.is_some() {
+                    self.current_specialization_key
+                } else {
+                    ShaderSpecializationKey::from_draw(state, self.current_alpha_compare, shader_key)
+                };
+                let ztex_enabled = state.ztex_op != 0;
+                let active = if self.current_shader_key.is_some() {
+                    self.current_active_texture_mask
+                } else {
+                    draw_active_slot_mask(state)
+                };
+                let num_indirect_stages = state.num_indirect_stages;
+                let next_frame_uniform = (state_changed || self.last_frame_uniform_index.is_none())
+                    .then(|| build_frame_uniform(state, self.current_alpha_compare));
                 if !self.shader_cache.contains_key(&shader_key) {
                     #[cfg(feature = "gx-stats")]
                     let shader_started = std::time::Instant::now();
@@ -301,10 +413,10 @@ impl GxRenderer {
                     }
                     tracing::info!(?shader_key, "compiled specialized shader variant");
                 }
-                let pipeline_key = self.current_pipeline_key(draw.ztex_op != 0);
+                let pipeline_key = self.current_pipeline_key(ztex_enabled);
                 let full_key = FullPipelineKey {
                     shader: shader_key,
-                    specialization: ShaderSpecializationKey::from_draw(draw, self.current_alpha_compare, shader_key),
+                    specialization,
                     fixed: pipeline_key,
                 };
                 if !self.pipeline_cache.contains_key(&full_key) {
@@ -334,10 +446,6 @@ impl GxRenderer {
 
                 let first_vertex = draw.base_vertex;
                 let vertex_count = draw.vertex_count;
-                if !draw_emits_triangles(draw) {
-                    tracing::warn!("draw call produced zero vertices, skipping");
-                    return;
-                }
 
                 // Build per-draw uniform using tracked projection. The
                 // freecam view transform only applies to perspective draws
@@ -347,10 +455,8 @@ impl GxRenderer {
                 } else {
                     self.current_projection
                 };
-                let active = draw_active_slot_mask(draw);
-
                 let mut tex_dims = [UVec4::splat(1); 4];
-                if draw.num_indirect_stages > 0 {
+                if num_indirect_stages > 0 {
                     for slot in 0..8 {
                         if (active >> slot) & 1 == 0 {
                             continue;
@@ -372,58 +478,14 @@ impl GxRenderer {
                 let draw_uniform = DrawUniforms { mvp, tex_dims };
                 let draw_uniform_bytes = bytemuck::bytes_of(&draw_uniform);
                 let bg_key = trim_bg_key(self.current_bind_group_key(), active);
-                // Matches the WESL `VsIn` layout gated by
-                // `TEXCOORD_N_ENABLED`: 5 fixed attrs (68b) + N texcoord
-                // attrs (12 bytes each).
-                let stride = 68 + 12 * shader_key.active_texcoords as u32;
+                let stride = crate::packed_vertex_stride(shader_key.active_texcoords);
 
                 // Build a fresh FrameUniforms slot only when the producer
                 // signaled state changed since the last draw or this is the
                 // first draw of the flush.
                 let frame_bytes_len_before = self.frame_uniform_bytes.len();
                 let mut frame_was_pushed = false;
-                let frame_idx = if draw.frame_dirty || self.last_frame_uniform_index.is_none() {
-                    let alpha_cmp = self.current_alpha_compare;
-                    let frame_uniform = FrameUniforms {
-                        tev_color_regs: draw.tev_color_regs.map(Vec4::from),
-                        tev_konst_colors: draw.tev_konst_colors.map(Vec4::from),
-                        tev_color_env: pack_u32_slice_to_uvec4x4(&draw.tev_color_env),
-                        tev_alpha_env: pack_u32_slice_to_uvec4x4(&draw.tev_alpha_env),
-                        tev_orders: pack_u32_slice_to_uvec4x4(&draw.tev_orders),
-                        tev_ksel: pack_u32_slice_to_uvec4x4(&draw.tev_ksel),
-                        num_tev_stages: draw.num_tev_stages as u32,
-                        alpha_ref0: alpha_cmp.ref0() as f32 / 255.0,
-                        alpha_ref1: alpha_cmp.ref1() as f32 / 255.0,
-                        alpha_comp0: alpha_cmp.comp0() as u32,
-                        alpha_comp1: alpha_cmp.comp1() as u32,
-                        alpha_op: alpha_cmp.op() as u32,
-                        _pad0: [0; 2],
-                        indirect_matrices: draw.indirect_matrices.map(glam::IVec4::from),
-                        indirect_scales: draw.indirect_scales.map(glam::UVec4::from),
-                        indirect_refs: draw.indirect_refs,
-                        num_indirect_stages: draw.num_indirect_stages as u32,
-                        bump_imask: draw.bump_imask,
-                        _pad1: 0,
-                        tev_indirect: pack_u32_slice_to_uvec4x4(&draw.tev_indirect),
-                        light_colors: draw.lights.each_ref().map(|l| Vec4::from(l.color)),
-                        light_cosatt: draw.lights.each_ref().map(|l| Vec4::from(l.cosatt)),
-                        light_distatt: draw.lights.each_ref().map(|l| Vec4::from(l.distatt)),
-                        light_pos: draw.lights.each_ref().map(|l| Vec4::from(l.position)),
-                        light_dir: draw.lights.each_ref().map(|l| Vec4::from(l.direction)),
-                        color_ctrl0: draw.color_ctrl[0].raw(),
-                        alpha_ctrl0: draw.alpha_ctrl[0].raw(),
-                        color_ctrl1: draw.color_ctrl[1].raw(),
-                        alpha_ctrl1: draw.alpha_ctrl[1].raw(),
-                        ambient_color0: Vec4::from(draw.ambient_color[0]),
-                        ambient_color1: Vec4::from(draw.ambient_color[1]),
-                        material_color0: Vec4::from(draw.material_color[0]),
-                        material_color1: Vec4::from(draw.material_color[1]),
-                        ztex_bias: draw.ztex_bias,
-                        ztex_type: draw.ztex_type as u32,
-                        ztex_op: draw.ztex_op as u32,
-                        _pad2: 0,
-                    };
-
+                let frame_idx = if let Some(frame_uniform) = next_frame_uniform {
                     let fstart = self.frame_uniform_bytes.len();
                     self.frame_uniform_bytes.resize(fstart + frame_stride, 0);
                     self.frame_uniform_bytes[fstart..fstart + frame_struct_size]
@@ -465,15 +527,7 @@ impl GxRenderer {
                         frame_was_pushed = false;
                     }
 
-                    let vertex_bias = self.scratch_draws[previous].vertex_count;
-                    let (_, additional_indices) = emit_draw_indices(draw, &mut self.scratch_indices, vertex_bias);
-                    let merged = &mut self.scratch_draws[previous];
-                    merged.vertex_count += vertex_count;
-                    merged.index_count += additional_indices;
-                    #[cfg(feature = "renderdoc-capture")]
-                    {
-                        self.draw_primitives[previous] = Primitive::Triangles;
-                    }
+                    self.merge_into_previous(previous, draw);
                 } else {
                     let first_index = self.scratch_indices.len() as u32;
                     let (_, index_count) = emit_draw_indices(draw, &mut self.scratch_indices, 0);
@@ -506,6 +560,7 @@ impl GxRenderer {
                 }
 
                 debug_assert!(!frame_was_pushed || self.last_frame_uniform_index == Some(frame_idx));
+                self.draw_fast_path_compatible = true;
             }
 
             GxAction::CopyXfb {

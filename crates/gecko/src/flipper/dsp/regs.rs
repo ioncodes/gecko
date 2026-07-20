@@ -112,14 +112,12 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for ControlStatus {
         match (was_active, now_active) {
             (false, true) => {
                 sys.dsp.scheduler_suspended = false;
-                sys.scheduler.schedule_in(
-                    scheduler::dsp_batch_interval(SYSTEM),
-                    scheduler::dsp_batch_handler::<SYSTEM>,
-                );
+                sys.scheduler
+                    .schedule_in(scheduler::dsp_batch_interval(SYSTEM), scheduler::Handler::DspBatch);
             }
             (true, false) => {
                 sys.dsp.scheduler_suspended = false;
-                sys.scheduler.cancel(scheduler::dsp_batch_handler::<SYSTEM>);
+                sys.scheduler.cancel(scheduler::Handler::DspBatch);
             }
             _ => {}
         }
@@ -378,10 +376,12 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AramDmaControl {
         const ARAM_DMA_DELAY_US: u64 = 20;
         sys.scheduler.schedule_in(
             crate::scheduler::microseconds_to_cycles(SYSTEM, ARAM_DMA_DELAY_US),
-            |sys| {
-                sys.dsp.process_aram_dma(&mut sys.mmio);
-                dsp::refresh_interrupts(sys);
-            },
+            scheduler::Handler::AramDma,
         );
     }
+}
+
+pub fn aram_dma_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    sys.dsp.process_aram_dma(&mut sys.mmio);
+    dsp::refresh_interrupts(sys);
 }

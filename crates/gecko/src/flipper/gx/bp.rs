@@ -25,6 +25,14 @@ impl GraphicsProcessor {
             self.stats.bp_writes += 1;
         }
 
+        let command_write = matches!(
+            idx,
+            BP_BP_MASK | BP_LOAD_TLUT1 | BP_PE_DONE | BP_PE_TOKEN | BP_PE_TOKEN_INT | BP_PE_COPY_CMD
+        );
+        if val == old && !command_write {
+            return;
+        }
+
         tracing::debug!(
             reg_idx = format!("{idx:02X}"),
             value = format!("{val:08X}"),

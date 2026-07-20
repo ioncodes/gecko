@@ -194,12 +194,12 @@ fn write_spr<const SYSTEM: SystemId>(sys: *mut System<SYSTEM>, num: u32, val: u3
     let sys = unsafe { &mut *sys };
     match num {
         22 => {
-            sys.scheduler.cancel(crate::gekko::dec::underflow_handler::<SYSTEM>);
+            sys.scheduler.cancel(crate::scheduler::Handler::DecUnderflow);
             sys.gekko.dec.write(sys.scheduler.cycles, val);
             sys.gekko.spr.dec = val;
             sys.scheduler.schedule_in(
                 crate::gekko::dec::cycles_until_underflow(val),
-                crate::gekko::dec::underflow_handler::<SYSTEM>,
+                crate::scheduler::Handler::DecUnderflow,
             );
         }
         284 => sys.scheduler.set_timebase_lower(val),

@@ -3,6 +3,7 @@ pub mod regs;
 use crate::flipper::pi::InterruptFlag;
 use crate::system::{System, SystemId};
 
+#[derive(Clone, Copy)]
 pub struct PixelEngine {
     pub zconf: regs::ZConfig,
     pub alphaconf: regs::AlphaConfig,

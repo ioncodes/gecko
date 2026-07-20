@@ -36,6 +36,15 @@ impl DiskInterface {
 }
 
 impl IosDevice for DiskInterface {
+    fn save_state(&mut self, w: &mut crate::savestate::StateWriter) {
+        w.u32(self.last_error);
+    }
+
+    fn load_state(&mut self, r: &mut crate::savestate::StateReader<'_>) -> Result<(), crate::savestate::StateError> {
+        self.last_error = r.u32()?;
+        Ok(())
+    }
+
     fn ioctl(
         &mut self,
         ctx: &mut DeviceContext<'_>,

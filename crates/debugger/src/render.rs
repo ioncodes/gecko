@@ -188,6 +188,22 @@ impl RenderState {
                             debugger_ui.debugger.set_state(EmulatorState::RunUntilDsp);
                             ui.close();
                         }
+
+                        ui.separator();
+
+                        if ui.button(format!("{} Save State (F5)", icons::FLOPPY_DISK)).clicked() {
+                            debugger_ui.save_state_requested = true;
+                            ui.close();
+                        }
+                        if ui.button(format!("{} Load State (F7)", icons::FOLDER_OPEN)).clicked() {
+                            debugger_ui.load_state_requested = true;
+                            ui.close();
+                        }
+
+                        if !debugger_ui.savestate_last_result.is_empty() {
+                            ui.separator();
+                            ui.label(debugger_ui.savestate_last_result.as_str());
+                        }
                     });
 
                     ui.menu_button("Windows", |ui| {
@@ -378,13 +394,29 @@ impl RenderState {
             }
         }
 
+        if std::mem::take(&mut debugger_ui.save_state_requested) {
+            debugger_ui.savestate_last_result = match emulator.save_state_to_file(&debugger_ui.savestate_path) {
+                Ok(()) => format!("state saved to {}", debugger_ui.savestate_path.display()),
+                Err(err) => format!("state save failed: {err}"),
+            };
+        }
+
+        if std::mem::take(&mut debugger_ui.load_state_requested) {
+            debugger_ui.savestate_last_result = match emulator.load_state_from_file(&debugger_ui.savestate_path) {
+                Ok(()) => format!("state loaded from {}", debugger_ui.savestate_path.display()),
+                Err(err) => format!("state load failed: {err}"),
+            };
+        }
+
         if std::mem::take(&mut debugger_ui.gx_invalidate_requested) {
             emulator.gx.texture_hashes.clear();
             emulator.render_sink.exec(gecko::host::GxAction::InvalidateCaches);
         }
 
         if let Some((matrix, enabled)) = debugger_ui.freecam.take_action() {
-            emulator.render_sink.exec(gecko::host::GxAction::SetFreelook { matrix, enabled });
+            emulator
+                .render_sink
+                .exec(gecko::host::GxAction::SetFreelook { matrix, enabled });
         }
         #[cfg(not(target_arch = "wasm32"))]
         if std::mem::take(&mut debugger_ui.gx_dump_requested) {

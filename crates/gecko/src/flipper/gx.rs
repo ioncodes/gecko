@@ -513,3 +513,157 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         crate::flipper::pe::refresh_interrupts(self);
     }
 }
+
+impl GraphicsProcessor {
+    pub fn save_state(&self, w: &mut crate::savestate::StateWriter) {
+        w.bool(self.raise_interrupt);
+        w.bool(self.raise_token_interrupt);
+        w.u16(self.pending_token);
+        w.bool(self.token_dirty);
+        w.pod(&self.projection);
+        w.u32(self.bp_mask);
+
+        w.bytes(bytemuck::cast_slice(&self.bp_regs));
+        w.bytes(bytemuck::cast_slice(&self.cp_regs));
+        w.bytes(bytemuck::cast_slice(&self.xf_mem));
+        w.bytes(bytemuck::cast_slice(&self.palette_mem));
+        w.bytes(&self.fifo);
+
+        w.pod(&self.cur_textures);
+        w.pod(&self.cur_tluts);
+        w.pod(&self.cur_tev_color_env);
+        w.pod(&self.cur_tev_alpha_env);
+        w.pod(&self.cur_tev_color_regs_lo);
+        w.pod(&self.cur_tev_color_regs_hi);
+        w.pod(&self.cur_tev_const_regs_lo);
+        w.pod(&self.cur_tev_const_regs_hi);
+        w.pod(&self.cur_tev_orders);
+        w.u8(self.cur_num_tev_stages);
+        w.pod(&self.cur_tev_konst_colors);
+        w.pod(&self.cur_indirect_matrices);
+        w.pod(&self.cur_indirect_scales);
+        w.pod(&self.cur_indirect_refs);
+        w.pod(&self.cur_tev_indirect);
+        w.u8(self.cur_num_indirect_stages);
+        w.u32(self.cur_bump_imask);
+        w.pod(&self.cur_zmode);
+        w.pod(&self.cur_pe_control);
+        w.pod(&self.cur_blend_mode);
+        w.pod(&self.cur_alpha_compare);
+        w.pod(&self.cur_viewport);
+        w.pod(&self.cur_scissor);
+        w.i32(self.cur_scissor_offset_x);
+        w.i32(self.cur_scissor_offset_y);
+
+        w.u32(self.xfb_regions.len() as u32);
+        for (&base, region) in &self.xfb_regions {
+            w.u32(base);
+            w.u32(region.stride);
+            w.u64(region.first_seq);
+            w.u64(region.copy_seq);
+            w.u64(region.seen_present_seq);
+        }
+
+        w.bool(self.xfb_dirty);
+        w.u64(self.xfb_copy_seq);
+        w.u64(self.xfb_present_seq);
+        w.u32(self.xfb_last_present_base);
+        w.u32(self.xfb_last_seen_base);
+        w.u32(self.xfb_prev_base);
+        w.u32(self.xfb_fields_since_flip);
+        w.u32(self.xfb_flip_interval);
+        w.u32(self.xfb_fields_since_emit);
+        w.u64(self.xfb_last_emit_gen);
+
+        w.pod(&self.cached_color_ctrl);
+        w.pod(&self.cached_alpha_ctrl);
+        w.pod(&self.cached_ambient_color);
+        w.pod(&self.cached_material_color);
+        w.pod(&self.cached_lights);
+    }
+
+    pub fn load_state(
+        &mut self,
+        r: &mut crate::savestate::StateReader<'_>,
+    ) -> Result<(), crate::savestate::StateError> {
+        self.raise_interrupt = r.bool()?;
+        self.raise_token_interrupt = r.bool()?;
+        self.pending_token = r.u16()?;
+        self.token_dirty = r.bool()?;
+        self.projection = r.pod()?;
+        self.bp_mask = r.u32()?;
+
+        r.bytes_into(bytemuck::cast_slice_mut(&mut self.bp_regs))?;
+        r.bytes_into(bytemuck::cast_slice_mut(&mut self.cp_regs))?;
+        r.bytes_into(bytemuck::cast_slice_mut(&mut self.xf_mem))?;
+        r.bytes_into(bytemuck::cast_slice_mut(&mut self.palette_mem))?;
+
+        self.fifo.clear();
+        self.fifo.extend_from_slice(r.bytes()?);
+
+        self.cur_textures = r.pod()?;
+        self.cur_tluts = r.pod()?;
+        self.cur_tev_color_env = r.pod()?;
+        self.cur_tev_alpha_env = r.pod()?;
+        self.cur_tev_color_regs_lo = r.pod()?;
+        self.cur_tev_color_regs_hi = r.pod()?;
+        self.cur_tev_const_regs_lo = r.pod()?;
+        self.cur_tev_const_regs_hi = r.pod()?;
+        self.cur_tev_orders = r.pod()?;
+        self.cur_num_tev_stages = r.u8()?;
+        self.cur_tev_konst_colors = r.pod()?;
+        self.cur_indirect_matrices = r.pod()?;
+        self.cur_indirect_scales = r.pod()?;
+        self.cur_indirect_refs = r.pod()?;
+        self.cur_tev_indirect = r.pod()?;
+        self.cur_num_indirect_stages = r.u8()?;
+        self.cur_bump_imask = r.u32()?;
+        self.cur_zmode = r.pod()?;
+        self.cur_pe_control = r.pod()?;
+        self.cur_blend_mode = r.pod()?;
+        self.cur_alpha_compare = r.pod()?;
+        self.cur_viewport = r.pod()?;
+        self.cur_scissor = r.pod()?;
+        self.cur_scissor_offset_x = r.i32()?;
+        self.cur_scissor_offset_y = r.i32()?;
+
+        self.xfb_regions.clear();
+        let region_count = r.u32()?;
+        for _ in 0..region_count {
+            let base = r.u32()?;
+            let region = XfbRegion {
+                stride: r.u32()?,
+                first_seq: r.u64()?,
+                copy_seq: r.u64()?,
+                seen_present_seq: r.u64()?,
+            };
+            self.xfb_regions.insert(base, region);
+        }
+
+        self.xfb_dirty = r.bool()?;
+        self.xfb_copy_seq = r.u64()?;
+        self.xfb_present_seq = r.u64()?;
+        self.xfb_last_present_base = r.u32()?;
+        self.xfb_last_seen_base = r.u32()?;
+        self.xfb_prev_base = r.u32()?;
+        self.xfb_fields_since_flip = r.u32()?;
+        self.xfb_flip_interval = r.u32()?;
+        self.xfb_fields_since_emit = r.u32()?;
+        self.xfb_last_emit_gen = r.u64()?;
+
+        self.cached_color_ctrl = r.pod()?;
+        self.cached_alpha_ctrl = r.pod()?;
+        self.cached_ambient_color = r.pod()?;
+        self.cached_material_color = r.pod()?;
+        self.cached_lights = r.pod()?;
+
+        self.dl_scratch.clear();
+        self.texture_hashes.clear();
+        self.tex_dirty = 0xFF;
+        self.lighting_dirty = true;
+        self.konst_dirty = true;
+        self.frame_state_dirty = true;
+
+        Ok(())
+    }
+}

@@ -81,6 +81,8 @@ pub enum Message {
     PlayerToggleUncapped(window::Id),
     PlayerTogglePause(window::Id),
     PlayerScreenshot(window::Id),
+    PlayerSaveState(window::Id),
+    PlayerLoadState(window::Id),
 }
 
 #[derive(Debug, Clone)]
@@ -680,6 +682,24 @@ impl App {
                 };
 
                 player.toast = Some(Toast::new(title, detail));
+                Task::none()
+            }
+            Message::PlayerSaveState(id) => {
+                let Some(player) = self.players.get_mut(&id) else {
+                    return Task::none();
+                };
+
+                player.state.request_save_state();
+                player.toast = Some(Toast::new("Saving state", player.game.game_id.clone()));
+                Task::none()
+            }
+            Message::PlayerLoadState(id) => {
+                let Some(player) = self.players.get_mut(&id) else {
+                    return Task::none();
+                };
+
+                player.state.request_load_state();
+                player.toast = Some(Toast::new("Loading state", player.game.game_id.clone()));
                 Task::none()
             }
         }

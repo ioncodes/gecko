@@ -42,6 +42,21 @@ impl Command {
             _ => Command::Unknown,
         }
     }
+
+    fn to_byte(self) -> u8 {
+        match self {
+            Command::NintendoId => 0x00,
+            Command::ReadArray => 0x52,
+            Command::SetInterrupt => 0x81,
+            Command::ReadStatus => 0x83,
+            Command::ReadId => 0x85,
+            Command::ClearStatus => 0x89,
+            Command::SectorErase => 0xF1,
+            Command::PageProgram => 0xF2,
+            Command::ChipErase => 0xF4,
+            Command::Unknown => 0xFF,
+        }
+    }
 }
 
 pub struct ExiMemoryCard {
@@ -240,5 +255,30 @@ impl super::device::ExiDevice for ExiMemoryCard {
             self.data[(start + i) & mask] = *b;
         }
         self.flush();
+    }
+
+    fn save_state(&mut self, w: &mut crate::savestate::StateWriter) {
+        w.bytes(&self.data);
+        w.u8(self.command.to_byte());
+        w.u32(self.position);
+        w.u32(self.address);
+        w.u8(self.status);
+        w.u8(self.interrupt_switch);
+        w.pod(&self.program_buffer);
+    }
+
+    fn load_state(&mut self, r: &mut crate::savestate::StateReader<'_>) -> Result<(), crate::savestate::StateError> {
+        r.bytes_into(&mut self.data)?;
+
+        self.command = Command::from_byte(r.u8()?);
+
+        self.position = r.u32()?;
+        self.address = r.u32()?;
+        self.status = r.u8()?;
+        self.interrupt_switch = r.u8()?;
+        self.program_buffer = r.pod()?;
+
+        self.flush();
+        Ok(())
     }
 }

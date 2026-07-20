@@ -216,6 +216,25 @@ impl super::device::ExiDevice for ExiMacronix {
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
     }
+
+    fn save_state(&mut self, w: &mut crate::savestate::StateWriter) {
+        w.pod(&self.sram.data);
+        w.bool(self.sram_dirty);
+        w.u32(self.command);
+        w.u64(self.bytes_received as u64);
+        w.u64(self.cursor as u64);
+    }
+
+    fn load_state(&mut self, r: &mut crate::savestate::StateReader<'_>) -> Result<(), crate::savestate::StateError> {
+        self.sram.data = r.pod()?;
+        self.sram_dirty = r.bool()?;
+        self.command = r.u32()?;
+        self.bytes_received = r.u64()? as usize;
+        self.cursor = r.u64()? as usize;
+
+        self.flush_sram();
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]

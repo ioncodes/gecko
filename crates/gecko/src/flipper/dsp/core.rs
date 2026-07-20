@@ -39,6 +39,7 @@ pub mod reg {
     pub const AC1M: u8 = 31;
 }
 
+#[derive(Clone, Copy)]
 pub struct Registers {
     pub pc: u16,
     pub nia: u16,

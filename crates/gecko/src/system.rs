@@ -712,16 +712,11 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             .scheduler
             .event_fire_counts
             .iter()
-            .map(|(&addr, &count)| (Self::resolve_handler_name(addr), count))
+            .map(|(&handler, &count)| (format!("{handler:?}"), count))
             .collect();
         entries.sort_by(|a, b| b.1.cmp(&a.1));
         entries.truncate(n);
         entries
-    }
-
-    #[cfg(all(feature = "jit-stats", feature = "jit"))]
-    fn resolve_handler_name(addr: usize) -> String {
-        crate::profile::resolve_symbol(addr).unwrap_or_else(|| format!("<unresolved {:#018x}>", addr))
     }
 
     #[cfg(feature = "profile")]
@@ -868,8 +863,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[inline(always)]
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn drain_events(&mut self) {
-        while let Some(f) = self.scheduler.poll() {
-            f(self);
+        while let Some(handler) = self.scheduler.poll() {
+            handler.resolve::<SYSTEM>()(self);
         }
     }
 

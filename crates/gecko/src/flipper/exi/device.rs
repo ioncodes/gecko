@@ -35,6 +35,12 @@ pub trait ExiDevice: Send {
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         None
     }
+
+    fn save_state(&mut self, _w: &mut crate::savestate::StateWriter) {}
+
+    fn load_state(&mut self, _r: &mut crate::savestate::StateReader<'_>) -> Result<(), crate::savestate::StateError> {
+        Ok(())
+    }
 }
 
 pub struct ExiDummy;

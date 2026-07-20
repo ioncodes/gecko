@@ -21,6 +21,8 @@ fn hotkey_message(hotkey: Hotkey, window: window::Id) -> Message {
         Hotkey::Fullscreen => Message::PlayerToggleFullscreen(window),
         Hotkey::Overlay => Message::PlayerToggleOverlay(window),
         Hotkey::Screenshot => Message::PlayerScreenshot(window),
+        Hotkey::SaveState => Message::PlayerSaveState(window),
+        Hotkey::LoadState => Message::PlayerLoadState(window),
     }
 }
 

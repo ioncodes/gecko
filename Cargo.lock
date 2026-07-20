@@ -2310,6 +2310,7 @@ dependencies = [
  "twox-hash",
  "windows-sys 0.61.2",
  "zerocopy",
+ "zstd",
 ]
 
 [[package]]

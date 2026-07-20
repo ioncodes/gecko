@@ -1,5 +1,6 @@
 use crate::hollywood::regs::{HwCompat, HwPllAi, HwPllAiExt};
 
+#[derive(Clone, Copy)]
 pub struct Compat {
     pub compat: HwCompat,
     pub pll_ai: HwPllAi,

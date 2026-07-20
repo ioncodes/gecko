@@ -1,5 +1,6 @@
 pub mod regs;
 
+#[derive(Clone, Copy)]
 pub struct ProcessorInterface {
     pub intsr: regs::InterruptCause,
     pub intmr: regs::InterruptMask,

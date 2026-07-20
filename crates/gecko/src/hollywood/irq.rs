@@ -1,6 +1,7 @@
 use crate::hollywood::regs::{Cause, Mask};
 use crate::system::{System, SystemId};
 
+#[derive(Clone, Copy)]
 pub struct Irq {
     pub cause: Cause,
     pub mask: Mask,

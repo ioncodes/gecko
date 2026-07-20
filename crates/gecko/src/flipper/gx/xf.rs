@@ -13,7 +13,66 @@ fn ranges_overlap(a_begin: usize, a_end: usize, b_begin: usize, b_end: usize) ->
     a_begin < b_end && b_begin < a_end
 }
 
+#[derive(Clone, Copy, Default)]
+struct XfDirty {
+    projection: bool,
+    viewport: bool,
+    lighting: bool,
+}
+
 impl GraphicsProcessor {
+    fn store_xf_regs(&mut self, base: usize, values: impl ExactSizeIterator<Item = u32>) -> XfDirty {
+        let end = base + values.len();
+
+        let tracked = self::ranges_overlap(base, end, XF_PROJECTION_BASE, XF_PROJECTION_END + 1)
+            || self::ranges_overlap(base, end, XF_VIEWPORT_BASE, XF_VIEWPORT_END + 1)
+            || self::ranges_overlap(base, end, XF_LIGHT_BASE, XF_LIGHT_END)
+            || self::ranges_overlap(base, end, XF_CHAN_CFG_BEGIN, XF_CHAN_CFG_END);
+
+        let mut dirty = XfDirty::default();
+
+        for (i, val) in values.enumerate() {
+            let reg = base + i;
+            if reg < self.xf_mem.len() {
+                if tracked && self.xf_mem[reg] != val {
+                    dirty.projection |= (XF_PROJECTION_BASE..=XF_PROJECTION_END).contains(&reg);
+                    dirty.viewport |= (XF_VIEWPORT_BASE..=XF_VIEWPORT_END).contains(&reg);
+                    dirty.lighting |= (XF_LIGHT_BASE..XF_LIGHT_END).contains(&reg)
+                        || (XF_CHAN_CFG_BEGIN..XF_CHAN_CFG_END).contains(&reg);
+                }
+                self.xf_mem[reg] = val;
+            }
+
+            tracing::debug!(
+                reg_idx = format!("{reg:04X}"),
+                value = format!("{val:08X}"),
+                "XF register write"
+            );
+        }
+
+        dirty
+    }
+
+    fn apply_xf_dirty(&mut self, renderer: &mut dyn RenderSink, dirty: XfDirty) {
+        if dirty.projection {
+            self.rebuild_projection();
+            renderer.exec(GxAction::SetProjection {
+                matrix: self.projection.0,
+                is_perspective: self.xf_mem[XF_PROJECTION_END] == 0,
+            });
+        }
+
+        if dirty.viewport {
+            self.rebuild_viewport();
+            renderer.exec(GxAction::SetViewport(self.cur_viewport));
+        }
+
+        if dirty.lighting {
+            self.lighting_dirty = true;
+            self.frame_state_dirty = true;
+        }
+    }
+
     #[inline(always)]
     pub fn xf_transform_3x4(&self, base: usize, v: [f32; 3]) -> Vec3 {
         let m: [f32; 12] = std::array::from_fn(|i| f32::from_bits(self.xf_mem[base + i]));
@@ -104,49 +163,19 @@ impl GraphicsProcessor {
         let length = u16::from_be_bytes([data[0], data[1]]) as usize;
         let addr = u16::from_be_bytes([data[2], data[3]]) as usize;
         let n = length + 1;
-        let end = addr + n;
 
         #[cfg(feature = "gx-stats")]
         {
             self.stats.xf_writes += n as u64;
         }
 
-        for i in 0..n {
-            let offset = 4 + i * 4;
-            let val = u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
-            let reg = addr + i;
-            if reg < self.xf_mem.len() {
-                self.xf_mem[reg] = val;
-            }
+        let values = data[4..4 + n * 4]
+            .chunks_exact(4)
+            .map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]));
 
-            tracing::debug!(
-                reg_idx = format!("{reg:04X}"),
-                value = format!("{val:08X}"),
-                "XF register write"
-            );
-        }
+        let dirty = self.store_xf_regs(addr, values);
 
-        // Rebuild projection if the write touched its address range
-        if addr <= XF_PROJECTION_END && end > XF_PROJECTION_BASE {
-            self.rebuild_projection();
-            renderer.exec(GxAction::SetProjection {
-                matrix: self.projection.0,
-                is_perspective: self.xf_mem[XF_PROJECTION_END] == 0,
-            });
-        }
-
-        // Rebuild viewport if the write touched its address range
-        if addr <= XF_VIEWPORT_END && end > XF_VIEWPORT_BASE {
-            self.rebuild_viewport();
-            renderer.exec(GxAction::SetViewport(self.cur_viewport));
-        }
-
-        if self::ranges_overlap(addr, end, XF_LIGHT_BASE, XF_LIGHT_END)
-            || self::ranges_overlap(addr, end, XF_CHAN_CFG_BEGIN, XF_CHAN_CFG_END)
-        {
-            self.lighting_dirty = true;
-            self.frame_state_dirty = true;
-        }
+        self.apply_xf_dirty(renderer, dirty);
     }
 
     #[inline(always)]
@@ -166,7 +195,6 @@ impl GraphicsProcessor {
         let src_addr = base + (index as usize) * stride;
         let dst_addr = xf_addr as usize;
         let n = xf_count as usize;
-        let end = dst_addr + n;
 
         let Some(src) = ram.slice(src_addr, n * 4) else {
             tracing::warn!(
@@ -181,33 +209,12 @@ impl GraphicsProcessor {
             rec.use_memory(ram, src_addr as u32, n * 4, super::recorder::MemoryUpdateType::XfData);
         }
 
-        for i in 0..n {
-            let off = i * 4;
-            let val = u32::from_be_bytes([src[off], src[off + 1], src[off + 2], src[off + 3]]);
-            let reg = dst_addr + i;
-            if reg < self.xf_mem.len() {
-                self.xf_mem[reg] = val;
-            }
-        }
+        let values = src
+            .chunks_exact(4)
+            .map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]));
 
-        if dst_addr <= XF_PROJECTION_END && end > XF_PROJECTION_BASE {
-            self.rebuild_projection();
-            renderer.exec(GxAction::SetProjection {
-                matrix: self.projection.0,
-                is_perspective: self.xf_mem[XF_PROJECTION_END] == 0,
-            });
-        }
+        let dirty = self.store_xf_regs(dst_addr, values);
 
-        if dst_addr <= XF_VIEWPORT_END && end > XF_VIEWPORT_BASE {
-            self.rebuild_viewport();
-            renderer.exec(GxAction::SetViewport(self.cur_viewport));
-        }
-
-        if self::ranges_overlap(dst_addr, end, XF_LIGHT_BASE, XF_LIGHT_END)
-            || self::ranges_overlap(dst_addr, end, XF_CHAN_CFG_BEGIN, XF_CHAN_CFG_END)
-        {
-            self.lighting_dirty = true;
-            self.frame_state_dirty = true;
-        }
+        self.apply_xf_dirty(renderer, dirty);
     }
 }

@@ -611,3 +611,34 @@ unsafe fn write_be_u32_unchecked(ptr: *mut u8, value: u32) {
 unsafe fn write_be_u64_unchecked(ptr: *mut u8, value: u64) {
     unsafe { std::ptr::write_unaligned(ptr.cast::<u64>(), value.to_be()) };
 }
+
+impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
+    pub fn save_state(&self, w: &mut crate::savestate::StateWriter) {
+        w.bytes(&self.ram);
+        w.bytes(&self.mem2);
+        w.bytes(&self.efb);
+        w.bytes(&self.hwr);
+        w.bytes(&self.lcache);
+        w.bytes(&self.ipl);
+    }
+
+    pub fn load_state(
+        &mut self,
+        r: &mut crate::savestate::StateReader<'_>,
+    ) -> Result<(), crate::savestate::StateError> {
+        r.bytes_into(&mut self.ram)?;
+        r.bytes_into(&mut self.mem2)?;
+        r.bytes_into(&mut self.efb)?;
+        r.bytes_into(&mut self.hwr)?;
+        r.bytes_into(&mut self.lcache)?;
+        r.bytes_into(&mut self.ipl)?;
+
+        #[cfg(feature = "jit")]
+        {
+            self.pending_icbi.clear();
+            self.jit_dirty = 0;
+        }
+
+        Ok(())
+    }
+}

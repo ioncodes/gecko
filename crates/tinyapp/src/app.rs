@@ -335,6 +335,7 @@ pub struct App {
     pub _audio_stream: Option<cpal::Stream>,
     pub shutdown_requested: Arc<AtomicBool>,
     pub start_gate: Arc<AtomicBool>,
+    pub savestate_requests: Arc<crate::SavestateRequests>,
     #[cfg(feature = "fps-counter")]
     pub fps_shared: FpsShared,
 }
@@ -452,6 +453,12 @@ impl ApplicationHandler<crate::UserEvent> for App {
                                 KeyCode::F12 => state.screenshots.request(CaptureRequest::GameOnly),
                                 _ => {}
                             }
+                        }
+
+                        match key {
+                            KeyCode::F5 => self.savestate_requests.save.store(true, Ordering::Relaxed),
+                            KeyCode::F7 => self.savestate_requests.load.store(true, Ordering::Relaxed),
+                            _ => {}
                         }
                     }
 

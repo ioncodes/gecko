@@ -66,6 +66,7 @@ pub struct ThreadedSink {
     worker_thread: Option<JoinHandle<()>>,
     pending_actions: Vec<GxAction>,
     scratch: Vec<DrawVertex>,
+    efb_writeback_pending: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -285,6 +286,10 @@ impl RenderSink for ThreadedSink {
         #[cfg(feature = "gx-stats")]
         self.stats.actions_sent.fetch_add(1, Ordering::Relaxed);
 
+        if matches!(&action, GxAction::CopyEfbToTexture { .. }) {
+            self.efb_writeback_pending = true;
+        }
+
         let resets_scratch = action_resets_vertex_scratch(&action);
         self.pending_actions.push(action);
 
@@ -294,6 +299,10 @@ impl RenderSink for ThreadedSink {
     }
 
     fn flush_efb_copies(&mut self, ram: &mut gecko::mmio::RamViewMut<'_>) {
+        if !self.efb_writeback_pending {
+            return;
+        }
+
         let (done_tx, done_rx) = crossbeam_channel::bounded(0);
         let request = EfbDrainRequest {
             mem1_addr: ram.mem1.as_mut_ptr() as usize,
@@ -323,6 +332,7 @@ impl RenderSink for ThreadedSink {
         debug_assert!(batch.actions.is_empty());
         self.pending_actions = batch.actions;
         self.scratch = batch.vertices;
+        self.efb_writeback_pending = false;
     }
 
     fn vertex_scratch(&mut self) -> &mut Vec<DrawVertex> {
@@ -575,6 +585,7 @@ impl Renderer {
             worker_thread: Some(worker_thread),
             pending_actions: Vec::new(),
             scratch: Vec::new(),
+            efb_writeback_pending: false,
         };
 
         let renderer = Renderer {
