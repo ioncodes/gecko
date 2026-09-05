@@ -21,7 +21,7 @@ fn szat_liveness(spec: &BlockSpec, loop_end_table: &[u8; 0x10000]) -> Vec<bool> 
     let is_flag_independent_register = |reg: u8| reg != 19 && !(12..=15).contains(&reg);
 
     for (idx, entry) in spec.instrs.iter().enumerate().rev() {
-        if !spec.unrolled_loop && loop_end_table[entry.pc as usize] != 0 {
+        if spec.unrolled_loop_start.is_none_or(|start| idx < start) && loop_end_table[entry.pc as usize] != 0 {
             live = true;
         }
 
@@ -144,7 +144,8 @@ pub fn translate(
         let natural_nia = entry.pc.wrapping_add(entry.size as u16);
         let is_last = idx + 1 == spec.instrs.len();
         let dynamic_nia = is_last && spec.terminator != TermKind::LengthLimit;
-        let marked_loop_end = !spec.unrolled_loop && loop_end_table[entry.pc as usize] != 0;
+        let marked_loop_end =
+            spec.unrolled_loop_start.is_none_or(|start| idx < start) && loop_end_table[entry.pc as usize] != 0;
 
         if is_last || marked_loop_end {
             let nia_v = builder.ins().iconst(types::I16, natural_nia as i64);

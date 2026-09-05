@@ -24,7 +24,7 @@ pub struct BlockSpec {
     pub instrs: Vec<InstrEntry>,
     pub terminator: TermKind,
     pub fallthrough_pc: u16,
-    pub unrolled_loop: bool,
+    pub unrolled_loop_start: Option<usize>,
 }
 
 fn read_imem_word(iram: &[u8], irom: &[u8], addr: u16) -> Option<u16> {
@@ -114,11 +114,34 @@ pub fn discover(iram: &[u8], irom: &[u8], start_pc: u16) -> BlockSpec {
         instrs,
         terminator: term,
         fallthrough_pc: pc,
-        unrolled_loop: false,
+        unrolled_loop_start: None,
     };
     try_unroll_immediate_loop(iram, irom, &mut spec);
 
     spec
+}
+
+fn can_unroll_instruction(raw: u32) -> bool {
+    use disasm::dsp::GcDspInstruction as I;
+
+    if classify(raw as u16).is_some() {
+        return false;
+    }
+
+    let bytes = [(raw >> 8) as u8, raw as u8, (raw >> 24) as u8, (raw >> 16) as u8];
+    let Some((insn, _)) = I::decode(&bytes) else {
+        return false;
+    };
+    let is_stack_register = |reg: u8| (12..=15).contains(&reg);
+
+    match insn {
+        I::Lri { rd, .. } | I::Lr { rd, .. } => !is_stack_register(rd),
+        I::Sr { rs, .. } => !is_stack_register(rs),
+        I::Lrr { d, .. } | I::Lrrd { d, .. } | I::Lrri { d, .. } | I::Lrrn { d, .. } => !is_stack_register(d),
+        I::Srr { s, .. } | I::Srrd { s, .. } | I::Srri { s, .. } | I::Srrn { s, .. } => !is_stack_register(s),
+        I::Mrr { dst, src } => !is_stack_register(dst) && !is_stack_register(src),
+        _ => true,
+    }
 }
 
 fn try_unroll_immediate_loop(iram: &[u8], irom: &[u8], spec: &mut BlockSpec) {
@@ -152,10 +175,6 @@ fn try_unroll_immediate_loop(iram: &[u8], irom: &[u8], spec: &mut BlockSpec) {
             return;
         };
 
-        if classify(w0).is_some() {
-            return;
-        }
-
         let size = approx_size(w0);
         let raw = if size == 2 {
             let Some(w1) = read_imem_word(iram, irom, pc.wrapping_add(1)) else {
@@ -165,6 +184,11 @@ fn try_unroll_immediate_loop(iram: &[u8], irom: &[u8], spec: &mut BlockSpec) {
         } else {
             w0 as u32
         };
+
+        if !can_unroll_instruction(raw) {
+            return;
+        }
+
         body.push(InstrEntry { pc, raw, size });
 
         let last_word = pc.wrapping_add(size as u16 - 1);
@@ -199,5 +223,5 @@ fn try_unroll_immediate_loop(iram: &[u8], irom: &[u8], spec: &mut BlockSpec) {
 
     spec.terminator = TermKind::LengthLimit;
     spec.fallthrough_pc = end_pc.wrapping_add(1);
-    spec.unrolled_loop = true;
+    spec.unrolled_loop_start = Some(prefix_len);
 }
