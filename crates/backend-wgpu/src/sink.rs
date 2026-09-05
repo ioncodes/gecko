@@ -114,6 +114,12 @@ struct EfbDrainRequest {
 enum WorkerCommand {
     Actions(ActionBatch),
     DrainEfbCopies(EfbDrainRequest),
+    PeekEfbDepth {
+        x: u32,
+        y: u32,
+        batch: ActionBatch,
+        done_tx: crossbeam_channel::Sender<(ActionBatch, u32)>,
+    },
     Shutdown,
 }
 
@@ -124,6 +130,22 @@ impl RenderWorker {
             match command {
                 WorkerCommand::Actions(batch) => self.exec_batch(batch),
                 WorkerCommand::DrainEfbCopies(request) => self.drain_efb_copies(request),
+                WorkerCommand::PeekEfbDepth {
+                    x,
+                    y,
+                    mut batch,
+                    done_tx,
+                } => {
+                    let worker_scratch = self.gx.replace_vertex_scratch(std::mem::take(&mut batch.vertices));
+                    for action in batch.actions.drain(..) {
+                        self.exec_action(action);
+                    }
+
+                    let depth = self.gx.peek_efb_depth(&self.device, &self.queue, x, y);
+                    batch.vertices = self.gx.replace_vertex_scratch(worker_scratch);
+
+                    let _ = done_tx.send((batch, depth));
+                }
                 WorkerCommand::Shutdown => break,
             }
         }
@@ -301,6 +323,22 @@ impl ThreadedSink {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl RenderSink for ThreadedSink {
+    fn peek_efb_depth(&mut self, x: u32, y: u32) -> u32 {
+        let (done_tx, done_rx) = crossbeam_channel::bounded(0);
+        let command = WorkerCommand::PeekEfbDepth {
+            x,
+            y,
+            batch: self.take_batch(false),
+            done_tx,
+        };
+        self.work_tx.send(command).expect("render worker thread stopped");
+        let (batch, depth) = done_rx.recv().expect("render worker thread stopped");
+        self.pending_actions = batch.actions;
+        self.scratch = batch.vertices;
+
+        depth
+    }
+
     fn exec(&mut self, action: GxAction) {
         #[cfg(feature = "gx-stats")]
         self.stats.actions_sent.fetch_add(1, Ordering::Relaxed);
@@ -527,6 +565,14 @@ impl InlineSink {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl RenderSink for InlineSink {
+    fn peek_efb_depth(&mut self, x: u32, y: u32) -> u32 {
+        let mut gx = self.gx.lock().unwrap();
+        let depth = gx.peek_efb_depth(&self.device, &self.queue, x, y);
+        self.scratch.truncate(gx.scratch_vertices.len());
+
+        depth
+    }
+
     fn exec(&mut self, action: GxAction) {
         self.gx.lock().unwrap().process_action_with_external_scratch(
             &self.device,

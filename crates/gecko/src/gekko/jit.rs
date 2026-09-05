@@ -17,7 +17,8 @@ pub mod lut_wii {
 }
 
 use cranelift_codegen::Context;
-use cranelift_codegen::ir::{AbiParam, InstBuilder, Signature, condcodes::IntCC, types};
+use cranelift_codegen::ir::condcodes::IntCC;
+use cranelift_codegen::ir::{AbiParam, InstBuilder, Signature, types};
 use cranelift_codegen::isa::CallConv;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};

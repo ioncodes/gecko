@@ -1,11 +1,11 @@
 #[cfg(feature = "hooks")]
 use crate::hooks::HookFlags;
 use crate::mmio::constants::{
-    AI_BASE, AI_END, CP_BASE, CP_END, DI_BASE, DI_END, DSP_BASE, DSP_END, EXI_BASE, EXI_END, GX_FIFO_BASE, GX_FIFO_END,
-    HOLLYWOOD_COMPAT_BASE, HOLLYWOOD_COMPAT_END, HOLLYWOOD_GPIO_ARM_BASE, HOLLYWOOD_GPIO_ARM_END,
-    HOLLYWOOD_GPIO_PPC_BASE, HOLLYWOOD_GPIO_PPC_END, HOLLYWOOD_IRQ_BASE, HOLLYWOOD_IRQ_END, HOLLYWOOD_PLL_AI_BASE,
-    HOLLYWOOD_PLL_AI_END, HW_HOLLYWOOD_BASE, HW_HOLLYWOOD_END, HW_REG_BASE, HW_REG_END, IPC_BASE, IPC_END, MI_BASE,
-    MI_END, PE_BASE, PE_END, PI_BASE, PI_END, RAM_END, SI_BASE, SI_END, VI_BASE, VI_END,
+    AI_BASE, AI_END, CP_BASE, CP_END, DI_BASE, DI_END, DSP_BASE, DSP_END, EFB_DEPTH_BASE, EFB_DEPTH_END, EXI_BASE,
+    EXI_END, GX_FIFO_BASE, GX_FIFO_END, HOLLYWOOD_COMPAT_BASE, HOLLYWOOD_COMPAT_END, HOLLYWOOD_GPIO_ARM_BASE,
+    HOLLYWOOD_GPIO_ARM_END, HOLLYWOOD_GPIO_PPC_BASE, HOLLYWOOD_GPIO_PPC_END, HOLLYWOOD_IRQ_BASE, HOLLYWOOD_IRQ_END,
+    HOLLYWOOD_PLL_AI_BASE, HOLLYWOOD_PLL_AI_END, HW_HOLLYWOOD_BASE, HW_HOLLYWOOD_END, HW_REG_BASE, HW_REG_END,
+    IPC_BASE, IPC_END, MI_BASE, MI_END, PE_BASE, PE_END, PI_BASE, PI_END, RAM_END, SI_BASE, SI_END, VI_BASE, VI_END,
 };
 use crate::system::{System, SystemId, WII};
 
@@ -553,6 +553,12 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[inline(never)]
     fn read_u32_mmio(&mut self, phys: u32, addr: u32) -> u32 {
         match phys {
+            EFB_DEPTH_BASE..=EFB_DEPTH_END => {
+                let x = (phys & 0xFFF) >> 2;
+                let y = (phys >> 12) & 0x3FF;
+
+                self.render_sink.peek_efb_depth(x, y)
+            }
             CP_BASE..=CP_END => crate::flipper::cp::cp_read(self, phys, 4).unwrap_or_else(|| {
                 tracing::warn!(
                     device = "CP",

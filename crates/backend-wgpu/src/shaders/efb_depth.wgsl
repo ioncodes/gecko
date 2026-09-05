@@ -25,7 +25,7 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) f32 {
 const Z24_SCALE: f32 = 16777216.0; // 2^24
 
 fn fetch(pos: vec2<f32>) -> vec4<f32> {
-    let z24 = u32(sample_depth(pos) * Z24_SCALE);
+    let z24 = min(u32(sample_depth(pos) * Z24_SCALE), 0xFFFFFFu);
     let r = f32((z24 >> 16u) & 0xFFu) / 255.0;
     let g = f32((z24 >>  8u) & 0xFFu) / 255.0;
     let b = f32( z24         & 0xFFu) / 255.0;

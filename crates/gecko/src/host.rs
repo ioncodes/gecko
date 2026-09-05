@@ -282,6 +282,10 @@ pub trait RenderSink: Send {
     /// Submit a single action.
     fn exec(&mut self, action: GxAction);
 
+    fn peek_efb_depth(&mut self, _x: u32, _y: u32) -> u32 {
+        0x00FF_FFFF
+    }
+
     fn exec_draw(&mut self, segment: DrawSegment, state: Option<DrawState>) {
         let mut draw = self.take_draw_data();
         draw.segments.clear();

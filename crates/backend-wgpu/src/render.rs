@@ -937,6 +937,31 @@ impl GxRenderer {
         let encode_h = (height / divisor).max(1);
         self.discard_superseded_writebacks(dest_addr, encode_w, encode_h, copy_format_enum, stride);
 
+        let (staging, staging_capacity, bytes_per_row) =
+            self.encode_depth_readback(device, queue, [src_x, src_y, width, height], [encode_w, encode_h]);
+        let staging_size = bytes_per_row * encode_h as u64;
+
+        self.pending_writebacks.push(PendingWriteback {
+            dest_addr,
+            staging,
+            staging_capacity,
+            bytes_per_row,
+            staging_size,
+            width: encode_w,
+            height: encode_h,
+            copy_format: copy_format_enum,
+            stride,
+            swap_bgra: false,
+        });
+    }
+
+    fn encode_depth_readback(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        [src_x, src_y, width, height]: [u32; 4],
+        [encode_w, encode_h]: [u32; 2],
+    ) -> (wgpu::Buffer, u64, u64) {
         Self::ensure_writeback_target(
             device,
             &mut self.efb_depth_writeback_target,
@@ -966,7 +991,7 @@ impl GxRenderer {
         let mut encoder = self.take_or_create_encoder(device);
         let (writeback_tex, writeback_view) = self.efb_depth_writeback_target.as_ref().unwrap();
         encoder.push_debug_group(&format!(
-            "EfbDepth addr={dest_addr:#010x} src=({src_x},{src_y} {width}x{height}) dst={encode_w}x{encode_h}"
+            "EfbDepth src=({src_x},{src_y} {width}x{height}) dst={encode_w}x{encode_h}"
         ));
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1015,18 +1040,41 @@ impl GxRenderer {
         encoder.pop_debug_group();
         self.pending_command_buffers.push(encoder.finish());
 
-        self.pending_writebacks.push(PendingWriteback {
-            dest_addr,
-            staging,
-            staging_capacity,
-            bytes_per_row,
-            staging_size,
-            width: encode_w,
-            height: encode_h,
-            copy_format: copy_format_enum,
-            stride,
-            swap_bgra: false,
+        (staging, staging_capacity, bytes_per_row)
+    }
+
+    pub(crate) fn peek_efb_depth(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, x: u32, y: u32) -> u32 {
+        if x >= crate::EFB_WIDTH || y >= crate::EFB_HEIGHT {
+            return 0x00FF_FFFF;
+        }
+
+        self.flush_pending_draws(device, queue);
+
+        let (staging, capacity, bytes_per_row) = self.encode_depth_readback(device, queue, [x, y, 1, 1], [1, 1]);
+        let submission_index = self.submit_pending(queue);
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        staging
+            .slice(..bytes_per_row)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = done_tx.send(result);
+            });
+        let poll_result = device.poll(wgpu::PollType::Wait {
+            submission_index,
+            timeout: Some(std::time::Duration::from_secs(5)),
         });
+        let map_result = done_rx.try_recv();
+        let depth = if poll_result.is_ok() && matches!(map_result, Ok(Ok(()))) {
+            let mapped = staging.slice(..bytes_per_row).get_mapped_range();
+
+            ((mapped[0] as u32) << 16) | ((mapped[1] as u32) << 8) | mapped[2] as u32
+        } else {
+            tracing::warn!(?poll_result, ?map_result, "EFB depth peek failed");
+            0x00FF_FFFF
+        };
+        staging.unmap();
+        self.return_readback_staging(staging, capacity);
+
+        depth
     }
 
     pub(crate) fn ensure_writeback_target(
