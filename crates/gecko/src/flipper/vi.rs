@@ -227,7 +227,7 @@ impl VideoInterface {
 
     pub fn xfb_addr(&self) -> u32 {
         if self.dcr.interlaced() && self.in_even_field() {
-            if self.bfbl.page_offset() {
+            if self.tfbl.page_offset() {
                 self.bfbl.xfb_addr() << 5
             } else {
                 self.bfbl.xfb_addr()
