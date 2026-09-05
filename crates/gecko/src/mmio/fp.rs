@@ -7,6 +7,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     pub fn read_f64(&mut self, addr: u32) -> f64 {
         let phys = crate::mmio::virt_to_phys(addr);
         if phys <= RAM_END - 7 {
+            self.sync_deferred_efb_writeback(phys, 8);
+
             return f64::from_bits(self.mmio.ram_read_u64(phys));
         }
 
@@ -21,6 +23,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         let phys = crate::mmio::virt_to_phys(addr);
         let bits = val.to_bits();
         if phys <= RAM_END - 7 {
+            self.sync_deferred_efb_writeback(phys, 8);
             self.mmio.ram_write_u64(phys, bits);
             #[cfg(feature = "jit")]
             self.mmio.queue_icbi_for_range(phys, 8);

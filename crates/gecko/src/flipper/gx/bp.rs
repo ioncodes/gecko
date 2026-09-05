@@ -3,7 +3,7 @@ use super::recorder::MemoryUpdateType;
 use super::regs::*;
 use super::{GraphicsProcessor, draw, texture};
 use crate::host::{GxAction, RenderSink, TextureKey};
-use crate::mmio::{RamView, RamViewMut};
+use crate::mmio::{Mmio, RamView, RamViewMut};
 
 impl GraphicsProcessor {
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
@@ -219,16 +219,22 @@ impl GraphicsProcessor {
         // PE finish
         if idx == BP_PE_DONE && (val & BP_PE_DONE_FINISH_BIT) != 0 {
             self.raise_interrupt = true;
-            renderer.flush_efb_copies(ram);
-            self.sync_recorder_efb_shadow(ram);
+
+            if self.recorder.is_some() {
+                renderer.flush_efb_copies(ram);
+                self.sync_recorder_efb_shadow(ram);
+            }
         }
 
         // PE token (0x47): store token value only
         if idx == BP_PE_TOKEN {
             self.pending_token = (val & 0xFFFF) as u16;
             self.token_dirty = true;
-            renderer.flush_efb_copies(ram);
-            self.sync_recorder_efb_shadow(ram);
+
+            if self.recorder.is_some() {
+                renderer.flush_efb_copies(ram);
+                self.sync_recorder_efb_shadow(ram);
+            }
         }
 
         // PE token interrupt (0x48): store token value + raise interrupt
@@ -237,8 +243,11 @@ impl GraphicsProcessor {
             self.pending_token = (val & 0xFFFF) as u16;
             self.token_dirty = true;
             self.raise_token_interrupt = true;
-            renderer.flush_efb_copies(ram);
-            self.sync_recorder_efb_shadow(ram);
+
+            if self.recorder.is_some() {
+                renderer.flush_efb_copies(ram);
+                self.sync_recorder_efb_shadow(ram);
+            }
         }
 
         // Scissor registers (BP 0x20 = TL, 0x21 = BR, 0x59 = OFFSET).
@@ -308,17 +317,39 @@ impl GraphicsProcessor {
             rec.use_memory(ram, ram_addr as u32, raw_size, MemoryUpdateType::TextureMap);
         }
 
-        let changed = match tex_slice {
-            Some(tex) => self::texture_data_changed(&mut self.texture_hashes, tex, cache_id, palette, tlut, format),
-            None => {
-                tracing::warn!(
-                    addr = format!("{ram_addr:#010X}"),
-                    raw_size,
-                    "texture: address not mapped to MEM1/MEM2, skipping decode"
-                );
-                false
-            }
-        };
+        let gpu_copy =
+            self.recorder.is_none() && renderer.has_pending_efb_texture(ram_addr as u32, width, height, format);
+        let changed = !gpu_copy
+            && match tex_slice {
+                Some(tex) => self::texture_data_changed(
+                    &mut self.texture_hashes,
+                    tex,
+                    cache_id,
+                    palette,
+                    tlut,
+                    format,
+                    ram.range_generation(ram_addr, raw_size).unwrap_or(u64::MAX),
+                ),
+                None => {
+                    tracing::warn!(
+                        addr = format!("{ram_addr:#010X}"),
+                        raw_size,
+                        "texture: address not mapped to MEM1/MEM2, skipping decode"
+                    );
+
+                    false
+                }
+            };
+
+        if gpu_copy {
+            renderer.exec(GxAction::LoadTexture {
+                id: cache_id,
+                width,
+                height,
+                fmt: format,
+                rgba: Vec::new(),
+            });
+        }
 
         if changed {
             let desc = draw::TextureDescriptor {
@@ -390,6 +421,39 @@ impl GraphicsProcessor {
             let image3_val = self.bp_regs[self::tx_slot_reg(BP_TX_SETIMAGE3_I0, BP_TX_SETIMAGE3_I4, slot)];
             self.snapshot_texture(renderer, ram, slot, image3_val);
         }
+    }
+
+    pub(crate) fn dirty_texture_overlaps_efb_writeback<const SYSTEM: crate::system::SystemId>(
+        &self,
+        mmio: &Mmio<SYSTEM>,
+        renderer: &dyn RenderSink,
+    ) -> bool {
+        let mut dirty = self.tex_dirty;
+
+        while dirty != 0 {
+            let slot = dirty.trailing_zeros() as usize;
+            dirty &= !(1 << slot);
+
+            let image0 =
+                TxSetImage0::from_raw(self.bp_regs[self::tx_slot_reg(BP_TX_SETIMAGE0_I0, BP_TX_SETIMAGE0_I4, slot)]);
+            let image3 =
+                TxSetImage3::from_raw(self.bp_regs[self::tx_slot_reg(BP_TX_SETIMAGE3_I0, BP_TX_SETIMAGE3_I4, slot)]);
+            let width = (image0.width() + 1) as u32;
+            let height = (image0.height() + 1) as u32;
+            let len = texture::raw_data_size(width, height, image0.format());
+
+            if self.recorder.is_none()
+                && renderer.has_pending_efb_texture(image3.ram_addr() as u32, width, height, image0.format())
+            {
+                continue;
+            }
+
+            if mmio.efb_writeback_needed(image3.ram_addr() as u32, len) {
+                return true;
+            }
+        }
+
+        false
     }
 
     fn load_tev_env(&mut self, idx: usize, val: u32) {
@@ -490,6 +554,7 @@ impl GraphicsProcessor {
             src_w,
             src_h,
             dest_addr = format!("{dest_addr:#010X}"),
+            dest_stride,
             copy_to_xfb,
             clear,
             half,
@@ -571,22 +636,25 @@ impl GraphicsProcessor {
 
             let depth_copy = self.cur_pe_control.pixel_format().is_depth_only();
 
-            if let Some(rec) = self.recorder.as_deref_mut()
-                && rec.is_recording()
-            {
-                let resolved = if depth_copy {
-                    texture::CopyFormat::from_u8_depth(copy_format)
-                } else {
-                    texture::CopyFormat::from_u8_color(copy_format)
-                };
-                if let Some(fmt) = resolved {
-                    let (w, h) = if half { (src_w / 2, src_h / 2) } else { (src_w, src_h) };
-                    let row_bytes = texture::encoded_row_bytes(w, fmt);
-                    let row_count = texture::encoded_row_count(h, fmt);
+            let resolved = if depth_copy {
+                texture::CopyFormat::from_u8_depth(copy_format)
+            } else {
+                texture::CopyFormat::from_u8_color(copy_format)
+            };
 
-                    if row_count > 0 {
-                        let len = (row_count - 1) * dest_stride as usize + row_bytes;
-                        rec.note_efb_copy(dest_addr as u32, len);
+            if let Some(fmt) = resolved {
+                let (w, h) = if half { (src_w / 2, src_h / 2) } else { (src_w, src_h) };
+                let row_bytes = texture::encoded_row_bytes(w, fmt);
+                let row_count = texture::encoded_row_count(h, fmt);
+
+                if row_count > 0 {
+                    let len = (row_count - 1) * dest_stride as usize + row_bytes;
+                    self.pending_efb_writeback_ranges.push((dest_addr, len));
+
+                    if let Some(rec) = self.recorder.as_deref_mut()
+                        && rec.is_recording()
+                    {
+                        rec.note_efb_copy(dest_addr, len);
                     }
                 }
             }
@@ -715,13 +783,21 @@ fn texture_cache_id(ram_addr: usize, format: draw::TextureFormat, tlut: draw::Tl
 /// `cache_id` so paletted textures bound with multiple TLUTs are tracked
 /// independently.
 fn texture_data_changed(
-    hashes: &mut rustc_hash::FxHashMap<TextureKey, u64>,
+    hashes: &mut rustc_hash::FxHashMap<TextureKey, (u64, u64)>,
     tex: &[u8],
     cache_id: TextureKey,
     palette: &[u16],
     tlut: draw::TlutRef,
     format: draw::TextureFormat,
+    memory_generation: u64,
 ) -> bool {
+    if hashes
+        .get(&cache_id)
+        .is_some_and(|&(_, previous_generation)| previous_generation == memory_generation)
+    {
+        return false;
+    }
+
     let mut hash = twox_hash::xxhash3_64::Hasher::oneshot(tex);
     if format.is_paletted() {
         let max_entries = match format {
@@ -737,8 +813,9 @@ fn texture_data_changed(
         // into the hash or a format switch alone wouldn't force a redecode.
         hash ^= tlut.format as u64;
     }
-    let prev = hashes.insert(cache_id, hash);
-    prev != Some(hash)
+
+    let prev = hashes.insert(cache_id, (hash, memory_generation));
+    prev.is_none_or(|(previous_hash, _)| previous_hash != hash)
 }
 
 impl GraphicsProcessor {

@@ -21,7 +21,9 @@ pub mod lut_wii {
 
 use crate::flipper::dsp::instruction::Instruction;
 use crate::mmio::Mmio;
-use crate::system::{ExecutionMode, System, SystemId};
+#[cfg(feature = "jit")]
+use crate::system::ExecutionMode;
+use crate::system::{System, SystemId};
 
 #[cfg(feature = "jit")]
 pub const DSP_JIT_CHAIN_BUDGET: u32 = 64;

@@ -34,6 +34,10 @@ pub struct GraphicsProcessor {
     pub xf_mem: Vec<u32>,
     pub fifo: Vec<u8>,
     pub dl_scratch: Vec<u8>,
+    draw_batch_data: Vec<u8>,
+    draw_batch_entries: Vec<vertex::DrawBatchEntry>,
+    draw_segments_scratch: Vec<crate::host::DrawSegment>,
+    pub(crate) pending_efb_writeback_ranges: Vec<(u32, usize)>,
 
     // FIFO recording stuff
     pub recorder: Option<Box<recorder::FifoRecorder>>,
@@ -102,6 +106,10 @@ pub struct GraphicsProcessor {
     pub jit_vtx: jit::JitVertexEngine,
     #[cfg(feature = "jit")]
     pub jit_vtx_arrays: jit::ResolvedArrays,
+    #[cfg(feature = "jit")]
+    pub jit_vtx_arrays_key: Option<jit::VtxKey>,
+    #[cfg(feature = "jit")]
+    pub jit_vtx_arrays_ok: bool,
     #[cfg(feature = "vtx-jit-validate")]
     pub jit_vtx_validator: jit::validate::VertexJitValidator,
     pub lighting_dirty: bool,
@@ -114,11 +122,7 @@ pub struct GraphicsProcessor {
     pub cached_lights: [LightData; 8],
     #[cfg(feature = "gx-stats")]
     pub(crate) stats: GxStats,
-    // Hash of the raw texture data at each cache key; used to detect when
-    // texture content changes and avoid redundant decodes + LoadTexture
-    // sends. Keyed by the same `TextureKey` sent to the renderer in
-    // [`GxAction::LoadTexture`].
-    pub texture_hashes: FxHashMap<TextureKey, u64>,
+    pub texture_hashes: FxHashMap<TextureKey, (u64, u64)>,
     pub execution_mode: ExecutionMode,
 }
 
@@ -153,6 +157,15 @@ pub(crate) struct GxStats {
 }
 
 impl GraphicsProcessor {
+    pub(crate) fn defer_pending_efb_writebacks<const SYSTEM: SystemId>(
+        &mut self,
+        mmio: &mut crate::mmio::Mmio<SYSTEM>,
+    ) {
+        for (addr, len) in self.pending_efb_writeback_ranges.drain(..) {
+            mmio.defer_efb_writeback(addr, len);
+        }
+    }
+
     pub fn new() -> Self {
         GraphicsProcessor {
             raise_interrupt: false,
@@ -165,6 +178,10 @@ impl GraphicsProcessor {
             xf_mem: vec![0; XF_MEM_SIZE],
             fifo: Vec::with_capacity(256),
             dl_scratch: Vec::with_capacity(4096),
+            draw_batch_data: Vec::with_capacity(4096),
+            draw_batch_entries: Vec::with_capacity(32),
+            draw_segments_scratch: Vec::with_capacity(32),
+            pending_efb_writeback_ranges: Vec::new(),
             recorder: None,
             projection: Matrix4::default(),
             cur_textures: Default::default(),
@@ -209,6 +226,10 @@ impl GraphicsProcessor {
             jit_vtx: jit::JitVertexEngine::new(),
             #[cfg(feature = "jit")]
             jit_vtx_arrays: jit::ResolvedArrays::default(),
+            #[cfg(feature = "jit")]
+            jit_vtx_arrays_key: None,
+            #[cfg(feature = "jit")]
+            jit_vtx_arrays_ok: false,
             #[cfg(feature = "vtx-jit-validate")]
             jit_vtx_validator: jit::validate::VertexJitValidator::new(),
             lighting_dirty: true,
@@ -651,6 +672,18 @@ impl GraphicsProcessor {
         self.xfb_fields_since_emit = r.u32()?;
         self.xfb_last_emit_gen = r.u64()?;
 
+        self.xfb_regions.clear();
+        self.xfb_dirty = false;
+        self.xfb_copy_seq = 0;
+        self.xfb_present_seq = 0;
+        self.xfb_last_present_base = 0;
+        self.xfb_last_seen_base = 0;
+        self.xfb_prev_base = 0;
+        self.xfb_fields_since_flip = 0;
+        self.xfb_flip_interval = 1;
+        self.xfb_fields_since_emit = 0;
+        self.xfb_last_emit_gen = 0;
+
         self.cached_color_ctrl = r.pod()?;
         self.cached_alpha_ctrl = r.pod()?;
         self.cached_ambient_color = r.pod()?;
@@ -658,7 +691,16 @@ impl GraphicsProcessor {
         self.cached_lights = r.pod()?;
 
         self.dl_scratch.clear();
+        self.draw_batch_data.clear();
+        self.draw_batch_entries.clear();
+        self.draw_segments_scratch.clear();
         self.texture_hashes.clear();
+        #[cfg(feature = "jit")]
+        {
+            self.jit_vtx_arrays_key = None;
+            self.jit_vtx_arrays_ok = false;
+        }
+
         self.tex_dirty = 0xFF;
         self.lighting_dirty = true;
         self.konst_dirty = true;

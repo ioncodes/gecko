@@ -421,7 +421,6 @@ pub(crate) struct PendingWriteback {
     pub copy_format: gecko::flipper::gx::texture::CopyFormat,
     pub stride: u32,
     pub swap_bgra: bool,
-    pub box_filter_downsample: bool,
 }
 
 impl GxRenderer {
@@ -1051,12 +1050,12 @@ impl GxRenderer {
 
     pub fn debug_flush(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.flush_pending_draws(device, queue);
-        self.submit_pending(queue);
+        let _ = self.submit_pending(queue);
     }
 
     pub fn reset_efb(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.flush_pending_draws(device, queue);
-        self.submit_pending(queue);
+        let _ = self.submit_pending(queue);
 
         self.clear_efb_region(
             device,
@@ -1072,7 +1071,7 @@ impl GxRenderer {
             true,
         );
 
-        self.submit_pending(queue);
+        let _ = self.submit_pending(queue);
     }
 
     pub fn efb_view(&self) -> &wgpu::TextureView {
@@ -1092,7 +1091,7 @@ impl GxRenderer {
         ]
     }
 
-    pub(crate) fn submit_pending(&mut self, queue: &wgpu::Queue) {
+    pub(crate) fn submit_pending(&mut self, queue: &wgpu::Queue) -> Option<wgpu::SubmissionIndex> {
         // Ship any staged texture-upload bytes through ONE `write_buffer_with`
         // before finishing the encoder. wgpu orders queue writes ahead of
         // submitted commands, so the encoder's `copy_buffer_to_texture`
@@ -1113,7 +1112,7 @@ impl GxRenderer {
             self.pending_command_buffers.push(encoder.finish());
         }
         if self.pending_command_buffers.is_empty() {
-            return;
+            return None;
         }
 
         #[cfg(feature = "gx-stats")]
@@ -1121,7 +1120,7 @@ impl GxRenderer {
         #[cfg(feature = "gx-stats")]
         let submit_started = std::time::Instant::now();
 
-        queue.submit(self.pending_command_buffers.drain(..));
+        let submission_index = queue.submit(self.pending_command_buffers.drain(..));
 
         #[cfg(feature = "gx-stats")]
         {
@@ -1140,6 +1139,8 @@ impl GxRenderer {
         self.efb_clear_uniform_write_pending = false;
         self.efb_depth_resolve_uniform_write_pending = false;
         self.efb_depth_cache_uniform_write_pending = false;
+
+        Some(submission_index)
     }
 
     /// Append `rgba` (W*H*4 tight, no row padding) into
@@ -1241,7 +1242,7 @@ impl GxRenderer {
         z_update: bool,
     ) {
         if self.efb_clear_uniform_write_pending {
-            self.submit_pending(queue);
+            let _ = self.submit_pending(queue);
         }
 
         let mut encoder = self.take_or_create_encoder(device);

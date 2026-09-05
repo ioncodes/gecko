@@ -164,16 +164,16 @@ pub struct XfbPart {
     pub offset_y: u32,
 }
 
-/// Per-draw data: primitive type, vertex range, and an optional snapshot of
-/// TEV/lighting state. Vertices live in the renderer's scratch buffer (see
-/// [`RenderSink::vertex_scratch`]); `base_vertex` is the index into that
-/// buffer where this draw's vertices start and `vertex_count` is how many of
-/// them belong to this draw.
-#[derive(Debug, Default)]
-pub struct DrawData {
+#[derive(Debug, Clone, Copy)]
+pub struct DrawSegment {
     pub primitive: Primitive,
     pub base_vertex: u32,
     pub vertex_count: u32,
+}
+
+#[derive(Debug, Default)]
+pub struct DrawData {
+    pub segments: Vec<DrawSegment>,
     /// Present only when GX frame state changed since the preceding draw.
     /// Renderers retain the last snapshot across draw-buffer flushes.
     pub state: Option<DrawState>,
@@ -282,12 +282,25 @@ pub trait RenderSink: Send {
     /// Submit a single action.
     fn exec(&mut self, action: GxAction);
 
-    /// Mutable handle to the sink's vertex scratch buffer. Callers append
-    /// per-draw vertices here before issuing [`GxAction::Draw`] and store the
-    /// pre-append length as [`DrawData::base_vertex`]. Real renderers
-    /// (e.g. wgpu) keep this buffer alive across draws and upload it in one
-    /// shot at flush time; headless sinks can use a throwaway local.
+    fn exec_draw(&mut self, segment: DrawSegment, state: Option<DrawState>) {
+        let mut draw = self.take_draw_data();
+        draw.segments.clear();
+        draw.segments.push(segment);
+        draw.state = state;
+        self.exec(GxAction::Draw(draw));
+    }
+
+    fn exec_draw_batch(&mut self, segments: &[DrawSegment], mut state: Option<DrawState>) {
+        for &segment in segments {
+            self.exec_draw(segment, state.take());
+        }
+    }
+
     fn vertex_scratch(&mut self) -> &mut Vec<DrawVertex>;
+
+    fn has_pending_efb_texture(&self, _addr: u32, _width: u32, _height: u32, _fmt: TextureFormat) -> bool {
+        false
+    }
 
     fn flush_efb_copies(&mut self, ram: &mut crate::mmio::RamViewMut<'_>) {
         let _ = ram;

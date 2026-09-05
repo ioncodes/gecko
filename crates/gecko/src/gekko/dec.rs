@@ -10,6 +10,11 @@ pub struct Decrementer {
     interrupt_pending: bool,
 }
 
+#[inline(always)]
+pub const fn interrupt_pending_offset() -> usize {
+    core::mem::offset_of!(Decrementer, interrupt_pending)
+}
+
 impl Default for Decrementer {
     fn default() -> Self {
         Self {

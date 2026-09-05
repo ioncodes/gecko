@@ -30,6 +30,21 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {
 fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let tex_size = vec2<f32>(textureDimensions(efb_tex));
     let dst_size = max(u.dst_size, vec2<f32>(1.0, 1.0));
+
+    if (u.filter_mode == 2u) {
+        let src_step = u.src_rect.zw / dst_size;
+        let first = u.src_rect.xy + (position.xy - vec2<f32>(0.5)) * src_step;
+        let coord = vec2<i32>(floor(first));
+        let half_step = vec2<i32>(src_step * 0.5);
+
+        return (
+            textureLoad(efb_tex, coord, 0) +
+            textureLoad(efb_tex, coord + vec2<i32>(half_step.x, 0), 0) +
+            textureLoad(efb_tex, coord + vec2<i32>(0, half_step.y), 0) +
+            textureLoad(efb_tex, coord + half_step, 0)
+        ) * 0.25;
+    }
+
     let src_pixel = u.src_rect.xy + (position.xy / dst_size) * u.src_rect.zw;
     let uv = src_pixel / tex_size;
 

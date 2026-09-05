@@ -6,7 +6,7 @@ use crate::{
 };
 use gecko::flipper::gx::draw::Primitive;
 use gecko::flipper::gx::regs::{CullMode, MagFilter, MinFilter, WrapMode};
-use gecko::host::{DrawData, DrawState, GxAction};
+use gecko::host::{DrawSegment, DrawState, GxAction};
 use glam::{Mat4, UVec4, Vec4};
 #[cfg(feature = "gx-stats")]
 use std::sync::atomic::Ordering;
@@ -133,7 +133,7 @@ impl GxRenderer {
 
     /// Append `draw`'s vertices and indices onto the draw already recorded at
     /// `previous`, rebasing the indices onto the merged vertex range.
-    fn merge_into_previous(&mut self, previous: usize, draw: &DrawData) {
+    fn merge_into_previous(&mut self, previous: usize, draw: &DrawSegment) {
         let vertex_bias = self.scratch_draws[previous].vertex_count;
         let (_, additional_indices) = self::emit_draw_indices(draw, &mut self.scratch_indices, vertex_bias);
 
@@ -246,6 +246,13 @@ impl GxRenderer {
                     .efb_copy_cache
                     .get(&tid.ram_addr)
                     .is_some_and(|e| e.matches(*fmt, *width, *height));
+                let reference_only = rgba.is_empty();
+
+                assert!(
+                    !reference_only || keep_cached,
+                    "pending EFB texture missing from renderer cache"
+                );
+
                 if !keep_cached && let Some(entry) = self.efb_copy_cache.remove(&tid.ram_addr) {
                     self.return_to_pool(entry.texture, entry.view);
                 }
@@ -253,11 +260,13 @@ impl GxRenderer {
                 if let Some((_, cached_tex, _)) = self.texture_cache.get(&tid) {
                     let size = cached_tex.size();
                     if size.width == *width && size.height == *height {
-                        let cached_tex = cached_tex.clone();
-                        let staged = self.stage_texture_upload(device, &cached_tex, rgba, *width, *height);
+                        if !reference_only {
+                            let cached_tex = cached_tex.clone();
+                            let staged = self.stage_texture_upload(device, &cached_tex, rgba, *width, *height);
 
-                        if !staged {
-                            queue.write_texture(cached_tex.as_image_copy(), rgba, direct_copy_layout, copy_size);
+                            if !staged {
+                                queue.write_texture(cached_tex.as_image_copy(), rgba, direct_copy_layout, copy_size);
+                            }
                         }
 
                         if let Some((cached_fmt, _, _)) = self.texture_cache.get_mut(&tid) {
@@ -289,9 +298,12 @@ impl GxRenderer {
                     })
                 });
 
-                let staged = self.stage_texture_upload(device, &tex, rgba, *width, *height);
-                if !staged {
-                    queue.write_texture(tex.as_image_copy(), rgba, direct_copy_layout, copy_size);
+                if !reference_only {
+                    let staged = self.stage_texture_upload(device, &tex, rgba, *width, *height);
+
+                    if !staged {
+                        queue.write_texture(tex.as_image_copy(), rgba, direct_copy_layout, copy_size);
+                    }
                 }
                 let view = tex.create_view(&Default::default());
 
@@ -307,7 +319,7 @@ impl GxRenderer {
             }
             GxAction::InvalidateCaches => {
                 self.flush_pending_draws(device, queue);
-                self.submit_pending(queue);
+                let _ = self.submit_pending(queue);
                 self.texture_cache.clear();
                 let drained: Vec<_> = self.efb_copy_cache.drain().map(|(_, e)| (e.texture, e.view)).collect();
                 for (tex, view) in drained {
@@ -339,7 +351,8 @@ impl GxRenderer {
             }
 
             GxAction::Draw(draw) => {
-                let state_changed = draw.state.is_some();
+                let batch_state_changed = draw.state.is_some();
+
                 if let Some(state) = draw.state.as_ref() {
                     self.current_draw_state.clone_from(state);
                     let shader_key = ShaderKey::from_draw(state, self.current_alpha_compare);
@@ -349,218 +362,229 @@ impl GxRenderer {
                     self.current_active_texture_mask = draw_active_slot_mask(state);
                 }
 
-                if cull_all_suppresses_draw(self.current_cull_mode, draw.primitive) {
-                    self.last_frame_uniform_index = None;
-                    self.draw_fast_path_compatible = false;
-                    return;
-                }
+                for (segment_index, draw) in draw.segments.iter().enumerate() {
+                    let state_changed = batch_state_changed && segment_index == 0;
 
-                if !draw_emits_triangles(draw) {
-                    tracing::warn!("draw call produced zero vertices, skipping");
-                    self.draw_fast_path_compatible = false;
-                    return;
-                }
+                    if cull_all_suppresses_draw(self.current_cull_mode, draw.primitive) {
+                        self.last_frame_uniform_index = None;
+                        self.draw_fast_path_compatible = false;
 
-                if !state_changed
-                    && self.draw_fast_path_compatible
-                    && let Some(previous) = self.scratch_draws.len().checked_sub(1)
-                    && let Some(shader_key) = self.current_shader_key
-                {
-                    let stride = crate::packed_vertex_stride(shader_key.active_texcoords);
-                    let previous_draw = self.scratch_draws[previous];
-                    if previous_draw.src_vertex_index + previous_draw.vertex_count == draw.base_vertex
-                        && previous_draw.packed_vertex_stride == stride
-                    {
-                        self.merge_into_previous(previous, draw);
-                        return;
+                        continue;
                     }
-                }
 
-                let state = &self.current_draw_state;
+                    if !draw_emits_triangles(draw) {
+                        tracing::debug!("draw segment produced no triangles, skipping");
+                        self.draw_fast_path_compatible = false;
 
-                let shader_key = self
-                    .current_shader_key
-                    .unwrap_or_else(|| ShaderKey::from_draw(state, self.current_alpha_compare));
-                let specialization = if self.current_shader_key.is_some() {
-                    self.current_specialization_key
-                } else {
-                    ShaderSpecializationKey::from_draw(state, self.current_alpha_compare, shader_key)
-                };
-                let ztex_enabled = state.ztex_op != 0;
-                let active = if self.current_shader_key.is_some() {
-                    self.current_active_texture_mask
-                } else {
-                    draw_active_slot_mask(state)
-                };
-                let num_indirect_stages = state.num_indirect_stages;
-                let next_frame_uniform = (state_changed || self.last_frame_uniform_index.is_none())
-                    .then(|| build_frame_uniform(state, self.current_alpha_compare));
-                if !self.shader_cache.contains_key(&shader_key) {
-                    #[cfg(feature = "gx-stats")]
-                    let shader_started = std::time::Instant::now();
-                    let wgsl = shader_specialization::compile_variant(shader_key);
-                    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                        label: Some(&format!("gx_shader_{shader_key:?}")),
-                        source: wgpu::ShaderSource::Wgsl(wgsl.into()),
-                    });
-                    self.shader_cache.insert(shader_key, module);
-                    #[cfg(feature = "gx-stats")]
-                    {
-                        self.stats.shader_modules_created.fetch_add(1, Ordering::Relaxed);
-                        self.stats
-                            .shader_create_cpu_ns
-                            .fetch_add(shader_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                        continue;
                     }
-                    tracing::info!(?shader_key, "compiled specialized shader variant");
-                }
-                let pipeline_key = self.current_pipeline_key(ztex_enabled);
-                let full_key = FullPipelineKey {
-                    shader: shader_key,
-                    specialization,
-                    fixed: pipeline_key,
-                };
-                if !self.pipeline_cache.contains_key(&full_key) {
-                    let uber_key = UberPipelineKey::from(full_key);
-                    if !self.uber_pipeline_cache.contains_key(&uber_key) {
+
+                    if !state_changed
+                        && self.draw_fast_path_compatible
+                        && let Some(previous) = self.scratch_draws.len().checked_sub(1)
+                        && let Some(shader_key) = self.current_shader_key
+                    {
+                        let stride = crate::packed_vertex_stride(shader_key.active_texcoords);
+                        let previous_draw = self.scratch_draws[previous];
+
+                        if previous_draw.src_vertex_index + previous_draw.vertex_count == draw.base_vertex
+                            && previous_draw.packed_vertex_stride == stride
+                        {
+                            self.merge_into_previous(previous, draw);
+
+                            continue;
+                        }
+                    }
+
+                    let state = &self.current_draw_state;
+
+                    let shader_key = self
+                        .current_shader_key
+                        .unwrap_or_else(|| ShaderKey::from_draw(state, self.current_alpha_compare));
+                    let specialization = if self.current_shader_key.is_some() {
+                        self.current_specialization_key
+                    } else {
+                        ShaderSpecializationKey::from_draw(state, self.current_alpha_compare, shader_key)
+                    };
+                    let ztex_enabled = state.ztex_op != 0;
+                    let active = if self.current_shader_key.is_some() {
+                        self.current_active_texture_mask
+                    } else {
+                        draw_active_slot_mask(state)
+                    };
+                    let num_indirect_stages = state.num_indirect_stages;
+                    let next_frame_uniform = (state_changed || self.last_frame_uniform_index.is_none())
+                        .then(|| build_frame_uniform(state, self.current_alpha_compare));
+                    if !self.shader_cache.contains_key(&shader_key) {
                         #[cfg(feature = "gx-stats")]
-                        let pipeline_started = std::time::Instant::now();
-                        let module = &self.shader_cache[&shader_key];
-                        let pipeline = crate::pipeline::create_uber_pipeline(
-                            device,
-                            &self.pipeline_layout,
-                            self.surface_format,
-                            module,
-                            &uber_key,
-                        );
-                        self.uber_pipeline_cache.insert(uber_key, pipeline);
+                        let shader_started = std::time::Instant::now();
+                        let wgsl = shader_specialization::compile_variant(shader_key);
+                        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                            label: Some(&format!("gx_shader_{shader_key:?}")),
+                            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+                        });
+                        self.shader_cache.insert(shader_key, module);
                         #[cfg(feature = "gx-stats")]
                         {
-                            self.stats.pipelines_created.fetch_add(1, Ordering::Relaxed);
+                            self.stats.shader_modules_created.fetch_add(1, Ordering::Relaxed);
                             self.stats
-                                .pipeline_create_cpu_ns
-                                .fetch_add(pipeline_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                                .shader_create_cpu_ns
+                                .fetch_add(shader_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                        }
+                        tracing::info!(?shader_key, "compiled specialized shader variant");
+                    }
+
+                    let pipeline_key = self.current_pipeline_key(ztex_enabled);
+                    let full_key = FullPipelineKey {
+                        shader: shader_key,
+                        specialization,
+                        fixed: pipeline_key,
+                    };
+
+                    if !self.pipeline_cache.contains_key(&full_key) {
+                        let uber_key = UberPipelineKey::from(full_key);
+
+                        if !self.uber_pipeline_cache.contains_key(&uber_key) {
+                            #[cfg(feature = "gx-stats")]
+                            let pipeline_started = std::time::Instant::now();
+                            let module = &self.shader_cache[&shader_key];
+                            let pipeline = crate::pipeline::create_uber_pipeline(
+                                device,
+                                &self.pipeline_layout,
+                                self.surface_format,
+                                module,
+                                &uber_key,
+                            );
+                            self.uber_pipeline_cache.insert(uber_key, pipeline);
+                            #[cfg(feature = "gx-stats")]
+                            {
+                                self.stats.pipelines_created.fetch_add(1, Ordering::Relaxed);
+                                self.stats
+                                    .pipeline_create_cpu_ns
+                                    .fetch_add(pipeline_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                            }
+                        }
+
+                        self.request_specialized_pipeline(full_key);
+                    }
+
+                    let first_vertex = draw.base_vertex;
+                    let vertex_count = draw.vertex_count;
+
+                    let mvp = if self.freelook_enabled && self.current_projection_perspective {
+                        self.current_projection * self.freelook
+                    } else {
+                        self.current_projection
+                    };
+
+                    let mut tex_dims = [UVec4::splat(1); 4];
+
+                    if num_indirect_stages > 0 {
+                        for slot in 0..8 {
+                            if (active >> slot) & 1 == 0 {
+                                continue;
+                            }
+
+                            let Some(tid) = &self.current_texture_ids[slot] else {
+                                continue;
+                            };
+
+                            let Some((_, tex, _)) = self.texture_cache.get(tid) else {
+                                continue;
+                            };
+
+                            let size = tex.size();
+                            let c = (slot % 2) * 2;
+                            tex_dims[slot / 2][c] = size.width;
+                            tex_dims[slot / 2][c + 1] = size.height;
                         }
                     }
-                    self.request_specialized_pipeline(full_key);
-                }
 
-                let first_vertex = draw.base_vertex;
-                let vertex_count = draw.vertex_count;
+                    let draw_uniform = DrawUniforms { mvp, tex_dims };
+                    let draw_uniform_bytes = bytemuck::bytes_of(&draw_uniform);
+                    let bg_key = trim_bg_key(self.current_bind_group_key(), active);
+                    let stride = crate::packed_vertex_stride(shader_key.active_texcoords);
 
-                // Build per-draw uniform using tracked projection. The
-                // freecam view transform only applies to perspective draws
-                // so 2D/HUD passes stay glued to the screen.
-                let mvp = if self.freelook_enabled && self.current_projection_perspective {
-                    self.current_projection * self.freelook
-                } else {
-                    self.current_projection
-                };
-                let mut tex_dims = [UVec4::splat(1); 4];
-                if num_indirect_stages > 0 {
-                    for slot in 0..8 {
-                        if (active >> slot) & 1 == 0 {
-                            continue;
-                        }
-                        let Some(tid) = &self.current_texture_ids[slot] else {
-                            continue;
-                        };
-                        let Some((_, tex, _)) = self.texture_cache.get(tid) else {
-                            continue;
-                        };
+                    let frame_bytes_len_before = self.frame_uniform_bytes.len();
+                    let mut frame_was_pushed = false;
+                    let frame_idx = if let Some(frame_uniform) = next_frame_uniform {
+                        let fstart = self.frame_uniform_bytes.len();
+                        self.frame_uniform_bytes.resize(fstart + frame_stride, 0);
+                        self.frame_uniform_bytes[fstart..fstart + frame_struct_size]
+                            .copy_from_slice(bytemuck::bytes_of(&frame_uniform));
+                        let idx = (fstart / frame_stride) as u32;
+                        self.last_frame_uniform_index = Some(idx);
+                        frame_was_pushed = true;
+                        idx
+                    } else {
+                        self.last_frame_uniform_index.unwrap()
+                    };
 
-                        let size = tex.size();
-                        let c = (slot % 2) * 2;
-                        tex_dims[slot / 2][c] = size.width;
-                        tex_dims[slot / 2][c + 1] = size.height;
-                    }
-                }
-
-                let draw_uniform = DrawUniforms { mvp, tex_dims };
-                let draw_uniform_bytes = bytemuck::bytes_of(&draw_uniform);
-                let bg_key = trim_bg_key(self.current_bind_group_key(), active);
-                let stride = crate::packed_vertex_stride(shader_key.active_texcoords);
-
-                // Build a fresh FrameUniforms slot only when the producer
-                // signaled state changed since the last draw or this is the
-                // first draw of the flush.
-                let frame_bytes_len_before = self.frame_uniform_bytes.len();
-                let mut frame_was_pushed = false;
-                let frame_idx = if let Some(frame_uniform) = next_frame_uniform {
-                    let fstart = self.frame_uniform_bytes.len();
-                    self.frame_uniform_bytes.resize(fstart + frame_stride, 0);
-                    self.frame_uniform_bytes[fstart..fstart + frame_struct_size]
-                        .copy_from_slice(bytemuck::bytes_of(&frame_uniform));
-                    let idx = (fstart / frame_stride) as u32;
-                    self.last_frame_uniform_index = Some(idx);
-                    frame_was_pushed = true;
-                    idx
-                } else {
-                    self.last_frame_uniform_index.unwrap()
-                };
-
-                let previous_index = self.scratch_draws.len().checked_sub(1);
-                let can_merge = previous_index.is_some_and(|previous| {
-                    let previous_draw = self.scratch_draws[previous];
-                    let previous_draw_start = previous * draw_stride;
-                    previous_draw.src_vertex_index + previous_draw.vertex_count == first_vertex
-                        && previous_draw.packed_vertex_stride == stride
-                        && self.draw_pipeline_keys[previous] == full_key
-                        && self.draw_bg_keys[previous] == bg_key
-                        && self.draw_viewports[previous] == self.current_viewport
-                        && self.draw_scissors[previous] == self.current_scissor
-                        && uniform_slots_equal(
-                            &self.frame_uniform_bytes,
-                            frame_stride,
-                            frame_struct_size,
-                            self.draw_frame_indices[previous],
-                            frame_idx,
-                        )
-                        && self.scratch_uniform_bytes[previous_draw_start..previous_draw_start + draw_struct_size]
-                            == *draw_uniform_bytes
-                });
-
-                if let Some(previous) = previous_index.filter(|_| can_merge) {
-                    let previous_frame_idx = self.draw_frame_indices[previous];
-                    if frame_was_pushed {
-                        self.frame_uniform_bytes.truncate(frame_bytes_len_before);
-                        self.last_frame_uniform_index = Some(previous_frame_idx);
-                        frame_was_pushed = false;
-                    }
-
-                    self.merge_into_previous(previous, draw);
-                } else {
-                    let first_index = self.scratch_indices.len() as u32;
-                    let (_, index_count) = emit_draw_indices(draw, &mut self.scratch_indices, 0);
-
-                    let start = self.scratch_draws.len() * draw_stride;
-                    self.scratch_uniform_bytes.resize(start + draw_stride, 0);
-                    self.scratch_uniform_bytes[start..start + draw_struct_size].copy_from_slice(draw_uniform_bytes);
-
-                    self.draw_pipeline_keys.push(full_key);
-                    self.draw_bg_keys.push(bg_key);
-                    self.draw_viewports.push(self.current_viewport);
-                    self.draw_scissors.push(self.current_scissor);
-                    self.draw_frame_indices.push(frame_idx);
-                    #[cfg(feature = "renderdoc-capture")]
-                    self.draw_primitives.push(draw.primitive);
-
-                    let packed_byte_offset = self
-                        .scratch_draws
-                        .last()
-                        .map(|d| d.packed_vertex_byte_offset + d.vertex_count * d.packed_vertex_stride)
-                        .unwrap_or(0);
-                    self.scratch_draws.push(crate::DrawRecord {
-                        src_vertex_index: first_vertex,
-                        vertex_count,
-                        first_index,
-                        index_count,
-                        packed_vertex_byte_offset: packed_byte_offset,
-                        packed_vertex_stride: stride,
+                    let previous_index = self.scratch_draws.len().checked_sub(1);
+                    let can_merge = previous_index.is_some_and(|previous| {
+                        let previous_draw = self.scratch_draws[previous];
+                        let previous_draw_start = previous * draw_stride;
+                        previous_draw.src_vertex_index + previous_draw.vertex_count == first_vertex
+                            && previous_draw.packed_vertex_stride == stride
+                            && self.draw_pipeline_keys[previous] == full_key
+                            && self.draw_bg_keys[previous] == bg_key
+                            && self.draw_viewports[previous] == self.current_viewport
+                            && self.draw_scissors[previous] == self.current_scissor
+                            && uniform_slots_equal(
+                                &self.frame_uniform_bytes,
+                                frame_stride,
+                                frame_struct_size,
+                                self.draw_frame_indices[previous],
+                                frame_idx,
+                            )
+                            && self.scratch_uniform_bytes[previous_draw_start..previous_draw_start + draw_struct_size]
+                                == *draw_uniform_bytes
                     });
-                }
 
-                debug_assert!(!frame_was_pushed || self.last_frame_uniform_index == Some(frame_idx));
-                self.draw_fast_path_compatible = true;
+                    if let Some(previous) = previous_index.filter(|_| can_merge) {
+                        let previous_frame_idx = self.draw_frame_indices[previous];
+
+                        if frame_was_pushed {
+                            self.frame_uniform_bytes.truncate(frame_bytes_len_before);
+                            self.last_frame_uniform_index = Some(previous_frame_idx);
+                            frame_was_pushed = false;
+                        }
+
+                        self.merge_into_previous(previous, draw);
+                    } else {
+                        let first_index = self.scratch_indices.len() as u32;
+                        let (_, index_count) = emit_draw_indices(draw, &mut self.scratch_indices, 0);
+
+                        let start = self.scratch_draws.len() * draw_stride;
+                        self.scratch_uniform_bytes.resize(start + draw_stride, 0);
+                        self.scratch_uniform_bytes[start..start + draw_struct_size].copy_from_slice(draw_uniform_bytes);
+
+                        self.draw_pipeline_keys.push(full_key);
+                        self.draw_bg_keys.push(bg_key);
+                        self.draw_viewports.push(self.current_viewport);
+                        self.draw_scissors.push(self.current_scissor);
+                        self.draw_frame_indices.push(frame_idx);
+                        #[cfg(feature = "renderdoc-capture")]
+                        self.draw_primitives.push(draw.primitive);
+
+                        let packed_byte_offset = self
+                            .scratch_draws
+                            .last()
+                            .map(|d| d.packed_vertex_byte_offset + d.vertex_count * d.packed_vertex_stride)
+                            .unwrap_or(0);
+                        self.scratch_draws.push(crate::DrawRecord {
+                            src_vertex_index: first_vertex,
+                            vertex_count,
+                            first_index,
+                            index_count,
+                            packed_vertex_byte_offset: packed_byte_offset,
+                            packed_vertex_stride: stride,
+                        });
+                    }
+
+                    debug_assert!(!frame_was_pushed || self.last_frame_uniform_index == Some(frame_idx));
+                    self.draw_fast_path_compatible = true;
+                }
             }
 
             GxAction::CopyXfb {
@@ -682,7 +706,7 @@ impl GxRenderer {
         );
 
         if self.draw_bufs_write_pending {
-            self.submit_pending(queue);
+            let _ = self.submit_pending(queue);
         }
 
         let fub = std::mem::take(&mut self.frame_uniform_bytes);
@@ -1169,12 +1193,13 @@ fn uniform_slots_equal(bytes: &[u8], stride: usize, size: usize, a: u32, b: u32)
     bytes[a..a + size] == bytes[b..b + size]
 }
 
-fn draw_emits_triangles(draw: &DrawData) -> bool {
+fn draw_emits_triangles(draw: &DrawSegment) -> bool {
     use gecko::flipper::gx::draw::Primitive;
 
     match draw.primitive {
-        Primitive::Triangles | Primitive::TriangleStrip | Primitive::TriangleFan => draw.vertex_count >= 3,
-        Primitive::Quads => draw.vertex_count >= 4,
+        Primitive::Triangles | Primitive::TriangleStrip | Primitive::TriangleFan | Primitive::Quads => {
+            draw.vertex_count >= 3
+        }
         _ => {
             tracing::error!(?draw.primitive, "draw_emits_triangles: skipping unsupported primitive");
             false
@@ -1182,15 +1207,17 @@ fn draw_emits_triangles(draw: &DrawData) -> bool {
     }
 }
 
-fn emit_draw_indices(draw: &DrawData, indices_out: &mut Vec<u32>, vertex_bias: u32) -> (u32, u32) {
+fn emit_draw_indices(draw: &DrawSegment, indices_out: &mut Vec<u32>, vertex_bias: u32) -> (u32, u32) {
     use gecko::flipper::gx::draw::Primitive;
 
     let n = draw.vertex_count;
 
     match draw.primitive {
         Primitive::Triangles => {
-            indices_out.extend((0..n).map(|i| vertex_bias + i));
-            (n, n)
+            let emitted = n - n % 3;
+            indices_out.extend((0..emitted).map(|i| vertex_bias + i));
+
+            (n, emitted)
         }
         Primitive::Quads => {
             let chunks = n / 4;
@@ -1198,7 +1225,16 @@ fn emit_draw_indices(draw: &DrawData, indices_out: &mut Vec<u32>, vertex_bias: u
                 let base = vertex_bias + q * 4;
                 indices_out.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
             }
-            (n, chunks * 6)
+
+            let mut index_count = chunks * 6;
+
+            if n % 4 == 3 {
+                let base = vertex_bias + chunks * 4;
+                indices_out.extend_from_slice(&[base, base + 1, base + 2]);
+                index_count += 3;
+            }
+
+            (n, index_count)
         }
         Primitive::TriangleStrip => {
             if n < 3 {

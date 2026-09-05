@@ -80,6 +80,17 @@ macro_rules! bus_write_hooks {
 }
 
 impl<const SYSTEM: SystemId> System<SYSTEM> {
+    #[cold]
+    pub(crate) fn sync_deferred_efb_writeback(&mut self, phys: u32, len: usize) {
+        if !self.mmio.efb_writeback_needed(phys, len) {
+            return;
+        }
+
+        let mut ram = self.mmio.ram_view_mut();
+        self.render_sink.flush_efb_copies(&mut ram);
+        self.mmio.clear_deferred_efb_writebacks();
+    }
+
     /// Translate a virtual address to physical using DBAT registers.
     /// Falls back to simple masking if no BAT matches.
     #[inline(always)]
@@ -153,6 +164,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[inline(always)]
     pub fn read_u8(&mut self, addr: u32) -> u8 {
         let phys = self.translate_addr(addr);
+        self.sync_deferred_efb_writeback(phys, 1);
         bus_read_hooks!(self, addr, phys, 1, {
             if phys <= RAM_END {
                 self.mmio.ram_read_u8(phys)
@@ -165,6 +177,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[inline(always)]
     pub fn read_u16(&mut self, addr: u32) -> u16 {
         let phys = self.translate_addr(addr);
+        self.sync_deferred_efb_writeback(phys, 2);
         bus_read_hooks!(self, addr, phys, 2, {
             if phys <= RAM_END - 1 {
                 self.mmio.ram_read_u16(phys)
@@ -177,6 +190,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[inline(always)]
     pub fn read_u32(&mut self, addr: u32) -> u32 {
         let phys = self.translate_addr(addr);
+        self.sync_deferred_efb_writeback(phys, 4);
         bus_read_hooks!(self, addr, phys, 4, {
             if phys <= RAM_END - 3 {
                 self.mmio.ram_read_u32(phys)
@@ -191,6 +205,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[inline(always)]
     pub fn write_u8(&mut self, addr: u32, val: u8) {
         let phys = self.translate_addr(addr);
+        self.sync_deferred_efb_writeback(phys, 1);
         bus_write_hooks!(self, addr, phys, 1, val, {
             if phys <= RAM_END {
                 self.mmio.ram_write_u8(phys, val);
@@ -205,6 +220,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[inline(always)]
     pub fn write_u16(&mut self, addr: u32, val: u16) {
         let phys = self.translate_addr(addr);
+        self.sync_deferred_efb_writeback(phys, 2);
         bus_write_hooks!(self, addr, phys, 2, val, {
             if phys <= RAM_END - 1 {
                 self.mmio.ram_write_u16(phys, val);
@@ -219,6 +235,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[inline(always)]
     pub fn write_u32(&mut self, addr: u32, val: u32) {
         let phys = self.translate_addr(addr);
+        self.sync_deferred_efb_writeback(phys, 4);
         bus_write_hooks!(self, addr, phys, 4, val, {
             if phys <= RAM_END - 3 {
                 self.mmio.ram_write_u32(phys, val);

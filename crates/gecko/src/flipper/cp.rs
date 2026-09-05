@@ -297,6 +297,7 @@ pub fn pump_fifo<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
 
     if consumed > 0 {
         sys.gx.drain_fifo(&mut sys.mmio, sys.render_sink.as_mut());
+        sys.gx.defer_pending_efb_writebacks(&mut sys.mmio);
         sys.check_gx_pe_interrupts();
         sys.cp.refresh_status();
         refresh_interrupts(sys);

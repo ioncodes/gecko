@@ -2,13 +2,21 @@ use super::constants::*;
 use super::math::{Vec3, unpack_rgba};
 use super::regs::{self, *};
 use super::{GraphicsProcessor, draw};
-use crate::host::{DrawData, DrawState, DrawVertex, GxAction, RenderSink};
+use crate::host::{DrawSegment, DrawState, DrawVertex, RenderSink};
 use crate::mmio::{Mmio, RamView};
-use crate::system::{ExecutionMode, SystemId};
+#[cfg(feature = "jit")]
+use crate::system::ExecutionMode;
+use crate::system::SystemId;
 use std::io::{Cursor, Read};
 
 #[cfg(feature = "jit")]
 use super::jit;
+
+#[derive(Clone, Copy)]
+pub(super) struct DrawBatchEntry {
+    pub cmd: u8,
+    pub vertex_count: usize,
+}
 
 /// Parsed vertex format descriptor from CP/VAT registers.
 struct VertexFormat {
@@ -45,29 +53,33 @@ struct VertexFormat {
 
 impl GraphicsProcessor {
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
-    pub fn create_draw_call<const SYSTEM: SystemId>(
+    pub(super) fn create_draw_batch<const SYSTEM: SystemId>(
         &mut self,
         mmio: &mut Mmio<SYSTEM>,
         renderer: &mut dyn RenderSink,
-        cmd: u8,
         data: &[u8],
+        entries: &[DrawBatchEntry],
     ) {
         #[cfg(feature = "gx-stats")]
         let _gx_stats_t0 = std::time::Instant::now();
 
-        let Some(primitive) = draw::Primitive::from_cmd(cmd) else {
-            tracing::error!(cmd, "goofy draw command");
+        let Some(first) = entries.first() else {
             return;
         };
 
-        let vf = self.build_vertex_format(cmd);
+        let cmd = first.cmd;
 
-        if vf.vertex_stride == 0 {
+        let vertex_format_index = (cmd & 0b111) as usize;
+        let vertex_stride = super::fifo::vertex_stride_from_cp(&self.cp_regs, vertex_format_index);
+
+        if vertex_stride == 0 {
             tracing::warn!("draw call with zero vertex stride, skipping");
             return;
         }
 
-        let vertex_count = data.len() / vf.vertex_stride;
+        let vertex_count: usize = entries.iter().map(|entry| entry.vertex_count).sum();
+        debug_assert_eq!(data.len(), vertex_count * vertex_stride);
+        debug_assert!(entries.iter().all(|entry| (entry.cmd & 7) == (cmd & 7)));
 
         // Resolve any texture slots whose descriptor regs changed since the
         // last draw. Done lazily here (not at BP write time) because games
@@ -75,14 +87,28 @@ impl GraphicsProcessor {
         // the descriptor guaranteed consistent. Runs before the recorder so
         // recorded draws reference the resolved textures.
         if self.tex_dirty != 0 {
+            self.defer_pending_efb_writebacks(mmio);
+
+            if self.dirty_texture_overlaps_efb_writeback(mmio, renderer) {
+                renderer.flush_efb_copies(&mut mmio.ram_view_mut());
+                mmio.clear_deferred_efb_writebacks();
+            }
+
             self.snapshot_dirty_textures(renderer, &mmio.ram_view());
         }
 
-        if let Some(rec) = self.recorder.as_deref_mut()
-            && rec.is_recording()
-        {
+        if self.recorder.as_ref().is_some_and(|rec| rec.is_recording()) {
+            let vf = self.build_vertex_format(cmd);
             let view = mmio.ram_view();
-            self::record_draw_arrays(rec, &view, &vf, data, vertex_count);
+            let rec = self.recorder.as_deref_mut().unwrap();
+            let mut offset = 0;
+
+            for entry in entries {
+                let len = entry.vertex_count * vertex_stride;
+                self::record_draw_arrays(rec, &view, &vf, &data[offset..offset + len], entry.vertex_count);
+                offset += len;
+            }
+
             for desc in self.cur_textures.iter().flatten() {
                 let len = super::texture::raw_data_size(desc.width, desc.height, desc.format);
                 rec.use_draw_texture(&view, desc.ram_addr as u32, len);
@@ -91,13 +117,16 @@ impl GraphicsProcessor {
 
         #[cfg(feature = "gx-stats")]
         {
-            self.stats.draw_calls += 1;
+            self.stats.draw_calls += entries.len() as u64;
             self.stats.vertices += vertex_count as u64;
             self.stats.fifo_bytes += data.len() as u64;
-            self.stats.draws_by_primitive[(primitive as usize) & 0x7] += 1;
-        }
 
-        let mut boxed: Box<DrawData> = renderer.take_draw_data();
+            for entry in entries {
+                if let Some(primitive) = draw::Primitive::from_cmd(entry.cmd) {
+                    self.stats.draws_by_primitive[(primitive as usize) & 0x7] += 1;
+                }
+            }
+        }
 
         // Decode directly into the renderer's vertex scratch. No
         // intermediate `draw_vertices_scratch`, no append memcpy. The
@@ -106,12 +135,9 @@ impl GraphicsProcessor {
         let verts = renderer.vertex_scratch();
         let base_vertex = verts.len() as u32;
         verts.reserve(vertex_count);
-        self::dispatch_decode(self, mmio, cmd, data, vertex_count, &vf, verts);
+        self::dispatch_decode(self, mmio, cmd, data, vertex_count, verts);
 
-        boxed.primitive = primitive;
-        boxed.base_vertex = base_vertex;
-        boxed.vertex_count = vertex_count as u32;
-        boxed.state = self.frame_state_dirty.then(|| {
+        let state = self.frame_state_dirty.then(|| {
             let tev_color_regs = self.resolve_tev_color_regs();
             let tev_orders = self.resolve_tev_orders();
 
@@ -179,7 +205,26 @@ impl GraphicsProcessor {
             }
         });
         self.frame_state_dirty = false;
-        renderer.exec(GxAction::Draw(boxed));
+        self.draw_segments_scratch.clear();
+        let mut segment_base = base_vertex;
+
+        for entry in entries {
+            let Some(primitive) = draw::Primitive::from_cmd(entry.cmd) else {
+                tracing::error!(cmd = entry.cmd, "goofy draw command");
+                segment_base = segment_base.wrapping_add(entry.vertex_count as u32);
+
+                continue;
+            };
+
+            self.draw_segments_scratch.push(DrawSegment {
+                primitive,
+                base_vertex: segment_base,
+                vertex_count: entry.vertex_count as u32,
+            });
+            segment_base = segment_base.wrapping_add(entry.vertex_count as u32);
+        }
+
+        renderer.exec_draw_batch(&self.draw_segments_scratch, state);
 
         #[cfg(feature = "gx-stats")]
         {
@@ -814,15 +859,21 @@ fn dispatch_decode<const SYSTEM: SystemId>(
     #[cfg_attr(not(feature = "jit"), allow(unused_variables))] cmd: u8,
     data: &[u8],
     vertex_count: usize,
-    vf: &VertexFormat,
     verts: &mut Vec<DrawVertex>,
 ) {
     #[cfg(feature = "jit")]
     if gp.execution_mode == ExecutionMode::Jit {
         let vat_index = (cmd & 0b111) as usize;
         let key = jit::VtxKey::from_cp_regs(&gp.cp_regs, vat_index);
-        let view = mmio.ram_view();
-        let arrays_ok = jit::resolve_arrays_for_draw(&gp.cp_regs, &key, view.mem1, view.mem2, &mut gp.jit_vtx_arrays);
+        let arrays_ok = if gp.jit_vtx_arrays_key == Some(key) {
+            gp.jit_vtx_arrays_ok
+        } else {
+            let view = mmio.ram_view();
+            let ok = jit::resolve_arrays_for_draw(&gp.cp_regs, &key, view.mem1, view.mem2, &mut gp.jit_vtx_arrays);
+            gp.jit_vtx_arrays_key = Some(key);
+            gp.jit_vtx_arrays_ok = ok;
+            ok
+        };
         let parser = if arrays_ok {
             gp.jit_vtx.lookup_or_compile(key)
         } else {
@@ -841,12 +892,16 @@ fn dispatch_decode<const SYSTEM: SystemId>(
             }
 
             #[cfg(feature = "vtx-jit-validate")]
-            self::run_validator(gp, mmio, cmd, key, data, vertex_count, vf, verts, base);
+            {
+                let vf = gp.build_vertex_format(cmd);
+                self::run_validator(gp, mmio, cmd, key, data, vertex_count, &vf, verts, base);
+            }
             return;
         }
     }
 
-    self::run_interpreter(gp, mmio, data, vertex_count, vf, verts);
+    let vf = gp.build_vertex_format(cmd);
+    self::run_interpreter(gp, mmio, data, vertex_count, &vf, verts);
 }
 
 #[cfg_attr(feature = "hotpath", hotpath::measure(label = "vtx_run_interpreter"))]

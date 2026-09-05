@@ -18,7 +18,7 @@ impl Primitive {
         use super::constants::*;
 
         match cmd & !0b111 {
-            DRAW_QUADS_CMD => Some(Primitive::Quads),
+            DRAW_QUADS_CMD | DRAW_QUADS2_CMD => Some(Primitive::Quads),
             DRAW_TRIANGLES_CMD => Some(Primitive::Triangles),
             DRAW_TRIANGLE_STRIP_CMD => Some(Primitive::TriangleStrip),
             DRAW_TRIANGLE_FAN_CMD => Some(Primitive::TriangleFan),

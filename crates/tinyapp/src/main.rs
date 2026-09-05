@@ -216,8 +216,8 @@ fn main() {
 
     let args = Args::parse();
 
-    let present_mode = if args.immediate {
-        wgpu::PresentMode::Immediate
+    let present_mode = if args.immediate || args.no_cap {
+        wgpu::PresentMode::AutoNoVsync
     } else {
         wgpu::PresentMode::Fifo
     };

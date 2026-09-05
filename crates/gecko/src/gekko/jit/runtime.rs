@@ -576,6 +576,23 @@ pub extern "C" fn cause_icbi_wii(sys: *mut core::ffi::c_void, ea: u32) {
 }
 
 #[inline(always)]
+fn mark_memory_writeback<const SYSTEM: SystemId>(sys: *mut System<SYSTEM>, ea: u32) {
+    let sys = unsafe { &mut *sys };
+    sys.mmio.mark_memory_dirty_range(
+        crate::mmio::virt_to_phys(ea) & crate::mmio::CODE_LINE_MASK,
+        crate::mmio::CODE_LINE_BYTES,
+    );
+}
+
+pub extern "C" fn mark_memory_writeback_gc(sys: *mut core::ffi::c_void, ea: u32) {
+    mark_memory_writeback::<GC>(sys.cast(), ea);
+}
+
+pub extern "C" fn mark_memory_writeback_wii(sys: *mut core::ffi::c_void, ea: u32) {
+    mark_memory_writeback::<WII>(sys.cast(), ea);
+}
+
+#[inline(always)]
 fn do_dcbz<const SYSTEM: SystemId>(sys: *mut System<SYSTEM>, ea: u32) {
     unsafe { (*sys).dcbz_line(ea) }
 }

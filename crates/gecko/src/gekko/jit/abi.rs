@@ -1,5 +1,6 @@
 use core::mem::{offset_of, size_of};
 
+use crate::flipper::pi::ProcessorInterface;
 use crate::gekko::condition::ConditionRegister;
 use crate::gekko::msr::Msr;
 use crate::gekko::spr::{Spr, Xer};
@@ -67,6 +68,21 @@ pub const fn fpr_base_offset<const SYSTEM: SystemId>() -> usize {
 #[inline(always)]
 pub const fn ps1_base_offset<const SYSTEM: SystemId>() -> usize {
     gekko_offset::<SYSTEM>() + offset_of!(Gekko, fprs) + size_of::<f64>()
+}
+
+#[inline(always)]
+pub const fn pi_intsr_offset<const SYSTEM: SystemId>() -> usize {
+    offset_of!(System<SYSTEM>, pi) + offset_of!(ProcessorInterface, intsr)
+}
+
+#[inline(always)]
+pub const fn pi_intmr_offset<const SYSTEM: SystemId>() -> usize {
+    offset_of!(System<SYSTEM>, pi) + offset_of!(ProcessorInterface, intmr)
+}
+
+#[inline(always)]
+pub const fn dec_interrupt_pending_offset<const SYSTEM: SystemId>() -> usize {
+    gekko_offset::<SYSTEM>() + offset_of!(Gekko, dec) + crate::gekko::dec::interrupt_pending_offset()
 }
 
 #[inline(always)]

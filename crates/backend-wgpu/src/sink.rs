@@ -3,7 +3,7 @@ use gecko::host::GxAction;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::GxRenderer;
 #[cfg(not(target_arch = "wasm32"))]
-use gecko::host::{DrawData, DrawVertex, RenderSink};
+use gecko::host::{DrawData, DrawSegment, DrawState, DrawVertex, RenderSink};
 #[cfg(all(not(target_arch = "wasm32"), feature = "gx-stats"))]
 use std::sync::atomic::Ordering;
 #[cfg(not(target_arch = "wasm32"))]
@@ -66,7 +66,18 @@ pub struct ThreadedSink {
     worker_thread: Option<JoinHandle<()>>,
     pending_actions: Vec<GxAction>,
     scratch: Vec<DrawVertex>,
+    immediate_draw_data: Option<Box<DrawData>>,
     efb_writeback_pending: bool,
+    pending_efb_textures: Vec<PendingEfbTexture>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct PendingEfbTexture {
+    addr: u32,
+    end: u32,
+    width: u32,
+    height: u32,
+    format: gecko::flipper::gx::draw::TextureFormat,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -117,7 +128,7 @@ impl RenderWorker {
             }
         }
 
-        self.gx.submit_pending(&self.queue);
+        let _ = self.gx.submit_pending(&self.queue);
         self.gx.poll_compiled_pipelines();
         #[cfg(feature = "renderdoc-capture")]
         if let Ok(mut rd) = self.renderdoc.lock() {
@@ -135,6 +146,10 @@ impl RenderWorker {
 
     fn exec_action(&mut self, action: GxAction) {
         self.gx.process_action(&self.device, &self.queue, &action);
+
+        if matches!(&action, GxAction::CopyEfbToTexture { .. }) {
+            let _ = self.gx.submit_pending(&self.queue);
+        }
 
         match action {
             GxAction::PresentXfb { .. } | GxAction::PresentRawXfb { .. } => {
@@ -204,7 +219,11 @@ impl RenderWorker {
             // ensures all prior EFB copy commands have reached the worker.
             let mem1 = std::slice::from_raw_parts_mut(request.mem1_addr as *mut u8, request.mem1_len);
             let mem2 = std::slice::from_raw_parts_mut(request.mem2_addr as *mut u8, request.mem2_len);
-            gecko::mmio::RamViewMut { mem1, mem2 }
+            gecko::mmio::RamViewMut {
+                mem1,
+                mem2,
+                memory_page_generations: &[],
+            }
         };
         #[cfg(feature = "gx-stats")]
         let writeback_count = self.gx.pending_writebacks.len() as u64;
@@ -286,8 +305,63 @@ impl RenderSink for ThreadedSink {
         #[cfg(feature = "gx-stats")]
         self.stats.actions_sent.fetch_add(1, Ordering::Relaxed);
 
-        if matches!(&action, GxAction::CopyEfbToTexture { .. }) {
+        let action = match action {
+            GxAction::Draw(mut draw) if draw.state.is_none() => {
+                if let Some(GxAction::Draw(previous)) = self.pending_actions.last_mut() {
+                    previous.segments.append(&mut draw.segments);
+                    self.immediate_draw_data = Some(draw);
+
+                    return;
+                }
+
+                GxAction::Draw(draw)
+            }
+            action => action,
+        };
+
+        if let GxAction::CopyEfbToTexture {
+            dest_addr,
+            src_x,
+            src_y,
+            src_w,
+            src_h,
+            copy_format,
+            mipmap,
+            stride,
+            depth_copy,
+            ..
+        } = &action
+        {
+            use gecko::flipper::gx::texture::{CopyFormat, encoded_row_bytes, encoded_row_count};
             self.efb_writeback_pending = true;
+            let format = if *depth_copy {
+                CopyFormat::from_u8_depth(*copy_format)
+            } else {
+                CopyFormat::from_u8_color(*copy_format)
+            };
+
+            if let Some(format) = format {
+                let divisor = if *mipmap { 2 } else { 1 };
+                let width = src_w.min(&crate::EFB_WIDTH.saturating_sub(*src_x)) / divisor;
+                let height = src_h.min(&crate::EFB_HEIGHT.saturating_sub(*src_y)) / divisor;
+                let row_bytes = encoded_row_bytes(width, format);
+                let rows = encoded_row_count(height, format);
+                let len = rows.saturating_sub(1) * *stride as usize + row_bytes;
+                let end = dest_addr.saturating_add(len as u32);
+                self.pending_efb_textures
+                    .retain(|copy| copy.end <= *dest_addr || end <= copy.addr);
+                if width > 0 && height > 0 && *stride as usize == row_bytes {
+                    self.pending_efb_textures.push(PendingEfbTexture {
+                        addr: *dest_addr,
+                        end,
+                        width,
+                        height,
+                        format: format.base_texture_format(),
+                    });
+                }
+            }
+        } else if matches!(&action, GxAction::InvalidateCaches) {
+            self.pending_efb_textures.clear();
         }
 
         let resets_scratch = action_resets_vertex_scratch(&action);
@@ -296,6 +370,49 @@ impl RenderSink for ThreadedSink {
         if resets_scratch {
             self.send_reset_batch();
         }
+    }
+
+    fn exec_draw(&mut self, segment: DrawSegment, state: Option<DrawState>) {
+        self.exec_draw_batch(std::slice::from_ref(&segment), state);
+    }
+
+    fn exec_draw_batch(&mut self, segments: &[DrawSegment], state: Option<DrawState>) {
+        if segments.is_empty() {
+            return;
+        }
+
+        #[cfg(feature = "gx-stats")]
+        self.stats
+            .actions_sent
+            .fetch_add(segments.len() as u64, Ordering::Relaxed);
+
+        self.reclaim_batch();
+
+        if state.is_none()
+            && let Some(GxAction::Draw(previous)) = self.pending_actions.last_mut()
+        {
+            previous.segments.extend_from_slice(segments);
+
+            return;
+        }
+
+        let mut draw = self.take_draw_data();
+        draw.segments.clear();
+        draw.segments.extend_from_slice(segments);
+        draw.state = state;
+        self.pending_actions.push(GxAction::Draw(draw));
+    }
+
+    fn has_pending_efb_texture(
+        &self,
+        addr: u32,
+        width: u32,
+        height: u32,
+        fmt: gecko::flipper::gx::draw::TextureFormat,
+    ) -> bool {
+        self.pending_efb_textures
+            .iter()
+            .any(|copy| copy.addr == addr && copy.width == width && copy.height == height && copy.format == fmt)
     }
 
     fn flush_efb_copies(&mut self, ram: &mut gecko::mmio::RamViewMut<'_>) {
@@ -333,6 +450,7 @@ impl RenderSink for ThreadedSink {
         self.pending_actions = batch.actions;
         self.scratch = batch.vertices;
         self.efb_writeback_pending = false;
+        self.pending_efb_textures.clear();
     }
 
     fn vertex_scratch(&mut self) -> &mut Vec<DrawVertex> {
@@ -342,7 +460,10 @@ impl RenderSink for ThreadedSink {
 
     fn take_draw_data(&mut self) -> Box<DrawData> {
         self.reclaim_batch();
-        self.recycled_draw_data_rx.try_recv().unwrap_or_default()
+        self.immediate_draw_data
+            .take()
+            .or_else(|| self.recycled_draw_data_rx.try_recv().ok())
+            .unwrap_or_default()
     }
 
     fn render_stats(&self) -> gecko::host::RenderStats {
@@ -585,7 +706,9 @@ impl Renderer {
             worker_thread: Some(worker_thread),
             pending_actions: Vec::new(),
             scratch: Vec::new(),
+            immediate_draw_data: None,
             efb_writeback_pending: false,
+            pending_efb_textures: Vec::new(),
         };
 
         let renderer = Renderer {

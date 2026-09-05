@@ -149,7 +149,17 @@ impl GraphicsProcessor {
     pub fn load_cp(&mut self, data: &[u8]) {
         let idx = data[0] as usize;
         let val = u32::from_be_bytes([data[1], data[2], data[3], data[4]]);
+        #[cfg(feature = "jit")]
+        let changed = self.cp_regs[idx] != val;
         self.cp_regs[idx] = val;
+
+        #[cfg(feature = "jit")]
+        if changed
+            && ((ARRAY_BASE_REG..ARRAY_BASE_REG + super::jit::RESOLVED_ARRAY_COUNT).contains(&idx)
+                || (ARRAY_STRIDE_REG..ARRAY_STRIDE_REG + super::jit::RESOLVED_ARRAY_COUNT).contains(&idx))
+        {
+            self.jit_vtx_arrays_key = None;
+        }
 
         tracing::debug!(
             reg_idx = format!("{idx:02X}"),

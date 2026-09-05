@@ -13,6 +13,16 @@ use crate::gekko::jit::idle::{self, IdleClass};
 use crate::gekko::jit::{ExternFuncs, abi};
 use crate::system::SystemId;
 
+struct GqrCache {
+    values: [Option<Value>; 8],
+}
+
+fn should_use_native_self_loop(spec: &BlockSpec, idle_class: IdleClass) -> bool {
+    matches!(idle_class, IdleClass::None)
+        && spec.terminator == TermKind::BranchCond
+        && terminator_static_taken_pc(spec) == Some(spec.start_pc)
+}
+
 pub(crate) fn register_alias_regions(builder: &mut FunctionBuilder) {
     builder.func.dfg.alias_regions.insert(AliasRegionData {
         user_id: 0,
@@ -59,7 +69,7 @@ impl<'a> ChainContext<'a> {
 pub(crate) const DEFAULT_CYCLES: i64 = crate::gekko::cycles::DEFAULT_CYCLES;
 
 #[allow(dead_code)]
-pub(crate) struct LocalFuncs {
+pub(crate) struct BlockEmitContext {
     pub(crate) cause_invalid_opcode: FuncRef,
     pub(crate) advance_to_deadline: FuncRef,
     pub(crate) read_u8: FuncRef,
@@ -91,21 +101,51 @@ pub(crate) struct LocalFuncs {
     pub(crate) do_psq_store: FuncRef,
     pub(crate) read_timebase: FuncRef,
     pub(crate) cause_icbi: FuncRef,
+    pub(crate) mark_memory_writeback: FuncRef,
     pub(crate) cause_smc_write: FuncRef,
     pub(crate) dcbz: FuncRef,
-    pub(crate) fp_guard_emitted: std::cell::Cell<bool>,
+    pub(crate) fp_guard_emitted: bool,
+    gqr_cache: GqrCache,
+}
+
+fn gqr_load<const SYSTEM: SystemId>(
+    builder: &mut FunctionBuilder,
+    ctx_ptr: Value,
+    emit: &mut BlockEmitContext,
+    index: u8,
+) -> Value {
+    if let Some(value) = emit.gqr_cache.values[index as usize] {
+        return value;
+    }
+
+    let value = builder.ins().load(
+        types::I32,
+        vmctx_flags(),
+        ctx_ptr,
+        abi::gqr_offset::<SYSTEM>(index) as i32,
+    );
+    emit.gqr_cache.values[index as usize] = Some(value);
+
+    value
+}
+
+fn gqr_cache_store(emit: &mut BlockEmitContext, index: u8, value: Value) {
+    emit.gqr_cache.values[index as usize] = Some(value);
 }
 
 pub struct JitTranslator {
     pub(crate) builder_ptr: usize,
-    pub(crate) local_ptr: usize,
+    pub(crate) emit_ctx_ptr: usize,
     pub ctx_ptr: Value,
+    pub host_return_pc: Value,
     pub pc: u32,
     pub exit_block: cranelift_codegen::ir::Block,
     pub chain_slot_addr: Option<i64>,
     pub chain_fall_addr: Option<i64>,
     pub block_sig_ref: cranelift_codegen::ir::SigRef,
     pub block_lookup_table_addr: i64,
+    pub self_pc: u32,
+    pub self_loop_header: Option<Block>,
     pub is_terminator: bool,
     pub chained: bool,
     pub last_terminator_nia: Option<Value>,
@@ -123,7 +163,7 @@ pub fn translate<const SYSTEM: SystemId>(
     chain: &ChainContext<'_>,
     entry_counter_addr: Option<usize>,
 ) {
-    let local = LocalFuncs {
+    let mut local = BlockEmitContext {
         cause_invalid_opcode: module.declare_func_in_func(extern_funcs.cause_invalid_opcode, &mut ctx.func),
         advance_to_deadline: module.declare_func_in_func(extern_funcs.advance_to_deadline, &mut ctx.func),
         read_u8: module.declare_func_in_func(extern_funcs.read_u8, &mut ctx.func),
@@ -155,9 +195,11 @@ pub fn translate<const SYSTEM: SystemId>(
         do_psq_store: module.declare_func_in_func(extern_funcs.do_psq_store, &mut ctx.func),
         read_timebase: module.declare_func_in_func(extern_funcs.read_timebase, &mut ctx.func),
         cause_icbi: module.declare_func_in_func(extern_funcs.cause_icbi, &mut ctx.func),
+        mark_memory_writeback: module.declare_func_in_func(extern_funcs.mark_memory_writeback, &mut ctx.func),
         cause_smc_write: module.declare_func_in_func(extern_funcs.cause_smc_write, &mut ctx.func),
         dcbz: module.declare_func_in_func(extern_funcs.dcbz, &mut ctx.func),
-        fp_guard_emitted: std::cell::Cell::new(false),
+        fp_guard_emitted: false,
+        gqr_cache: GqrCache { values: [None; 8] },
     };
 
     let idle_class = idle::classify::<SYSTEM>(spec, gprs);
@@ -175,13 +217,15 @@ pub fn translate<const SYSTEM: SystemId>(
 
     let mut builder = FunctionBuilder::new(&mut ctx.func, builder_ctx);
     register_alias_regions(&mut builder);
-
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
     builder.seal_block(entry);
 
     let ctx_ptr: Value = builder.block_params(entry)[0];
+    let host_return_pc: Value = builder.block_params(entry)[1];
+
+    let is_self_loop = should_use_native_self_loop(spec, idle_class);
 
     if let Some(addr) = entry_counter_addr {
         let slot_v = builder.ins().iconst(types::I64, addr as i64);
@@ -192,13 +236,17 @@ pub fn translate<const SYSTEM: SystemId>(
 
     let exit_block = builder.create_block();
     builder.append_block_param(exit_block, types::I32);
+    let dirty_exit_block = builder.create_block();
+    builder.append_block_param(dirty_exit_block, types::I32);
 
     let dirty_off = abi::jit_dirty_offset::<SYSTEM>() as i32;
     let dirty = builder.ins().load(types::I8, vmctx_flags(), ctx_ptr, dirty_off);
     let nz = builder.ins().icmp_imm(IntCC::NotEqual, dirty, 0);
     let alive = builder.create_block();
     let start_nia = builder.ins().iconst(types::I32, spec.start_pc as i64);
-    builder.ins().brif(nz, exit_block, &[start_nia.into()], alive, &[]);
+    builder
+        .ins()
+        .brif(nz, dirty_exit_block, &[start_nia.into()], alive, &[]);
     builder.switch_to_block(alive);
     builder.seal_block(alive);
 
@@ -229,7 +277,15 @@ pub fn translate<const SYSTEM: SystemId>(
         let final_nia = builder.ins().iconst(types::I32, spec.start_pc.wrapping_add(12) as i64);
 
         if let Some(slot_addr) = chain_fall_addr {
-            emit_chain_or_exit::<SYSTEM>(&mut builder, ctx_ptr, slot_addr, block_sig_ref, final_nia, exit_block);
+            emit_chain_or_exit::<SYSTEM>(
+                &mut builder,
+                ctx_ptr,
+                host_return_pc,
+                slot_addr,
+                block_sig_ref,
+                final_nia,
+                exit_block,
+            );
         } else {
             builder.ins().jump(exit_block, &[final_nia.into()]);
         }
@@ -238,6 +294,11 @@ pub fn translate<const SYSTEM: SystemId>(
         builder.seal_block(exit_block);
         let exit_nia = builder.block_params(exit_block)[0];
         builder.ins().return_(&[exit_nia]);
+
+        builder.switch_to_block(dirty_exit_block);
+        builder.seal_block(dirty_exit_block);
+        let dirty_nia = builder.block_params(dirty_exit_block)[0];
+        builder.ins().return_(&[dirty_nia]);
         builder.finalize();
         return;
     }
@@ -246,16 +307,27 @@ pub fn translate<const SYSTEM: SystemId>(
     let mut chained = false;
     let mut pending_cycles: i64 = 0;
 
+    let self_loop_header = is_self_loop.then(|| {
+        let header = builder.create_block();
+        builder.ins().jump(header, &[]);
+        builder.switch_to_block(header);
+
+        header
+    });
+
     let mut t = JitTranslator {
         builder_ptr: &mut builder as *mut FunctionBuilder<'_> as *mut () as usize,
-        local_ptr: &local as *const LocalFuncs as usize,
+        emit_ctx_ptr: &mut local as *mut BlockEmitContext as usize,
         ctx_ptr,
+        host_return_pc,
         pc: 0,
         exit_block,
         chain_slot_addr,
         chain_fall_addr,
         block_sig_ref,
         block_lookup_table_addr: chain.block_lookup_table_addr,
+        self_pc: spec.start_pc,
+        self_loop_header,
         is_terminator: false,
         chained: false,
         last_terminator_nia: None,
@@ -326,15 +398,15 @@ pub fn translate<const SYSTEM: SystemId>(
     }
     drop(t);
 
+    if let Some(header) = self_loop_header {
+        builder.seal_block(header);
+    }
+
     if pending_cycles > 0 {
         self::emit_cycles_add::<SYSTEM>(&mut builder, ctx_ptr, pending_cycles);
     }
 
     if !chained {
-        if idle_class != IdleClass::None {
-            builder.ins().call(local.advance_to_deadline, &[ctx_ptr]);
-        }
-
         let final_nia = match spec.terminator {
             TermKind::LengthCap => builder.ins().iconst(types::I32, spec.end_pc() as i64),
             _ => last_terminator_nia.unwrap_or_else(|| {
@@ -343,8 +415,38 @@ pub fn translate<const SYSTEM: SystemId>(
                 builder.ins().load(types::I32, vmctx_flags(), nia_addr, 0)
             }),
         };
+
+        match idle_class {
+            IdleClass::None | IdleClass::PointerIterLoop { .. } => {}
+            IdleClass::BranchToSelf => {
+                builder.ins().call(local.advance_to_deadline, &[ctx_ptr]);
+            }
+            IdleClass::PollingLoop => {
+                let taken_pc =
+                    terminator_static_taken_pc(spec).expect("polling-loop classifier requires a static branch target");
+                let taken = builder.ins().icmp_imm(IntCC::Equal, final_nia, taken_pc as i64);
+                let advance = builder.create_block();
+                let resume = builder.create_block();
+                builder.ins().brif(taken, advance, &[], resume, &[]);
+                builder.switch_to_block(advance);
+                builder.seal_block(advance);
+                builder.ins().call(local.advance_to_deadline, &[ctx_ptr]);
+                builder.ins().jump(resume, &[]);
+                builder.switch_to_block(resume);
+                builder.seal_block(resume);
+            }
+        }
+
         if let Some(slot_addr) = chain_slot_addr {
-            emit_chain_or_exit::<SYSTEM>(&mut builder, ctx_ptr, slot_addr, block_sig_ref, final_nia, exit_block);
+            emit_chain_or_exit::<SYSTEM>(
+                &mut builder,
+                ctx_ptr,
+                host_return_pc,
+                slot_addr,
+                block_sig_ref,
+                final_nia,
+                exit_block,
+            );
         } else {
             builder.ins().jump(exit_block, &[final_nia.into()]);
         }
@@ -355,6 +457,11 @@ pub fn translate<const SYSTEM: SystemId>(
 
     let exit_nia = builder.block_params(exit_block)[0];
     builder.ins().return_(&[exit_nia]);
+
+    builder.switch_to_block(dirty_exit_block);
+    builder.seal_block(dirty_exit_block);
+    let dirty_nia = builder.block_params(dirty_exit_block)[0];
+    builder.ins().return_(&[dirty_nia]);
 
     builder.finalize();
 }
@@ -616,7 +723,7 @@ pub(crate) fn emit_twi<const SYSTEM: SystemId>(
     instr: Instruction,
     pc: u32,
     exit_block: Block,
-    local: &LocalFuncs,
+    local: &BlockEmitContext,
 ) {
     let to = (instr.bo() as u32) as u32;
     let a = gpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
@@ -630,7 +737,7 @@ pub(crate) fn emit_tw<const SYSTEM: SystemId>(
     instr: Instruction,
     pc: u32,
     exit_block: Block,
-    local: &LocalFuncs,
+    local: &BlockEmitContext,
 ) {
     let to = (instr.bo() as u32) as u32;
     let a = gpr_load::<SYSTEM>(builder, ctx_ptr, instr.ra());
@@ -646,7 +753,7 @@ pub(crate) fn emit_trap_check<const SYSTEM: SystemId>(
     to: u32,
     pc: u32,
     exit_block: Block,
-    local: &LocalFuncs,
+    local: &BlockEmitContext,
 ) {
     let _ = local;
     let mut cond: Option<Value> = None;
@@ -919,7 +1026,7 @@ pub(crate) fn emit_mfspr<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
     instr: Instruction,
-    local: &LocalFuncs,
+    local: &BlockEmitContext,
 ) -> bool {
     let spr_num = instr.spr_swapped() as u16;
     if let Some(off) = abi::spr_field_offset::<SYSTEM>(spr_num).map(|off| off as i32) {
@@ -938,12 +1045,16 @@ pub(crate) fn emit_mtspr<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
     instr: Instruction,
-    local: &LocalFuncs,
+    local: &mut BlockEmitContext,
 ) -> bool {
     let spr_num = instr.spr_swapped() as u16;
     let val = gpr_load::<SYSTEM>(builder, ctx_ptr, instr.rs());
     if let Some(off) = abi::spr_field_offset::<SYSTEM>(spr_num).map(|off| off as i32) {
         builder.ins().store(vmctx_flags(), val, ctx_ptr, off);
+
+        if matches!(spr_num, 912..=919) {
+            gqr_cache_store(local, (spr_num - 912) as u8, val);
+        }
     } else {
         let num_v = builder.ins().iconst(types::I32, spr_num as i64);
         builder.ins().call(local.write_spr, &[ctx_ptr, num_v, val]);
@@ -1072,14 +1183,16 @@ pub(crate) fn emit_b<const SYSTEM: SystemId>(
 pub(crate) fn emit_bc_with_chain<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
+    host_return_pc: Value,
     instr: Instruction,
     pc: u32,
     exit_block: Block,
     taken_slot: Option<i64>,
     fall_slot: Option<i64>,
     block_sig_ref: cranelift_codegen::ir::SigRef,
+    self_loop: Option<(u32, Block)>,
 ) -> TermEmit {
-    if taken_slot.is_none() && fall_slot.is_none() {
+    if taken_slot.is_none() && fall_slot.is_none() && self_loop.is_none() {
         return TermEmit::HandledNia(emit_bc::<SYSTEM>(builder, ctx_ptr, instr, pc));
     }
 
@@ -1137,8 +1250,19 @@ pub(crate) fn emit_bc_with_chain<const SYSTEM: SystemId>(
         lr_store::<SYSTEM>(builder, ctx_ptr, lr_val);
     }
     let taken_v = builder.ins().iconst(types::I32, taken_target as i64);
-    if let Some(slot_addr) = taken_slot {
-        emit_chain_or_exit::<SYSTEM>(builder, ctx_ptr, slot_addr, block_sig_ref, taken_v, exit_block);
+
+    if let Some((_, header)) = self_loop.filter(|(self_pc, _)| *self_pc == taken_target && !instr.lk()) {
+        emit_loop_or_exit::<SYSTEM>(builder, ctx_ptr, header, taken_v, exit_block);
+    } else if let Some(slot_addr) = taken_slot {
+        emit_chain_or_exit::<SYSTEM>(
+            builder,
+            ctx_ptr,
+            host_return_pc,
+            slot_addr,
+            block_sig_ref,
+            taken_v,
+            exit_block,
+        );
     } else {
         builder.ins().jump(exit_block, &[taken_v.into()]);
     }
@@ -1148,12 +1272,45 @@ pub(crate) fn emit_bc_with_chain<const SYSTEM: SystemId>(
 
     let fall_v = builder.ins().iconst(types::I32, fall_target as i64);
     if let Some(slot_addr) = fall_slot {
-        emit_chain_or_exit::<SYSTEM>(builder, ctx_ptr, slot_addr, block_sig_ref, fall_v, exit_block);
+        emit_chain_or_exit::<SYSTEM>(
+            builder,
+            ctx_ptr,
+            host_return_pc,
+            slot_addr,
+            block_sig_ref,
+            fall_v,
+            exit_block,
+        );
     } else {
         builder.ins().jump(exit_block, &[fall_v.into()]);
     }
 
     TermEmit::HandledChained
+}
+
+fn emit_loop_or_exit<const SYSTEM: SystemId>(
+    builder: &mut FunctionBuilder,
+    ctx_ptr: Value,
+    loop_header: Block,
+    nia_if_exit: Value,
+    exit_block: Block,
+) {
+    let cycles = builder.ins().load(
+        types::I64,
+        vmctx_flags(),
+        ctx_ptr,
+        abi::cycles_offset::<SYSTEM>() as i32,
+    );
+    let deadline = builder.ins().load(
+        types::I64,
+        vmctx_flags(),
+        ctx_ptr,
+        abi::next_deadline_offset::<SYSTEM>() as i32,
+    );
+    let exhausted = builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, cycles, deadline);
+    builder
+        .ins()
+        .brif(exhausted, exit_block, &[nia_if_exit.into()], loop_header, &[]);
 }
 
 pub(crate) fn emit_bc<const SYSTEM: SystemId>(
@@ -1232,6 +1389,7 @@ pub(crate) fn lr_load<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx
 pub(crate) fn emit_bclr_dispatch<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
+    host_return_pc: Value,
     instr: Instruction,
     pc: u32,
     exit_block: Block,
@@ -1243,11 +1401,20 @@ pub(crate) fn emit_bclr_dispatch<const SYSTEM: SystemId>(
 
     let unconditional = (bo & 0x14) == 0x14;
     if unconditional && !instr.lk() {
-        emit_blr_with_ic::<SYSTEM>(builder, ctx_ptr, pc, exit_block, block_sig_ref, lookup_table_addr)
+        emit_blr_with_ic::<SYSTEM>(
+            builder,
+            ctx_ptr,
+            host_return_pc,
+            pc,
+            exit_block,
+            block_sig_ref,
+            lookup_table_addr,
+        )
     } else if !unconditional {
         self::emit_bclr_chain_fall::<SYSTEM>(
             builder,
             ctx_ptr,
+            host_return_pc,
             instr,
             pc,
             exit_block,
@@ -1263,6 +1430,7 @@ pub(crate) fn emit_bclr_dispatch<const SYSTEM: SystemId>(
 pub(crate) fn emit_bcctr_dispatch<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
+    host_return_pc: Value,
     instr: Instruction,
     pc: u32,
     exit_block: Block,
@@ -1273,11 +1441,20 @@ pub(crate) fn emit_bcctr_dispatch<const SYSTEM: SystemId>(
     let bo = (instr.bo() as u32) as u8;
     let unconditional = (bo & 0x14) == 0x14;
     if unconditional && !instr.lk() {
-        emit_bctr_with_ic::<SYSTEM>(builder, ctx_ptr, pc, exit_block, block_sig_ref, lookup_table_addr)
+        emit_bctr_with_ic::<SYSTEM>(
+            builder,
+            ctx_ptr,
+            host_return_pc,
+            pc,
+            exit_block,
+            block_sig_ref,
+            lookup_table_addr,
+        )
     } else if !unconditional {
         self::emit_bcctr_chain_fall::<SYSTEM>(
             builder,
             ctx_ptr,
+            host_return_pc,
             instr,
             pc,
             exit_block,
@@ -1293,6 +1470,7 @@ pub(crate) fn emit_bcctr_dispatch<const SYSTEM: SystemId>(
 fn emit_bclr_chain_fall<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
+    host_return_pc: Value,
     instr: Instruction,
     pc: u32,
     exit_block: Block,
@@ -1353,6 +1531,7 @@ fn emit_bclr_chain_fall<const SYSTEM: SystemId>(
     emit_inline_cache_dispatch::<SYSTEM>(
         builder,
         ctx_ptr,
+        host_return_pc,
         target_pc,
         exit_block,
         block_sig_ref,
@@ -1365,7 +1544,15 @@ fn emit_bclr_chain_fall<const SYSTEM: SystemId>(
     let fall_v = builder.ins().iconst(types::I32, pc.wrapping_add(4) as i64);
 
     if let Some(slot_addr) = fall_slot {
-        emit_chain_or_exit::<SYSTEM>(builder, ctx_ptr, slot_addr, block_sig_ref, fall_v, exit_block);
+        emit_chain_or_exit::<SYSTEM>(
+            builder,
+            ctx_ptr,
+            host_return_pc,
+            slot_addr,
+            block_sig_ref,
+            fall_v,
+            exit_block,
+        );
     } else {
         builder.ins().jump(exit_block, &[fall_v.into()]);
     }
@@ -1376,6 +1563,7 @@ fn emit_bclr_chain_fall<const SYSTEM: SystemId>(
 fn emit_bcctr_chain_fall<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
+    host_return_pc: Value,
     instr: Instruction,
     pc: u32,
     exit_block: Block,
@@ -1409,6 +1597,7 @@ fn emit_bcctr_chain_fall<const SYSTEM: SystemId>(
     emit_inline_cache_dispatch::<SYSTEM>(
         builder,
         ctx_ptr,
+        host_return_pc,
         target_pc,
         exit_block,
         block_sig_ref,
@@ -1419,7 +1608,15 @@ fn emit_bcctr_chain_fall<const SYSTEM: SystemId>(
     builder.seal_block(fall_block);
     let fall_v = builder.ins().iconst(types::I32, pc.wrapping_add(4) as i64);
     if let Some(slot_addr) = fall_slot {
-        emit_chain_or_exit::<SYSTEM>(builder, ctx_ptr, slot_addr, block_sig_ref, fall_v, exit_block);
+        emit_chain_or_exit::<SYSTEM>(
+            builder,
+            ctx_ptr,
+            host_return_pc,
+            slot_addr,
+            block_sig_ref,
+            fall_v,
+            exit_block,
+        );
     } else {
         builder.ins().jump(exit_block, &[fall_v.into()]);
     }
@@ -1430,6 +1627,7 @@ fn emit_bcctr_chain_fall<const SYSTEM: SystemId>(
 pub(crate) fn emit_blr_with_ic<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
+    host_return_pc: Value,
     _pc: u32,
     exit_block: Block,
     block_sig_ref: cranelift_codegen::ir::SigRef,
@@ -1437,9 +1635,21 @@ pub(crate) fn emit_blr_with_ic<const SYSTEM: SystemId>(
 ) -> TermEmit {
     let lr = lr_load::<SYSTEM>(builder, ctx_ptr);
     let target_pc = builder.ins().band_imm(lr, !3i64);
+    let direct = builder.ins().icmp(IntCC::Equal, target_pc, host_return_pc);
+    let return_block = builder.create_block();
+    let dispatch_block = builder.create_block();
+    builder.ins().brif(direct, return_block, &[], dispatch_block, &[]);
+
+    builder.switch_to_block(return_block);
+    builder.seal_block(return_block);
+    builder.ins().return_(&[target_pc]);
+
+    builder.switch_to_block(dispatch_block);
+    builder.seal_block(dispatch_block);
     emit_inline_cache_dispatch::<SYSTEM>(
         builder,
         ctx_ptr,
+        host_return_pc,
         target_pc,
         exit_block,
         block_sig_ref,
@@ -1451,6 +1661,7 @@ pub(crate) fn emit_blr_with_ic<const SYSTEM: SystemId>(
 pub(crate) fn emit_bctr_with_ic<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
+    host_return_pc: Value,
     _pc: u32,
     exit_block: Block,
     block_sig_ref: cranelift_codegen::ir::SigRef,
@@ -1461,6 +1672,7 @@ pub(crate) fn emit_bctr_with_ic<const SYSTEM: SystemId>(
     emit_inline_cache_dispatch::<SYSTEM>(
         builder,
         ctx_ptr,
+        host_return_pc,
         target_pc,
         exit_block,
         block_sig_ref,
@@ -1472,6 +1684,7 @@ pub(crate) fn emit_bctr_with_ic<const SYSTEM: SystemId>(
 pub(crate) fn emit_inline_cache_dispatch<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
+    host_return_pc: Value,
     target_pc: Value,
     exit_block: Block,
     block_sig_ref: cranelift_codegen::ir::SigRef,
@@ -1515,7 +1728,7 @@ pub(crate) fn emit_inline_cache_dispatch<const SYSTEM: SystemId>(
     builder.seal_block(hit_block);
     builder
         .ins()
-        .return_call_indirect(block_sig_ref, slot_entry, &[ctx_ptr]);
+        .return_call_indirect(block_sig_ref, slot_entry, &[ctx_ptr, host_return_pc]);
 }
 
 pub(crate) fn emit_bclr<const SYSTEM: SystemId>(
@@ -1748,7 +1961,12 @@ fn terminator_fall_pc(spec: &BlockSpec) -> Option<u32> {
     let fall_pc = pc.wrapping_add(4);
 
     match spec.terminator {
-        TermKind::BranchCond => Some(fall_pc),
+        TermKind::Branch => {
+            let instr = Instruction(spec.instrs[last_idx]);
+
+            instr.lk().then_some(fall_pc)
+        }
+        TermKind::BranchCond | TermKind::Mtmsr => Some(fall_pc),
         TermKind::BranchToReg => {
             let raw = spec.instrs[last_idx];
             let bo = (raw >> 21) & 0x1F;
@@ -1794,6 +2012,7 @@ pub(crate) enum TermEmit {
 pub(crate) fn emit_chain_or_exit<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
+    host_return_pc: Value,
     slot_addr: i64,
     block_sig_ref: cranelift_codegen::ir::SigRef,
     nia_if_exit: Value,
@@ -1829,15 +2048,18 @@ pub(crate) fn emit_chain_or_exit<const SYSTEM: SystemId>(
     builder.seal_block(tailcall_block);
     builder
         .ins()
-        .return_call_indirect(block_sig_ref, target_ptr, &[ctx_ptr]);
+        .return_call_indirect(block_sig_ref, target_ptr, &[ctx_ptr, host_return_pc]);
 }
 
 pub(crate) fn emit_call_or_exit<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
+    caller_host_return_pc: Value,
     slot_addr: i64,
     block_sig_ref: cranelift_codegen::ir::SigRef,
     nia_if_exit: Value,
+    return_pc: u32,
+    return_slot_addr: Option<i64>,
     exit_block: Block,
 ) {
     let cyc_off = abi::cycles_offset::<SYSTEM>() as i32;
@@ -1869,10 +2091,40 @@ pub(crate) fn emit_call_or_exit<const SYSTEM: SystemId>(
     builder.switch_to_block(call_block);
     builder.seal_block(call_block);
 
-    let call = builder.ins().call_indirect(block_sig_ref, target_ptr, &[ctx_ptr]);
+    let return_pc_v = builder.ins().iconst(types::I32, return_pc as i64);
+    let call = builder
+        .ins()
+        .call_indirect(block_sig_ref, target_ptr, &[ctx_ptr, return_pc_v]);
     let returned_nia = builder.inst_results(call)[0];
 
+    let is_expected_return = builder.ins().icmp(IntCC::Equal, returned_nia, return_pc_v);
+    let continue_block = builder.create_block();
+    let bubble_block = builder.create_block();
+    builder.set_cold_block(bubble_block);
+    builder
+        .ins()
+        .brif(is_expected_return, continue_block, &[], bubble_block, &[]);
+
+    builder.switch_to_block(bubble_block);
+    builder.seal_block(bubble_block);
     builder.ins().jump(exit_block, &[returned_nia.into()]);
+
+    builder.switch_to_block(continue_block);
+    builder.seal_block(continue_block);
+
+    if let Some(return_slot_addr) = return_slot_addr {
+        emit_chain_or_exit::<SYSTEM>(
+            builder,
+            ctx_ptr,
+            caller_host_return_pc,
+            return_slot_addr,
+            block_sig_ref,
+            returned_nia,
+            exit_block,
+        );
+    } else {
+        builder.ins().jump(exit_block, &[returned_nia.into()]);
+    }
 }
 
 fn gpr_offset<const SYSTEM: SystemId>(i: u8) -> i32 {
@@ -2290,7 +2542,7 @@ pub(crate) fn emit_lfx_update<const SYSTEM: SystemId>(
     ctx_ptr: Value,
     instr: Instruction,
     single: bool,
-    local: &LocalFuncs,
+    local: &BlockEmitContext,
 ) {
     let ea = emit_x_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
     if single {
@@ -2306,7 +2558,7 @@ pub(crate) fn emit_stfx_update<const SYSTEM: SystemId>(
     ctx_ptr: Value,
     instr: Instruction,
     single: bool,
-    local: &LocalFuncs,
+    local: &BlockEmitContext,
 ) {
     let ea = emit_x_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
     if single {
@@ -2374,7 +2626,7 @@ pub(crate) fn emit_psq_x<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
     instr: Instruction,
-    local: &LocalFuncs,
+    local: &mut BlockEmitContext,
     store: bool,
     update: bool,
 ) {
@@ -2382,7 +2634,7 @@ pub(crate) fn emit_psq_x<const SYSTEM: SystemId>(
     let b = gpr_load::<SYSTEM>(builder, ctx_ptr, instr.rb());
     let ea = builder.ins().iadd(base, b);
 
-    let easy = emit_gqr_type_zero_check::<SYSTEM>(builder, ctx_ptr, instr.i_22_24(), store);
+    let easy = emit_gqr_type_zero_check::<SYSTEM>(builder, ctx_ptr, local, instr.i_22_24(), store);
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
     builder.set_cold_block(slow_block);
@@ -2448,7 +2700,7 @@ pub(crate) fn emit_lwarx<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
     instr: Instruction,
-    local: &LocalFuncs,
+    local: &BlockEmitContext,
 ) {
     let ea = emit_x_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
     emit_load_at_ea::<SYSTEM>(
@@ -2469,7 +2721,7 @@ pub(crate) fn emit_stwcx_dot<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
     instr: Instruction,
-    local: &LocalFuncs,
+    local: &BlockEmitContext,
 ) {
     let ea = emit_x_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
 
@@ -2525,7 +2777,7 @@ pub(crate) fn emit_lmw_stmw<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
     instr: Instruction,
-    local: &LocalFuncs,
+    local: &BlockEmitContext,
     store: bool,
 ) {
     let ea_base = emit_d_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
@@ -2766,13 +3018,13 @@ pub(crate) fn emit_msr_fp_guard<const SYSTEM: SystemId>(
     _instr: Instruction,
     pc: u32,
     exit_block: Block,
-    local: &LocalFuncs,
+    local: &mut BlockEmitContext,
     op_cycles: i64,
 ) {
-    if local.fp_guard_emitted.get() {
+    if local.fp_guard_emitted {
         return;
     }
-    local.fp_guard_emitted.set(true);
+    local.fp_guard_emitted = true;
 
     let msr_off = abi::msr_offset::<SYSTEM>() as i32;
     let msr = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, msr_off);
@@ -2806,7 +3058,7 @@ pub(crate) fn emit_lf_d_form_update<const SYSTEM: SystemId>(
     ctx_ptr: Value,
     instr: Instruction,
     single: bool,
-    local: &LocalFuncs,
+    local: &BlockEmitContext,
 ) {
     let ea = emit_d_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
     if single {
@@ -2822,7 +3074,7 @@ pub(crate) fn emit_stf_d_form_update<const SYSTEM: SystemId>(
     ctx_ptr: Value,
     instr: Instruction,
     single: bool,
-    local: &LocalFuncs,
+    local: &BlockEmitContext,
 ) {
     let ea = emit_d_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
     if single {
@@ -2858,10 +3110,7 @@ pub(crate) fn emit_lfs<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
     let addr = builder.block_params(fast_block)[0];
-    let raw_u32 = builder.ins().load(types::I32, heap_flags(), addr, 0);
-    let be_u32 = builder.ins().bswap(raw_u32);
-    let f32v = builder.ins().bitcast(types::F32, MemFlagsData::new(), be_u32);
-    let f64v = builder.ins().fpromote(types::F64, f32v);
+    let f64v = emit_direct_read_f32(builder, addr);
     builder.ins().jump(merge, &[f64v.into()]);
 
     builder.switch_to_block(slow_block);
@@ -2944,10 +3193,7 @@ pub(crate) fn emit_stfs<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
     let addr = builder.block_params(fast_block)[0];
-    let f32v = builder.ins().fdemote(types::F32, f64v);
-    let bits = builder.ins().bitcast(types::I32, MemFlagsData::new(), f32v);
-    let swapped = builder.ins().bswap(bits);
-    builder.ins().store(heap_flags(), swapped, addr, 0);
+    emit_direct_write_f32(builder, addr, f64v);
     emit_smc_check::<SYSTEM>(builder, ctx_ptr, ea, 4, cause_smc_write);
     builder.ins().jump(merge, &[]);
 
@@ -3204,19 +3450,53 @@ pub(crate) fn emit_stfd_at_ea<const SYSTEM: SystemId>(
     builder.seal_block(merge);
 }
 
+fn emit_direct_read_f32(builder: &mut FunctionBuilder, addr: Value) -> Value {
+    let raw = builder.ins().load(types::I32, heap_flags(), addr, 0);
+    let be = builder.ins().bswap(raw);
+    let value = builder.ins().bitcast(types::F32, MemFlagsData::new(), be);
+
+    builder.ins().fpromote(types::F64, value)
+}
+
+fn emit_direct_read_ps_pair(builder: &mut FunctionBuilder, addr: Value) -> Value {
+    let raw = builder.ins().load(types::I64, heap_flags(), addr, 0);
+    let swapped = builder.ins().bswap(raw);
+    let rotated = builder.ins().rotl_imm(swapped, 32);
+    let vector = builder.ins().scalar_to_vector(types::I64X2, rotated);
+    let f32s = builder.ins().bitcast(types::F32X4, le_vec_flags(), vector);
+
+    builder.ins().fvpromote_low(f32s)
+}
+
+fn emit_direct_write_f32(builder: &mut FunctionBuilder, addr: Value, value: Value) {
+    let value = builder.ins().fdemote(types::F32, value);
+    let bits = builder.ins().bitcast(types::I32, MemFlagsData::new(), value);
+    let swapped = builder.ins().bswap(bits);
+    builder.ins().store(heap_flags(), swapped, addr, 0);
+}
+
+fn emit_direct_write_ps_pair(builder: &mut FunctionBuilder, addr: Value, pair: Value) {
+    let f32s = builder.ins().fvdemote(pair);
+    let vector = builder.ins().bitcast(types::I64X2, le_vec_flags(), f32s);
+    let low = builder.ins().extractlane(vector, 0);
+    let rotated = builder.ins().rotl_imm(low, 32);
+    let swapped = builder.ins().bswap(rotated);
+    builder.ins().store(heap_flags(), swapped, addr, 0);
+}
+
 pub(crate) fn emit_psq_l<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
     instr: Instruction,
     pc: u32,
     exit_block: Block,
-    local: &LocalFuncs,
+    local: &mut BlockEmitContext,
     update: bool,
 ) {
     let base = gpr_load_or_zero::<SYSTEM>(builder, ctx_ptr, instr.ra());
     let ea = builder.ins().iadd_imm(base, instr.d_20_31() as i64);
 
-    let easy = emit_gqr_type_zero_check::<SYSTEM>(builder, ctx_ptr, instr.i_17_19(), false);
+    let easy = emit_gqr_type_zero_check::<SYSTEM>(builder, ctx_ptr, local, instr.i_17_19(), false);
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
@@ -3266,13 +3546,13 @@ pub(crate) fn emit_psq_st<const SYSTEM: SystemId>(
     instr: Instruction,
     pc: u32,
     exit_block: Block,
-    local: &LocalFuncs,
+    local: &mut BlockEmitContext,
     update: bool,
 ) {
     let base = gpr_load_or_zero::<SYSTEM>(builder, ctx_ptr, instr.ra());
     let ea = builder.ins().iadd_imm(base, instr.d_20_31() as i64);
 
-    let easy = emit_gqr_type_zero_check::<SYSTEM>(builder, ctx_ptr, instr.i_17_19(), true);
+    let easy = emit_gqr_type_zero_check::<SYSTEM>(builder, ctx_ptr, local, instr.i_17_19(), true);
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
@@ -3317,11 +3597,11 @@ pub(crate) fn emit_psq_st<const SYSTEM: SystemId>(
 pub(crate) fn emit_gqr_type_zero_check<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
+    local: &mut BlockEmitContext,
     gqr_idx: u8,
     store: bool,
 ) -> Value {
-    let off = abi::gqr_offset::<SYSTEM>(gqr_idx) as i32;
-    let gqr = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, off);
+    let gqr = gqr_load::<SYSTEM>(builder, ctx_ptr, local, gqr_idx);
     let mask = if store { 0x7 } else { 0x70000 };
     let bits = builder.ins().band_imm(gqr, mask);
     builder.ins().icmp_imm(IntCC::Equal, bits, 0)
@@ -3453,10 +3733,9 @@ pub(crate) fn emit_psq_load_quantized<const SYSTEM: SystemId>(
     w: bool,
     gqr_idx: u8,
     merge: Block,
-    local: &LocalFuncs,
+    local: &mut BlockEmitContext,
 ) {
-    let gqr_off = abi::gqr_offset::<SYSTEM>(gqr_idx) as i32;
-    let gqr_v = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, gqr_off);
+    let gqr_v = gqr_load::<SYSTEM>(builder, ctx_ptr, local, gqr_idx);
     let type_shifted = builder.ins().ushr_imm(gqr_v, 16);
     let type_v = builder.ins().band_imm(type_shifted, 0x7);
 
@@ -3539,10 +3818,9 @@ pub(crate) fn emit_psq_store_quantized<const SYSTEM: SystemId>(
     w: bool,
     gqr_idx: u8,
     merge: Block,
-    local: &LocalFuncs,
+    local: &mut BlockEmitContext,
 ) {
-    let gqr_off = abi::gqr_offset::<SYSTEM>(gqr_idx) as i32;
-    let gqr_v = builder.ins().load(types::I32, vmctx_flags(), ctx_ptr, gqr_off);
+    let gqr_v = gqr_load::<SYSTEM>(builder, ctx_ptr, local, gqr_idx);
     let type_v = builder.ins().band_imm(gqr_v, 0x7);
 
     let q_bit = builder.ins().band_imm(type_v, 0x4);
@@ -3741,12 +4019,7 @@ pub(crate) fn emit_read_ps_pair<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
     let addr = builder.block_params(fast_block)[0];
-    let raw = builder.ins().load(types::I64, heap_flags(), addr, 0);
-    let sw = builder.ins().bswap(raw);
-    let ro = builder.ins().rotl_imm(sw, 32);
-    let v64 = builder.ins().scalar_to_vector(types::I64X2, ro);
-    let f32s = builder.ins().bitcast(types::F32X4, le_vec_flags(), v64);
-    let pair = builder.ins().fvpromote_low(f32s);
+    let pair = emit_direct_read_ps_pair(builder, addr);
     builder.ins().jump(merge, &[pair.into()]);
 
     builder.switch_to_block(slow_block);
@@ -3787,12 +4060,7 @@ pub(crate) fn emit_write_ps_pair<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
     let addr = builder.block_params(fast_block)[0];
-    let f32s = builder.ins().fvdemote(pair);
-    let v64 = builder.ins().bitcast(types::I64X2, le_vec_flags(), f32s);
-    let lo = builder.ins().extractlane(v64, 0);
-    let ro = builder.ins().rotl_imm(lo, 32);
-    let sw = builder.ins().bswap(ro);
-    builder.ins().store(heap_flags(), sw, addr, 0);
+    emit_direct_write_ps_pair(builder, addr, pair);
     emit_smc_check::<SYSTEM>(builder, ctx_ptr, ea, 8, cause_smc_write);
     builder.ins().jump(merge, &[]);
 

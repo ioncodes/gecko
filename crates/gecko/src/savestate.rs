@@ -240,6 +240,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     pub fn save_state(&mut self) -> Result<Vec<u8>, StateError> {
         let mut ram = self.mmio.ram_view_mut();
         self.render_sink.flush_efb_copies(&mut ram);
+        self.mmio.clear_deferred_efb_writebacks();
 
         let mut w = StateWriter::new();
 
@@ -273,6 +274,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     }
 
     pub fn load_state(&mut self, data: &[u8]) -> Result<(), StateError> {
+        self.mmio.clear_deferred_efb_writebacks();
         let payload = self::unpack(SYSTEM, data)?;
         let mut r = StateReader::new(&payload);
 

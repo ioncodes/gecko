@@ -4,6 +4,8 @@ use crate::scheduler;
 use crate::system::{System, SystemId};
 use chapa::BitEnum;
 
+const MAILBOX_DRAIN_MAX_STEPS: u32 = 256 * 1024;
+
 // 0xCC00500A 2 [R/W] CSR - DSP Control/Status Register
 
 #[derive(BitEnum, Debug, PartialEq, Eq)]
@@ -182,7 +184,7 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for MailboxToDspLo {
         // Based off of FFCC, thanks SpinningCube, zayd, JustinCase
         // TODO: WHAT THE FUCK KINDA NUMBER SHOULD I USE
         // used to be 64 * 1024 and worked well on many games...
-        sys.drain_dsp_synchronous(64 * 1024);
+        sys.drain_dsp_synchronous(MAILBOX_DRAIN_MAX_STEPS);
         crate::flipper::dsp::wake_dsp_scheduler::<SYSTEM>(sys);
     }
 }

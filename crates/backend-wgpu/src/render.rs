@@ -209,7 +209,7 @@ impl GxRenderer {
 
         let needs_shader_copy = dst_h != height || (gamma - 1.0).abs() > f32::EPSILON;
         if needs_shader_copy && self.xfb_copy_uniform_write_pending {
-            self.submit_pending(queue);
+            let _ = self.submit_pending(queue);
         }
 
         let mut encoder = self.take_or_create_encoder(device);
@@ -394,7 +394,7 @@ impl GxRenderer {
             EfbCopySource::Depth => self.efb_depth_cache_uniform_write_pending,
         };
         if write_pending {
-            self.submit_pending(queue);
+            let _ = self.submit_pending(queue);
         }
 
         let uniforms = XfbCopyUniforms {
@@ -643,7 +643,7 @@ impl GxRenderer {
 
         encoder.pop_debug_group();
         self.current_encoder = Some(encoder);
-        self.submit_pending(queue);
+        let _ = self.submit_pending(queue);
         // The staging buffer's in-flight references have just been submitted;
         // now's the safe moment to grow it if this frame exceeded capacity.
         self.maybe_grow_texture_staging(device);
@@ -689,7 +689,7 @@ impl GxRenderer {
             },
         );
 
-        self.submit_pending(queue);
+        let _ = self.submit_pending(queue);
         self.xfb_has_content = true;
     }
 
@@ -777,34 +777,37 @@ impl GxRenderer {
             return;
         }
 
-        // wgpu requires 256-byte row alignment for texture<->buffer copies.
-        let bytes_per_row = align_up(width as u64 * 4, 256);
-        let staging_size = bytes_per_row * height as u64;
+        let readback_width = if mipmap { (width / 2).max(1) } else { width };
+        let readback_height = if mipmap { (height / 2).max(1) } else { height };
+        self.discard_superseded_writebacks(dest_addr, readback_width, readback_height, copy_format_enum, stride);
+
+        let bytes_per_row = align_up(readback_width as u64 * 4, 256);
+        let staging_size = bytes_per_row * readback_height as u64;
         let (staging, staging_capacity) = self.acquire_readback_staging(device, staging_size);
 
         let group_label = format!(
             "CopyEfbToTexture addr={dest_addr:#010x} src=({src_x},{src_y} {width}x{height}) fmt={copy_format_enum:?} mip={mipmap} stride={stride} depth={depth_copy}"
         );
 
-        if self.efb_scale > 1 {
+        if self.efb_scale > 1 || mipmap {
             if self.efb_color_readback_uniform_write_pending {
-                self.submit_pending(queue);
+                let _ = self.submit_pending(queue);
             }
 
             Self::ensure_writeback_target(
                 device,
                 &mut self.efb_color_readback_target,
-                width,
-                height,
+                readback_width,
+                readback_height,
                 self.surface_format,
                 "efb_color_readback_target",
             );
 
             let uniforms = XfbCopyUniforms {
                 src_rect: self.scaled_src_rect(src_x, src_y, width, height),
-                dst_size: [width as f32, height as f32],
+                dst_size: [readback_width as f32, readback_height as f32],
                 gamma: 1.0,
-                filter_mode: 0,
+                filter_mode: if mipmap { 2 } else { 0 },
             };
             queue.write_buffer(
                 &self.efb_color_readback_uniform_buffer,
@@ -816,7 +819,7 @@ impl GxRenderer {
         let mut encoder = self.take_or_create_encoder(device);
         encoder.push_debug_group(&group_label);
 
-        let (src_texture, src_origin) = if self.efb_scale == 1 {
+        let (src_texture, src_origin) = if self.efb_scale == 1 && !mipmap {
             (
                 &self.efb_texture,
                 wgpu::Origin3d {
@@ -845,8 +848,8 @@ impl GxRenderer {
                     timestamp_writes: None,
                     multiview_mask: None,
                 });
-                rpass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
-                rpass.set_scissor_rect(0, 0, width, height);
+                rpass.set_viewport(0.0, 0.0, readback_width as f32, readback_height as f32, 0.0, 1.0);
+                rpass.set_scissor_rect(0, 0, readback_width, readback_height);
                 rpass.set_pipeline(&self.xfb_copy_pipeline);
                 rpass.set_bind_group(0, &self.efb_color_readback_bind_group, &[]);
                 rpass.draw(0..3, 0..1);
@@ -867,19 +870,19 @@ impl GxRenderer {
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(bytes_per_row as u32),
-                    rows_per_image: Some(height),
+                    rows_per_image: Some(readback_height),
                 },
             },
             wgpu::Extent3d {
-                width,
-                height,
+                width: readback_width,
+                height: readback_height,
                 depth_or_array_layers: 1,
             },
         );
         encoder.pop_debug_group();
         self.current_encoder = Some(encoder);
 
-        if self.efb_scale > 1 {
+        if self.efb_scale > 1 || mipmap {
             self.efb_color_readback_uniform_write_pending = true;
         }
 
@@ -893,12 +896,11 @@ impl GxRenderer {
             staging_capacity,
             bytes_per_row,
             staging_size,
-            width,
-            height,
+            width: readback_width,
+            height: readback_height,
             copy_format: copy_format_enum,
             stride,
             swap_bgra,
-            box_filter_downsample: mipmap,
         });
 
         self.cache_efb_copy(
@@ -933,6 +935,7 @@ impl GxRenderer {
         let divisor = if mipmap { 2 } else { 1 };
         let encode_w = (width / divisor).max(1);
         let encode_h = (height / divisor).max(1);
+        self.discard_superseded_writebacks(dest_addr, encode_w, encode_h, copy_format_enum, stride);
 
         Self::ensure_writeback_target(
             device,
@@ -944,7 +947,7 @@ impl GxRenderer {
         );
 
         if self.efb_depth_resolve_uniform_write_pending {
-            self.submit_pending(queue);
+            let _ = self.submit_pending(queue);
         }
 
         let uniforms = XfbCopyUniforms {
@@ -1023,7 +1026,6 @@ impl GxRenderer {
             copy_format: copy_format_enum,
             stride,
             swap_bgra: false,
-            box_filter_downsample: false,
         });
     }
 
@@ -1079,6 +1081,33 @@ impl GxRenderer {
         (buf, capacity)
     }
 
+    fn discard_superseded_writebacks(
+        &mut self,
+        dest_addr: Address,
+        width: u32,
+        height: u32,
+        copy_format: texture::CopyFormat,
+        stride: u32,
+    ) {
+        let mut i = 0;
+
+        while i < self.pending_writebacks.len() {
+            let pending = &self.pending_writebacks[i];
+
+            if pending.dest_addr == dest_addr
+                && pending.width == width
+                && pending.height == height
+                && pending.copy_format == copy_format
+                && pending.stride == stride
+            {
+                let old = self.pending_writebacks.swap_remove(i);
+                self.return_readback_staging(old.staging, old.staging_capacity);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     pub(crate) fn return_readback_staging(&mut self, buf: wgpu::Buffer, capacity: u64) {
         const MAX_PER_BUCKET: usize = 8;
         let bucket = self.efb_readback_staging_pool.entry(capacity).or_default();
@@ -1097,7 +1126,7 @@ impl GxRenderer {
             return;
         }
 
-        self.submit_pending(queue);
+        let submission_index = self.submit_pending(queue);
 
         for pending in &self.pending_writebacks {
             pending
@@ -1107,7 +1136,7 @@ impl GxRenderer {
         }
 
         if let Err(err) = device.poll(wgpu::PollType::Wait {
-            submission_index: None,
+            submission_index,
             timeout: Some(std::time::Duration::from_secs(5)),
         }) {
             tracing::warn!(?err, "efb writeback drain: device poll failed");
@@ -1146,19 +1175,9 @@ impl GxRenderer {
             }
             w.staging.unmap();
 
-            let (encode_w, encode_h, encode_src) = if w.box_filter_downsample {
-                (
-                    w.width / 2,
-                    w.height / 2,
-                    texture::downsample_box_2x(&rgba, w.width, w.height),
-                )
-            } else {
-                (w.width, w.height, rgba)
-            };
-
-            let encoded = texture::encode_from_rgba(&encode_src, encode_w as usize, encode_h as usize, w.copy_format);
-            let row_bytes = texture::encoded_row_bytes(encode_w, w.copy_format);
-            let row_count = texture::encoded_row_count(encode_h, w.copy_format);
+            let encoded = texture::encode_from_rgba(&rgba, w.width as usize, w.height as usize, w.copy_format);
+            let row_bytes = texture::encoded_row_bytes(w.width, w.copy_format);
+            let row_count = texture::encoded_row_count(w.height, w.copy_format);
             let dest_stride_bytes = w.stride as usize;
 
             texture::write_strided_copy_to_ram(ram, w.dest_addr, &encoded, row_bytes, row_count, dest_stride_bytes);

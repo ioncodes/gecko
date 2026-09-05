@@ -1,26 +1,62 @@
 use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_codegen::ir::{InstBuilder, types};
+use cranelift_codegen::ir::{InstBuilder, Value, types};
 use cranelift_frontend::FunctionBuilder;
 
 use crate::gekko::instruction::Instruction;
 use crate::gekko::jit::translator::{
-    self, AddmeSubfmeKind, AddzeSubfzeKind, ImmLogical, JitTranslator, LocalFuncs, LogicalFullOp, LogicalOp, MemSize,
-    ShiftKind, TermEmit, vmctx_flags,
+    self, AddmeSubfmeKind, AddzeSubfzeKind, BlockEmitContext, ImmLogical, JitTranslator, LogicalFullOp, LogicalOp,
+    MemSize, ShiftKind, TermEmit, vmctx_flags,
 };
 use crate::gekko::jit::{abi, lut};
 use crate::system::SystemId;
 
 #[inline(always)]
-unsafe fn parts<'a>(builder_ptr: usize, local_ptr: usize) -> (&'a mut FunctionBuilder<'a>, &'a LocalFuncs) {
+unsafe fn parts<'a>(
+    builder_ptr: usize,
+    emit_ctx_ptr: usize,
+) -> (&'a mut FunctionBuilder<'a>, &'a mut BlockEmitContext) {
     (unsafe { &mut *(builder_ptr as *mut FunctionBuilder<'a>) }, unsafe {
-        &*(local_ptr as *const LocalFuncs)
+        &mut *(emit_ctx_ptr as *mut BlockEmitContext)
     })
+}
+
+fn emit_must_deliver_external_interrupt<const SYSTEM: SystemId>(
+    builder: &mut FunctionBuilder,
+    ctx_ptr: Value,
+    msr: Value,
+) -> Value {
+    let ee = builder.ins().band_imm(msr, 0x8000);
+    let enables_ee = builder.ins().icmp_imm(IntCC::NotEqual, ee, 0);
+    let pi_cause = builder.ins().load(
+        types::I32,
+        vmctx_flags(),
+        ctx_ptr,
+        abi::pi_intsr_offset::<SYSTEM>() as i32,
+    );
+    let pi_mask = builder.ins().load(
+        types::I32,
+        vmctx_flags(),
+        ctx_ptr,
+        abi::pi_intmr_offset::<SYSTEM>() as i32,
+    );
+    let pi_enabled = builder.ins().band(pi_cause, pi_mask);
+    let pi_pending = builder.ins().icmp_imm(IntCC::NotEqual, pi_enabled, 0);
+    let dec_pending = builder.ins().load(
+        types::I8,
+        vmctx_flags(),
+        ctx_ptr,
+        abi::dec_interrupt_pending_offset::<SYSTEM>() as i32,
+    );
+    let dec_pending = builder.ins().icmp_imm(IntCC::NotEqual, dec_pending, 0);
+    let pending = builder.ins().bor(pi_pending, dec_pending);
+
+    builder.ins().band(enables_ee, pending)
 }
 
 #[inline(always)]
 pub fn alu<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(OP);
-    let (builder, _) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, _) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     match OP {
         lut::OP_ADDI => translator::emit_addi::<SYSTEM>(builder, t.ctx_ptr, instr),
@@ -270,7 +306,7 @@ pub fn alu<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: 
 #[inline(always)]
 pub fn rotate<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(OP);
-    let (builder, _) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, _) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     let r = match OP {
         lut::OP_RLWIMIX => translator::emit_rlwimi::<SYSTEM>(builder, t.ctx_ptr, instr),
@@ -289,7 +325,7 @@ pub fn rotate<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, inst
 #[inline(always)]
 pub fn logical<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(OP);
-    let (builder, _) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, _) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     let r = match OP {
         lut::OP_ANDX => translator::emit_logical_xform::<SYSTEM>(builder, t.ctx_ptr, instr, LogicalOp::And),
@@ -324,7 +360,7 @@ pub fn logical<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, ins
 #[inline(always)]
 pub fn compare<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(OP);
-    let (builder, _) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, _) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     match OP {
         lut::OP_CMPI => translator::emit_cmp_imm::<SYSTEM>(builder, t.ctx_ptr, instr, true),
@@ -340,7 +376,7 @@ pub fn compare<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, ins
 #[inline(always)]
 pub fn cr_ops<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(OP);
-    let (builder, _) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, _) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     match OP {
         lut::OP_MFCR => {
@@ -384,7 +420,7 @@ pub fn cr_ops<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, inst
 #[inline(always)]
 pub fn segment<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(OP);
-    let (builder, _) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, _) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     match OP {
         lut::OP_MFSR => {
@@ -406,7 +442,7 @@ pub fn segment<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, ins
 #[inline(always)]
 pub fn msr<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(OP);
-    let (builder, _) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, _) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     match OP {
         lut::OP_MFMSR => {
@@ -424,11 +460,34 @@ pub fn msr<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: 
                 .store(vmctx_flags(), val, t.ctx_ptr, abi::msr_offset::<SYSTEM>() as i32);
 
             unsafe {
-                (&*(t.local_ptr as *const LocalFuncs)).fp_guard_emitted.set(false);
+                (&mut *(t.emit_ctx_ptr as *mut BlockEmitContext)).fp_guard_emitted = false;
             }
 
             if t.is_terminator {
-                t.last_terminator_nia = Some(builder.ins().iconst(types::I32, t.pc.wrapping_add(4) as i64));
+                let next_pc = t.pc.wrapping_add(4);
+                let next_nia = builder.ins().iconst(types::I32, next_pc as i64);
+
+                if let Some(slot_addr) = t.chain_fall_addr {
+                    let must_deliver = emit_must_deliver_external_interrupt::<SYSTEM>(builder, t.ctx_ptr, val);
+                    let disabled_block = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(must_deliver, t.exit_block, &[next_nia.into()], disabled_block, &[]);
+                    builder.switch_to_block(disabled_block);
+                    builder.seal_block(disabled_block);
+                    translator::emit_chain_or_exit::<SYSTEM>(
+                        builder,
+                        t.ctx_ptr,
+                        t.host_return_pc,
+                        slot_addr,
+                        t.block_sig_ref,
+                        next_nia,
+                        t.exit_block,
+                    );
+                    t.chained = true;
+                } else {
+                    t.last_terminator_nia = Some(next_nia);
+                }
             }
             t.handled_natively = true;
         }
@@ -452,7 +511,24 @@ pub fn msr<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: 
             let nia = builder.ins().band_imm(srr0_raw, 0xFFFF_FFFCi64);
             builder.ins().store(vmctx_flags(), nia, t.ctx_ptr, nia_off);
 
-            t.last_terminator_nia = Some(nia);
+            let must_deliver = emit_must_deliver_external_interrupt::<SYSTEM>(builder, t.ctx_ptr, new_msr_clr);
+            let dispatch_block = builder.create_block();
+            builder
+                .ins()
+                .brif(must_deliver, t.exit_block, &[nia.into()], dispatch_block, &[]);
+            builder.switch_to_block(dispatch_block);
+            builder.seal_block(dispatch_block);
+
+            translator::emit_inline_cache_dispatch::<SYSTEM>(
+                builder,
+                t.ctx_ptr,
+                t.host_return_pc,
+                nia,
+                t.exit_block,
+                t.block_sig_ref,
+                t.block_lookup_table_addr,
+            );
+            t.chained = true;
             t.handled_natively = true;
         }
         _ => {}
@@ -462,7 +538,7 @@ pub fn msr<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: 
 #[inline(always)]
 pub fn spr<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(OP);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     match OP {
         lut::OP_MFSPR => {
@@ -485,7 +561,7 @@ pub fn spr<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: 
 #[inline(always)]
 pub fn store_load<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(OP);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     match OP {
         lut::OP_LWZ => translator::emit_load::<SYSTEM>(builder, t.ctx_ptr, instr, MemSize::U32, local.read_u32, false),
@@ -663,7 +739,7 @@ pub fn store_load<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, 
 #[inline(always)]
 pub fn store_load_fp<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(OP);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     translator::emit_msr_fp_guard::<SYSTEM>(builder, t.ctx_ptr, instr, t.pc, t.exit_block, local, t.op_cycles);
 
@@ -714,7 +790,7 @@ pub fn store_load_fp<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslato
 #[inline(always)]
 pub fn store_load_psq<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(OP);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     translator::emit_msr_fp_guard::<SYSTEM>(builder, t.ctx_ptr, instr, t.pc, t.exit_block, local, t.op_cycles);
 
@@ -743,15 +819,18 @@ pub fn store_load_psq<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslat
 pub fn nop<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(OP);
     let _ = (instr, SYSTEM);
-    let (builder, _) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     match OP {
+        lut::OP_DCBF | lut::OP_DCBST => {
+            let ea = translator::emit_x_form_ea::<SYSTEM>(builder, t.ctx_ptr, instr);
+            builder.ins().call(local.mark_memory_writeback, &[t.ctx_ptr, ea]);
+            t.handled_natively = true;
+        }
         lut::OP_ISYNC
         | lut::OP_SYNC
         | lut::OP_EIEIO
-        | lut::OP_DCBF
         | lut::OP_DCBI
-        | lut::OP_DCBST
         | lut::OP_DCBT
         | lut::OP_DCBTST
         | lut::OP_DCBA
@@ -764,7 +843,8 @@ pub fn nop<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: 
         }
         _ => {}
     }
-    let _ = builder;
+
+    let _ = (builder, local);
 }
 
 /// dcbz / dcbz_l zero the targeted 32-byte cache line. We have no dcache, so
@@ -773,7 +853,7 @@ pub fn nop<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: 
 #[inline(always)]
 pub fn dcbz<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(OP);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     let ea = translator::emit_x_form_ea::<SYSTEM>(builder, t.ctx_ptr, instr);
     builder.ins().call(local.dcbz, &[t.ctx_ptr, ea]);
@@ -784,7 +864,7 @@ pub fn dcbz<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr:
 #[inline(always)]
 pub fn icbi<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(OP);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     let ra = instr.ra();
     let rb = instr.rb();
@@ -819,7 +899,7 @@ pub fn branch<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, inst
         return;
     }
 
-    let (builder, _) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, _) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     match OP {
         lut::OP_BX => {
@@ -840,15 +920,19 @@ pub fn branch<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, inst
                     translator::emit_call_or_exit::<SYSTEM>(
                         builder,
                         t.ctx_ptr,
+                        t.host_return_pc,
                         slot_addr,
                         t.block_sig_ref,
                         target_v,
+                        t.pc.wrapping_add(4),
+                        t.chain_fall_addr,
                         t.exit_block,
                     );
                 } else {
                     translator::emit_chain_or_exit::<SYSTEM>(
                         builder,
                         t.ctx_ptr,
+                        t.host_return_pc,
                         slot_addr,
                         t.block_sig_ref,
                         target_v,
@@ -868,12 +952,14 @@ pub fn branch<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, inst
             match translator::emit_bc_with_chain::<SYSTEM>(
                 builder,
                 t.ctx_ptr,
+                t.host_return_pc,
                 instr,
                 t.pc,
                 t.exit_block,
                 t.chain_slot_addr,
                 t.chain_fall_addr,
                 t.block_sig_ref,
+                t.self_loop_header.map(|header| (t.self_pc, header)),
             ) {
                 TermEmit::HandledNia(nia) => {
                     t.last_terminator_nia = Some(nia);
@@ -891,6 +977,7 @@ pub fn branch<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, inst
             match translator::emit_bclr_dispatch::<SYSTEM>(
                 builder,
                 t.ctx_ptr,
+                t.host_return_pc,
                 instr,
                 t.pc,
                 t.exit_block,
@@ -914,6 +1001,7 @@ pub fn branch<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, inst
             match translator::emit_bcctr_dispatch::<SYSTEM>(
                 builder,
                 t.ctx_ptr,
+                t.host_return_pc,
                 instr,
                 t.pc,
                 t.exit_block,
@@ -940,7 +1028,7 @@ pub fn branch<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, inst
 #[inline(always)]
 pub fn fp_ops<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(OP);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     translator::emit_msr_fp_guard::<SYSTEM>(builder, t.ctx_ptr, instr, t.pc, t.exit_block, local, t.op_cycles);
 
@@ -955,7 +1043,7 @@ pub fn fp_ops<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, inst
 #[inline(always)]
 pub fn ps_ops<const OP: u32, const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(OP);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     translator::emit_msr_fp_guard::<SYSTEM>(builder, t.ctx_ptr, instr, t.pc, t.exit_block, local, t.op_cycles);
 
@@ -973,7 +1061,7 @@ pub fn sc<const SYSTEM: SystemId>(t: &mut JitTranslator, _instr: Instruction) {
         return;
     }
 
-    let (builder, _) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, _) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     let cia_off = abi::cia_offset::<SYSTEM>() as i32;
     let pc_const = builder.ins().iconst(types::I32, t.pc as i64);
@@ -994,7 +1082,7 @@ pub fn sc<const SYSTEM: SystemId>(t: &mut JitTranslator, _instr: Instruction) {
 #[inline(always)]
 pub fn mcrxr<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(lut::OP_MCRXR);
-    let (builder, _) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, _) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     translator::emit_mcrxr::<SYSTEM>(builder, t.ctx_ptr, instr);
 
@@ -1004,7 +1092,7 @@ pub fn mcrxr<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) 
 #[inline(always)]
 pub fn lwarx<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(lut::OP_LWARX);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     translator::emit_lwarx::<SYSTEM>(builder, t.ctx_ptr, instr, local);
 
@@ -1014,7 +1102,7 @@ pub fn lwarx<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) 
 #[inline(always)]
 pub fn stwcx_dot<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(lut::OP_STWCX_DOT);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     translator::emit_stwcx_dot::<SYSTEM>(builder, t.ctx_ptr, instr, local);
 
@@ -1024,7 +1112,7 @@ pub fn stwcx_dot<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instructi
 #[inline(always)]
 pub fn lswi<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(lut::OP_LSWI);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     let n = if instr.nb() == 0 { 32 } else { instr.nb() as u32 };
     let ea = if instr.ra() == 0 {
@@ -1043,7 +1131,7 @@ pub fn lswi<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
 #[inline(always)]
 pub fn stswi<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(lut::OP_STSWI);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     let n = if instr.nb() == 0 { 32 } else { instr.nb() as u32 };
     let ea = if instr.ra() == 0 {
@@ -1062,7 +1150,7 @@ pub fn stswi<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) 
 #[inline(always)]
 pub fn lswx<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(lut::OP_LSWX);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     let ea = translator::emit_x_form_ea::<SYSTEM>(builder, t.ctx_ptr, instr);
     let rd_v = builder.ins().iconst(types::I32, instr.rd() as i64);
@@ -1074,7 +1162,7 @@ pub fn lswx<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
 #[inline(always)]
 pub fn stswx<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(lut::OP_STSWX);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     let ea = translator::emit_x_form_ea::<SYSTEM>(builder, t.ctx_ptr, instr);
     let rs_v = builder.ins().iconst(types::I32, instr.rs() as i64);
@@ -1086,7 +1174,7 @@ pub fn stswx<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) 
 #[inline(always)]
 pub fn eciwx<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(lut::OP_ECIWX);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     translator::emit_load_xform::<SYSTEM>(builder, t.ctx_ptr, instr, MemSize::U32, local.read_u32, false);
 
@@ -1096,7 +1184,7 @@ pub fn eciwx<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) 
 #[inline(always)]
 pub fn ecowx<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(lut::OP_ECOWX);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     translator::emit_store_xform::<SYSTEM>(
         builder,
@@ -1114,7 +1202,7 @@ pub fn ecowx<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) 
 #[inline(always)]
 pub fn mfsrin<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(lut::OP_MFSRIN);
-    let (builder, _) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, _) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     let b = translator::gpr_load::<SYSTEM>(builder, t.ctx_ptr, instr.rb());
     let idx = builder.ins().ushr_imm(b, 28);
@@ -1136,7 +1224,7 @@ pub fn mfsrin<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction)
 #[inline(always)]
 pub fn mtsrin<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(lut::OP_MTSRIN);
-    let (builder, _) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, _) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     let b = translator::gpr_load::<SYSTEM>(builder, t.ctx_ptr, instr.rb());
     let idx = builder.ins().ushr_imm(b, 28);
@@ -1158,7 +1246,7 @@ pub fn mtsrin<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction)
 #[inline(always)]
 pub fn mftb<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(lut::OP_MFTB);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     let tbr = instr.spr_swapped() as u16;
 
@@ -1199,7 +1287,7 @@ pub fn mftb<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
 #[inline(always)]
 pub fn tw<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(lut::OP_TW);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     translator::emit_tw::<SYSTEM>(builder, t.ctx_ptr, instr, t.pc, t.exit_block, local);
 
@@ -1209,7 +1297,7 @@ pub fn tw<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
 #[inline(always)]
 pub fn twi<const SYSTEM: SystemId>(t: &mut JitTranslator, instr: Instruction) {
     t.op_cycles = crate::gekko::cycles::cycles_for_op(lut::OP_TWI);
-    let (builder, local) = unsafe { parts(t.builder_ptr, t.local_ptr) };
+    let (builder, local) = unsafe { parts(t.builder_ptr, t.emit_ctx_ptr) };
 
     translator::emit_twi::<SYSTEM>(builder, t.ctx_ptr, instr, t.pc, t.exit_block, local);
 
