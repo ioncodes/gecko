@@ -3,6 +3,107 @@ use gecko::SystemId;
 use gecko::flipper::gx::GraphicsProcessor;
 use gecko::flipper::gx::draw::{TextureDescriptor, TlutRef};
 use gecko::mmio::Mmio;
+use glam::{Mat3, Mat4, Vec3};
+
+pub struct Freecam {
+    pub enabled: bool,
+    pub speed: f32,
+    pos: Vec3,
+    yaw: f32,
+    pitch: f32,
+    sent_disable: bool,
+}
+
+impl Default for Freecam {
+    fn default() -> Self {
+        Freecam {
+            enabled: false,
+            speed: 50.0,
+            pos: Vec3::ZERO,
+            yaw: 0.0,
+            pitch: 0.0,
+            sent_disable: true,
+        }
+    }
+}
+
+impl Freecam {
+    pub fn reset(&mut self) {
+        self.pos = Vec3::ZERO;
+        self.yaw = 0.0;
+        self.pitch = 0.0;
+    }
+
+    pub fn update_input(&mut self, ctx: &Context) {
+        if !self.enabled {
+            return;
+        }
+
+        let pointer_free = !ctx.egui_wants_pointer_input();
+        let keys_free = !ctx.egui_wants_keyboard_input();
+
+        ctx.input(|i| {
+            if pointer_free && i.pointer.secondary_down() {
+                let d = i.pointer.delta();
+                self.yaw -= d.x * 0.005;
+                self.pitch = (self.pitch - d.y * 0.005).clamp(-1.55, 1.55);
+            }
+
+            if pointer_free && i.smooth_scroll_delta.y != 0.0 {
+                self.speed = (self.speed * 1.2f32.powf(i.smooth_scroll_delta.y / 40.0)).clamp(0.01, 1e6);
+            }
+
+            if !keys_free {
+                return;
+            }
+
+            let mut dir = Vec3::ZERO;
+            if i.key_down(egui::Key::W) {
+                dir.z -= 1.0;
+            }
+            if i.key_down(egui::Key::S) {
+                dir.z += 1.0;
+            }
+            if i.key_down(egui::Key::A) {
+                dir.x -= 1.0;
+            }
+            if i.key_down(egui::Key::D) {
+                dir.x += 1.0;
+            }
+            if i.key_down(egui::Key::Q) {
+                dir.y -= 1.0;
+            }
+            if i.key_down(egui::Key::E) {
+                dir.y += 1.0;
+            }
+            if dir == Vec3::ZERO {
+                return;
+            }
+
+            let boost = if i.modifiers.shift { 5.0 } else { 1.0 };
+            let dt = i.stable_dt.min(0.1);
+            self.pos += self.rotation() * dir.normalize() * self.speed * boost * dt;
+        });
+    }
+
+    pub fn take_action(&mut self) -> Option<([[f32; 4]; 4], bool)> {
+        if self.enabled {
+            self.sent_disable = false;
+
+            let view = Mat4::from_mat3(self.rotation().transpose()) * Mat4::from_translation(-self.pos);
+            Some((view.to_cols_array_2d(), true))
+        } else if !self.sent_disable {
+            self.sent_disable = true;
+            Some((Mat4::IDENTITY.to_cols_array_2d(), false))
+        } else {
+            None
+        }
+    }
+
+    fn rotation(&self) -> Mat3 {
+        Mat3::from_rotation_y(self.yaw) * Mat3::from_rotation_x(self.pitch)
+    }
+}
 
 fn texture_preview(ui: &mut egui::Ui, tex: &TextureDescriptor, ram: &[u8], palette: &[u16], tlut: TlutRef) {
     let rgba = gecko::flipper::gx::texture::decode_to_rgba(ram, tex, palette, tlut.format);
@@ -29,6 +130,7 @@ pub fn show_gx<const SYSTEM: SystemId>(
     mmio: &Mmio<SYSTEM>,
     invalidate_caches: &mut bool,
     dump_textures: &mut bool,
+    freecam: &mut Freecam,
 ) {
     egui::Window::new("GX").open(open).show(ctx, |ui| {
         ScrollArea::vertical().show(ui, |ui| {
@@ -45,6 +147,22 @@ pub fn show_gx<const SYSTEM: SystemId>(
                 ui.label(format!("{} cached", gx.texture_hashes.len()));
             });
             ui.separator();
+
+            // Freecam
+            ui.collapsing("Freecam", |ui| {
+                ui.checkbox(&mut freecam.enabled, "Unlock camera");
+
+                ui.horizontal(|ui| {
+                    ui.label("Speed");
+                    ui.add(egui::Slider::new(&mut freecam.speed, 0.01..=1_000_000.0).logarithmic(true));
+                });
+
+                if ui.button("Reset view").clicked() {
+                    freecam.reset();
+                }
+
+                ui.label("Hold RMB to look, WASD + QE to fly, Shift boosts, scroll tunes speed");
+            });
 
             // Projection matrix
             ui.collapsing("Projection", |ui| {

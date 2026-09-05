@@ -194,12 +194,12 @@ fn write_spr<const SYSTEM: SystemId>(sys: *mut System<SYSTEM>, num: u32, val: u3
     let sys = unsafe { &mut *sys };
     match num {
         22 => {
-            sys.scheduler.cancel(crate::gekko::dec::underflow_handler::<SYSTEM>);
+            sys.scheduler.cancel(crate::scheduler::Handler::DecUnderflow);
             sys.gekko.dec.write(sys.scheduler.cycles, val);
             sys.gekko.spr.dec = val;
             sys.scheduler.schedule_in(
                 crate::gekko::dec::cycles_until_underflow(val),
-                crate::gekko::dec::underflow_handler::<SYSTEM>,
+                crate::scheduler::Handler::DecUnderflow,
             );
         }
         284 => sys.scheduler.set_timebase_lower(val),
@@ -573,6 +573,23 @@ pub extern "C" fn cause_icbi_gc(sys: *mut core::ffi::c_void, ea: u32) {
 }
 pub extern "C" fn cause_icbi_wii(sys: *mut core::ffi::c_void, ea: u32) {
     cause_icbi::<WII>(sys.cast(), ea);
+}
+
+#[inline(always)]
+fn mark_memory_writeback<const SYSTEM: SystemId>(sys: *mut System<SYSTEM>, ea: u32) {
+    let sys = unsafe { &mut *sys };
+    sys.mmio.mark_memory_dirty_range(
+        crate::mmio::virt_to_phys(ea) & crate::mmio::CODE_LINE_MASK,
+        crate::mmio::CODE_LINE_BYTES,
+    );
+}
+
+pub extern "C" fn mark_memory_writeback_gc(sys: *mut core::ffi::c_void, ea: u32) {
+    mark_memory_writeback::<GC>(sys.cast(), ea);
+}
+
+pub extern "C" fn mark_memory_writeback_wii(sys: *mut core::ffi::c_void, ea: u32) {
+    mark_memory_writeback::<WII>(sys.cast(), ea);
 }
 
 #[inline(always)]

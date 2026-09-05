@@ -158,9 +158,67 @@ fn drain_buf<const SYSTEM: SystemId>(
                     break;
                 }
 
-                let vertex_data = &fifo[pos + 3..pos + total];
-                gp.create_draw_call(mmio, renderer, cmd, vertex_data);
-                pos += total;
+                let batch_enabled = !gp.recorder.as_ref().is_some_and(|rec| rec.is_recording());
+
+                if batch_enabled && vertex_data_len != 0 {
+                    let stride = vertex_data_len / count.max(1);
+                    let mut batch_data = std::mem::take(&mut gp.draw_batch_data);
+                    let mut batch_entries = std::mem::take(&mut gp.draw_batch_entries);
+                    batch_data.clear();
+                    batch_entries.clear();
+
+                    let mut scan = pos;
+
+                    loop {
+                        let scan_remaining = fifo.len() - scan;
+
+                        if scan_remaining < 3 {
+                            break;
+                        }
+
+                        let scan_cmd = fifo[scan];
+
+                        if !matches!(scan_cmd, DRAW_COMMANDS_START..=DRAW_COMMANDS_END)
+                            || (scan_cmd & 7) as usize != vertex_format_index
+                        {
+                            break;
+                        }
+
+                        let scan_count = u16::from_be_bytes([fifo[scan + 1], fifo[scan + 2]]) as usize;
+                        let Some(scan_data_len) = scan_count.checked_mul(stride) else {
+                            break;
+                        };
+
+                        let scan_total = 3 + scan_data_len;
+
+                        if scan_remaining < scan_total {
+                            break;
+                        }
+
+                        batch_entries.push(super::vertex::DrawBatchEntry {
+                            cmd: scan_cmd,
+                            vertex_count: scan_count,
+                        });
+                        batch_data.extend_from_slice(&fifo[scan + 3..scan + scan_total]);
+                        scan += scan_total;
+                    }
+
+                    #[cfg(feature = "jit")]
+                    batch_data.reserve(crate::flipper::gx::jit::VEC_OVERREAD_BYTES);
+
+                    gp.create_draw_batch(mmio, renderer, &batch_data, &batch_entries);
+                    gp.draw_batch_data = batch_data;
+                    gp.draw_batch_entries = batch_entries;
+                    pos = scan;
+                } else {
+                    let vertex_data = &fifo[pos + 3..pos + total];
+                    let entry = [super::vertex::DrawBatchEntry {
+                        cmd,
+                        vertex_count: count,
+                    }];
+                    gp.create_draw_batch(mmio, renderer, vertex_data, &entry);
+                    pos += total;
+                }
             }
             _ => {
                 tracing::error!(cmd = cmd, "unknown FIFO command");

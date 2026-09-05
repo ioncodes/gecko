@@ -175,5 +175,5 @@ pub fn timestamped_path(prefix: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    PathBuf::from("screenshots").join(format!("{prefix}_{millis}.png"))
+    gecko::paths::resolve("screenshots").join(format!("{prefix}_{millis}.png"))
 }

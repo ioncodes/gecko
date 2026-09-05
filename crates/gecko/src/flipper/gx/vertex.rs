@@ -2,13 +2,21 @@ use super::constants::*;
 use super::math::{Vec3, unpack_rgba};
 use super::regs::{self, *};
 use super::{GraphicsProcessor, draw};
-use crate::host::{DrawData, DrawVertex, GxAction, RenderSink};
+use crate::host::{DrawSegment, DrawState, DrawVertex, RenderSink};
 use crate::mmio::{Mmio, RamView};
-use crate::system::{ExecutionMode, SystemId};
+#[cfg(feature = "jit")]
+use crate::system::ExecutionMode;
+use crate::system::SystemId;
 use std::io::{Cursor, Read};
 
 #[cfg(feature = "jit")]
 use super::jit;
+
+#[derive(Clone, Copy)]
+pub(super) struct DrawBatchEntry {
+    pub cmd: u8,
+    pub vertex_count: usize,
+}
 
 /// Parsed vertex format descriptor from CP/VAT registers.
 struct VertexFormat {
@@ -45,29 +53,33 @@ struct VertexFormat {
 
 impl GraphicsProcessor {
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
-    pub fn create_draw_call<const SYSTEM: SystemId>(
+    pub(super) fn create_draw_batch<const SYSTEM: SystemId>(
         &mut self,
         mmio: &mut Mmio<SYSTEM>,
         renderer: &mut dyn RenderSink,
-        cmd: u8,
         data: &[u8],
+        entries: &[DrawBatchEntry],
     ) {
         #[cfg(feature = "gx-stats")]
         let _gx_stats_t0 = std::time::Instant::now();
 
-        let Some(primitive) = draw::Primitive::from_cmd(cmd) else {
-            tracing::error!(cmd, "goofy draw command");
+        let Some(first) = entries.first() else {
             return;
         };
 
-        let vf = self.build_vertex_format(cmd);
+        let cmd = first.cmd;
 
-        if vf.vertex_stride == 0 {
+        let vertex_format_index = (cmd & 0b111) as usize;
+        let vertex_stride = super::fifo::vertex_stride_from_cp(&self.cp_regs, vertex_format_index);
+
+        if vertex_stride == 0 {
             tracing::warn!("draw call with zero vertex stride, skipping");
             return;
         }
 
-        let vertex_count = data.len() / vf.vertex_stride;
+        let vertex_count: usize = entries.iter().map(|entry| entry.vertex_count).sum();
+        debug_assert_eq!(data.len(), vertex_count * vertex_stride);
+        debug_assert!(entries.iter().all(|entry| (entry.cmd & 7) == (cmd & 7)));
 
         // Resolve any texture slots whose descriptor regs changed since the
         // last draw. Done lazily here (not at BP write time) because games
@@ -75,14 +87,28 @@ impl GraphicsProcessor {
         // the descriptor guaranteed consistent. Runs before the recorder so
         // recorded draws reference the resolved textures.
         if self.tex_dirty != 0 {
+            self.defer_pending_efb_writebacks(mmio);
+
+            if self.dirty_texture_overlaps_efb_writeback(mmio, renderer) {
+                renderer.flush_efb_copies(&mut mmio.ram_view_mut());
+                mmio.clear_deferred_efb_writebacks();
+            }
+
             self.snapshot_dirty_textures(renderer, &mmio.ram_view());
         }
 
-        if let Some(rec) = self.recorder.as_deref_mut()
-            && rec.is_recording()
-        {
+        if self.recorder.as_ref().is_some_and(|rec| rec.is_recording()) {
+            let vf = self.build_vertex_format(cmd);
             let view = mmio.ram_view();
-            self::record_draw_arrays(rec, &view, &vf, data, vertex_count);
+            let rec = self.recorder.as_deref_mut().unwrap();
+            let mut offset = 0;
+
+            for entry in entries {
+                let len = entry.vertex_count * vertex_stride;
+                self::record_draw_arrays(rec, &view, &vf, &data[offset..offset + len], entry.vertex_count);
+                offset += len;
+            }
+
             for desc in self.cur_textures.iter().flatten() {
                 let len = super::texture::raw_data_size(desc.width, desc.height, desc.format);
                 rec.use_draw_texture(&view, desc.ram_addr as u32, len);
@@ -91,13 +117,16 @@ impl GraphicsProcessor {
 
         #[cfg(feature = "gx-stats")]
         {
-            self.stats.draw_calls += 1;
+            self.stats.draw_calls += entries.len() as u64;
             self.stats.vertices += vertex_count as u64;
             self.stats.fifo_bytes += data.len() as u64;
-            self.stats.draws_by_primitive[(primitive as usize) & 0x7] += 1;
-        }
 
-        let mut boxed: Box<DrawData> = renderer.take_draw_data();
+            for entry in entries {
+                if let Some(primitive) = draw::Primitive::from_cmd(entry.cmd) {
+                    self.stats.draws_by_primitive[(primitive as usize) & 0x7] += 1;
+                }
+            }
+        }
 
         // Decode directly into the renderer's vertex scratch. No
         // intermediate `draw_vertices_scratch`, no append memcpy. The
@@ -106,86 +135,96 @@ impl GraphicsProcessor {
         let verts = renderer.vertex_scratch();
         let base_vertex = verts.len() as u32;
         verts.reserve(vertex_count);
-        self::dispatch_decode(self, mmio, cmd, data, vertex_count, &vf, verts);
+        self::dispatch_decode(self, mmio, cmd, data, vertex_count, verts);
 
-        let modelview = self.build_modelview_matrix(vf.default_pos_mtx_idx);
+        let state = self.frame_state_dirty.then(|| {
+            let tev_color_regs = self.resolve_tev_color_regs();
+            let tev_orders = self.resolve_tev_orders();
 
-        let tev_color_regs = self.resolve_tev_color_regs();
-        let tev_orders = self.resolve_tev_orders();
+            self.rebuild_lighting_cache_if_dirty();
 
-        self.rebuild_lighting_cache_if_dirty();
+            if self.konst_dirty {
+                self.resolve_konst_colors();
+                self.konst_dirty = false;
+            }
 
-        if self.konst_dirty {
-            self.resolve_konst_colors();
-            self.konst_dirty = false;
-        }
+            let mut indirect_matrices = [[0i32; 4]; 6];
+            for (m, rows) in indirect_matrices.chunks_exact_mut(2).enumerate() {
+                let mtx = &self.cur_indirect_matrices[m];
+                let exp = mtx.scale_exponent();
+                let r0 = mtx.row0();
+                let r1 = mtx.row1();
+                rows[0] = [r0[0], r0[1], r0[2], exp];
+                rows[1] = [r1[0], r1[1], r1[2], exp];
+            }
 
-        boxed.base_vertex = base_vertex;
-        boxed.vertex_count = vertex_count as u32;
+            let indirect_scales = [
+                [
+                    self.cur_indirect_scales[0].ss0() as u32,
+                    self.cur_indirect_scales[0].ts0() as u32,
+                    self.cur_indirect_scales[0].ss1() as u32,
+                    self.cur_indirect_scales[0].ts1() as u32,
+                ],
+                [
+                    self.cur_indirect_scales[1].ss0() as u32,
+                    self.cur_indirect_scales[1].ts0() as u32,
+                    self.cur_indirect_scales[1].ss1() as u32,
+                    self.cur_indirect_scales[1].ts1() as u32,
+                ],
+            ];
 
-        // Flatten the three indirect matrices to 6 rows. Row 2M is row
-        // 0 of matrix M, row 2M+1 is row 1. The .w lane carries the
-        // shared scale exponent (positive means right-shift, negative
-        // means left-shift of the mat-mul result).
-        let mut indirect_matrices = [[0i32; 4]; 6];
-        for m in 0..3 {
-            let mtx = &self.cur_indirect_matrices[m];
-            let exp = mtx.scale_exponent();
-            let r0 = mtx.row0();
-            let r1 = mtx.row1();
-            indirect_matrices[2 * m] = [r0[0], r0[1], r0[2], exp];
-            indirect_matrices[2 * m + 1] = [r1[0], r1[1], r1[2], exp];
-        }
+            let ztex2 = TevZtex2::from_raw(self.bp_regs[BP_TEV_ZTEX2]);
 
-        let indirect_scales = [
-            [
-                self.cur_indirect_scales[0].ss0() as u32,
-                self.cur_indirect_scales[0].ts0() as u32,
-                self.cur_indirect_scales[0].ss1() as u32,
-                self.cur_indirect_scales[0].ts1() as u32,
-            ],
-            [
-                self.cur_indirect_scales[1].ss0() as u32,
-                self.cur_indirect_scales[1].ts0() as u32,
-                self.cur_indirect_scales[1].ss1() as u32,
-                self.cur_indirect_scales[1].ts1() as u32,
-            ],
-        ];
-
-        boxed.primitive = primitive;
-        boxed.modelview = modelview.0;
-        boxed.tev_color_env = std::array::from_fn(|i| self.cur_tev_color_env[i].raw());
-        boxed.tev_alpha_env = std::array::from_fn(|i| self.cur_tev_alpha_env[i].raw());
-        boxed.tev_orders = std::array::from_fn(|i| tev_orders[i].raw());
-        boxed.tev_ksel = std::array::from_fn(|i| self.bp_regs[BP_TEV_KSEL_0 + i]);
-        boxed.tev_color_regs = tev_color_regs;
-        boxed.tev_konst_colors = self.cur_tev_konst_colors;
-        boxed.num_tev_stages = self.cur_num_tev_stages;
-        boxed.indirect_matrices = indirect_matrices;
-        boxed.indirect_scales = indirect_scales;
-        boxed.indirect_refs = self.cur_indirect_refs.raw();
-        boxed.num_indirect_stages = self.cur_num_indirect_stages;
-        boxed.bump_imask = self.cur_bump_imask;
-        boxed.tev_indirect = std::array::from_fn(|i| self.cur_tev_indirect[i].raw());
-        boxed.color_ctrl = self.cached_color_ctrl;
-        boxed.alpha_ctrl = self.cached_alpha_ctrl;
-        boxed.ambient_color = self.cached_ambient_color;
-        boxed.material_color = self.cached_material_color;
-        boxed.lights = self.cached_lights;
-        boxed.active_texcoords = (self.xf_mem[crate::flipper::gx::constants::XF_NUM_TEXGENS] as u8).min(8);
-        // Z texture: only applied by hardware on the late-Z path; collapse to
-        // disabled under early-Z so the backend can keep early-Z pipelines.
-        let ztex2 = TevZtex2::from_raw(self.bp_regs[BP_TEV_ZTEX2]);
-        boxed.ztex_bias = TevZtex1::from_raw(self.bp_regs[BP_TEV_ZTEX1]).bias();
-        boxed.ztex_type = ztex2.tex_type();
-        boxed.ztex_op = if self.cur_pe_control.early_ztest() {
-            0
-        } else {
-            ztex2.op()
-        };
-        boxed.frame_dirty = self.frame_state_dirty;
+            DrawState {
+                tev_color_env: std::array::from_fn(|i| self.cur_tev_color_env[i].raw()),
+                tev_alpha_env: std::array::from_fn(|i| self.cur_tev_alpha_env[i].raw()),
+                tev_orders: std::array::from_fn(|i| tev_orders[i].raw()),
+                tev_ksel: std::array::from_fn(|i| self.bp_regs[BP_TEV_KSEL_0 + i]),
+                tev_color_regs,
+                tev_konst_colors: self.cur_tev_konst_colors,
+                num_tev_stages: self.cur_num_tev_stages,
+                indirect_matrices,
+                indirect_scales,
+                indirect_refs: self.cur_indirect_refs.raw(),
+                num_indirect_stages: self.cur_num_indirect_stages,
+                bump_imask: self.cur_bump_imask,
+                tev_indirect: std::array::from_fn(|i| self.cur_tev_indirect[i].raw()),
+                color_ctrl: self.cached_color_ctrl,
+                alpha_ctrl: self.cached_alpha_ctrl,
+                ambient_color: self.cached_ambient_color,
+                material_color: self.cached_material_color,
+                lights: self.cached_lights,
+                active_texcoords: (self.xf_mem[crate::flipper::gx::constants::XF_NUM_TEXGENS] as u8).min(8),
+                ztex_bias: TevZtex1::from_raw(self.bp_regs[BP_TEV_ZTEX1]).bias(),
+                ztex_type: ztex2.tex_type(),
+                ztex_op: if self.cur_pe_control.early_ztest() {
+                    0
+                } else {
+                    ztex2.op()
+                },
+            }
+        });
         self.frame_state_dirty = false;
-        renderer.exec(GxAction::Draw(boxed));
+        self.draw_segments_scratch.clear();
+        let mut segment_base = base_vertex;
+
+        for entry in entries {
+            let Some(primitive) = draw::Primitive::from_cmd(entry.cmd) else {
+                tracing::error!(cmd = entry.cmd, "goofy draw command");
+                segment_base = segment_base.wrapping_add(entry.vertex_count as u32);
+
+                continue;
+            };
+
+            self.draw_segments_scratch.push(DrawSegment {
+                primitive,
+                base_vertex: segment_base,
+                vertex_count: entry.vertex_count as u32,
+            });
+            segment_base = segment_base.wrapping_add(entry.vertex_count as u32);
+        }
+
+        renderer.exec_draw_batch(&self.draw_segments_scratch, state);
 
         #[cfg(feature = "gx-stats")]
         {
@@ -507,36 +546,6 @@ impl GraphicsProcessor {
         }
     }
 
-    fn build_modelview_matrix(&self, pos_mtx_idx: u8) -> draw::Matrix4 {
-        let default_mtx_base = pos_mtx_idx as usize * XF_POS_MTX_STRIDE;
-        draw::Matrix4([
-            [
-                f32::from_bits(self.xf_mem[default_mtx_base]),
-                f32::from_bits(self.xf_mem[default_mtx_base + 4]),
-                f32::from_bits(self.xf_mem[default_mtx_base + 8]),
-                0.0,
-            ],
-            [
-                f32::from_bits(self.xf_mem[default_mtx_base + 1]),
-                f32::from_bits(self.xf_mem[default_mtx_base + 5]),
-                f32::from_bits(self.xf_mem[default_mtx_base + 9]),
-                0.0,
-            ],
-            [
-                f32::from_bits(self.xf_mem[default_mtx_base + 2]),
-                f32::from_bits(self.xf_mem[default_mtx_base + 6]),
-                f32::from_bits(self.xf_mem[default_mtx_base + 10]),
-                0.0,
-            ],
-            [
-                f32::from_bits(self.xf_mem[default_mtx_base + 3]),
-                f32::from_bits(self.xf_mem[default_mtx_base + 7]),
-                f32::from_bits(self.xf_mem[default_mtx_base + 11]),
-                1.0,
-            ],
-        ])
-    }
-
     fn rebuild_lighting_cache_if_dirty(&mut self) {
         if !self.lighting_dirty {
             return;
@@ -850,15 +859,21 @@ fn dispatch_decode<const SYSTEM: SystemId>(
     #[cfg_attr(not(feature = "jit"), allow(unused_variables))] cmd: u8,
     data: &[u8],
     vertex_count: usize,
-    vf: &VertexFormat,
     verts: &mut Vec<DrawVertex>,
 ) {
     #[cfg(feature = "jit")]
     if gp.execution_mode == ExecutionMode::Jit {
         let vat_index = (cmd & 0b111) as usize;
         let key = jit::VtxKey::from_cp_regs(&gp.cp_regs, vat_index);
-        let view = mmio.ram_view();
-        let arrays_ok = jit::resolve_arrays_for_draw(&gp.cp_regs, &key, view.mem1, view.mem2, &mut gp.jit_vtx_arrays);
+        let arrays_ok = if gp.jit_vtx_arrays_key == Some(key) {
+            gp.jit_vtx_arrays_ok
+        } else {
+            let view = mmio.ram_view();
+            let ok = jit::resolve_arrays_for_draw(&gp.cp_regs, &key, view.mem1, view.mem2, &mut gp.jit_vtx_arrays);
+            gp.jit_vtx_arrays_key = Some(key);
+            gp.jit_vtx_arrays_ok = ok;
+            ok
+        };
         let parser = if arrays_ok {
             gp.jit_vtx.lookup_or_compile(key)
         } else {
@@ -877,12 +892,16 @@ fn dispatch_decode<const SYSTEM: SystemId>(
             }
 
             #[cfg(feature = "vtx-jit-validate")]
-            self::run_validator(gp, mmio, cmd, key, data, vertex_count, vf, verts, base);
+            {
+                let vf = gp.build_vertex_format(cmd);
+                self::run_validator(gp, mmio, cmd, key, data, vertex_count, &vf, verts, base);
+            }
             return;
         }
     }
 
-    self::run_interpreter(gp, mmio, data, vertex_count, vf, verts);
+    let vf = gp.build_vertex_format(cmd);
+    self::run_interpreter(gp, mmio, data, vertex_count, &vf, verts);
 }
 
 #[cfg_attr(feature = "hotpath", hotpath::measure(label = "vtx_run_interpreter"))]

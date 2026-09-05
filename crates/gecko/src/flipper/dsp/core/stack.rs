@@ -1,3 +1,4 @@
+#[derive(Clone, Copy)]
 pub struct DspStack<const N: usize> {
     data: [u16; N],
     ptr: u8,

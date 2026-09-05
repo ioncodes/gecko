@@ -1,17 +1,29 @@
 use std::sync::Arc;
 
 use iced::advanced::graphics::Viewport;
-use iced::keyboard::key::Code;
 use iced::widget::shader::{self, Pipeline, Primitive, Program, Shader};
 use iced::{Rectangle, mouse, window};
 
 use crate::app::Message;
+use crate::keybinds::Hotkey;
 use crate::player::state::{self, PlayerState};
 
 pub fn shader_widget(state: Arc<PlayerState>, window: window::Id) -> Shader<Message, PlayerProgram> {
     Shader::new(PlayerProgram { state, window })
         .width(iced::Length::Fill)
         .height(iced::Length::Fill)
+}
+
+fn hotkey_message(hotkey: Hotkey, window: window::Id) -> Message {
+    match hotkey {
+        Hotkey::Pause => Message::PlayerTogglePause(window),
+        Hotkey::Uncapped => Message::PlayerToggleUncapped(window),
+        Hotkey::Fullscreen => Message::PlayerToggleFullscreen(window),
+        Hotkey::Overlay => Message::PlayerToggleOverlay(window),
+        Hotkey::Screenshot => Message::PlayerScreenshot(window),
+        Hotkey::SaveState => Message::PlayerSaveState(window),
+        Hotkey::LoadState => Message::PlayerLoadState(window),
+    }
 }
 
 pub struct PlayerProgram {
@@ -43,15 +55,13 @@ impl Program<Message> for PlayerProgram {
                 } => {
                     let hotkey = match state::physical_to_code(physical_key) {
                         Some(_) if *repeat => None,
-                        Some(Code::Space) => Some(Message::PlayerTogglePause(self.window)),
-                        Some(Code::Tab) => Some(Message::PlayerToggleUncapped(self.window)),
-                        Some(Code::F10) => Some(Message::PlayerToggleFullscreen(self.window)),
-                        Some(Code::F11) => Some(Message::PlayerToggleOverlay(self.window)),
-                        Some(Code::F12) => Some(Message::PlayerScreenshot(self.window)),
-                        Some(code) => {
-                            self.state.handle_keyboard(code, true);
-                            None
-                        }
+                        Some(code) => match self.state.hotkey(code) {
+                            Some(hotkey) => Some(self::hotkey_message(hotkey, self.window)),
+                            None => {
+                                self.state.handle_keyboard(code, true);
+                                None
+                            }
+                        },
                         None => None,
                     };
 

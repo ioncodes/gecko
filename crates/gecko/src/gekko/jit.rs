@@ -17,6 +17,7 @@ pub mod lut_wii {
 }
 
 use cranelift_codegen::Context;
+use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{AbiParam, InstBuilder, Signature, types};
 use cranelift_codegen::isa::CallConv;
 use cranelift_codegen::settings::{self, Configurable};
@@ -41,6 +42,53 @@ pub struct BlockLookupSlot {
 
 pub const BLOCK_LOOKUP_TABLE_SIZE: usize = 131072;
 pub const BLOCK_LOOKUP_TABLE_MASK: u32 = (BLOCK_LOOKUP_TABLE_SIZE as u32) - 1;
+
+const DIV2I_SIZE: u32 = 312;
+const DIV2I_CHECKSUM: u32 = 0xFB31_C123;
+
+fn signature_checksum<const SYSTEM: SystemId>(sys: &System<SYSTEM>, start: u32, size: u32) -> u32 {
+    let mut sum = 0u32;
+
+    for offset in (0..size).step_by(4) {
+        let opcode = sys.mmio.fetch_instruction(start.wrapping_add(offset));
+        let primary = opcode >> 26;
+        let op = opcode & 0xFC00_0000;
+        let mut op2 = 0;
+        let mut op3 = 0;
+
+        match primary {
+            4 => {
+                op2 = opcode & 0x3F;
+
+                if matches!(op2, 0 | 8 | 16 | 21 | 22) {
+                    op3 = opcode & 0x7C0;
+                }
+            }
+            7 | 8 | 10..=15 => op2 = opcode & 0x03FF_0000,
+            19 | 31 | 63 => op2 = opcode & 0x7FF,
+            59 => {
+                op2 = opcode & 0x3F;
+
+                if op2 < 16 {
+                    op3 = opcode & 0x7C0;
+                }
+            }
+            32..=55 => op2 = opcode & 0x03FF_0000,
+            _ => {}
+        }
+
+        sum = sum.rotate_left(17) ^ (op | op2 | op3);
+    }
+
+    sum
+}
+
+fn is_div2i<const SYSTEM: SystemId>(sys: &System<SYSTEM>, pc: u32) -> bool {
+    sys.mmio.fetch_instruction(pc) == 0x9421_FFF0
+        && sys.mmio.fetch_instruction(pc.wrapping_add(4)) == 0x5469_0001
+        && sys.mmio.fetch_instruction(pc.wrapping_add(8)) == 0x4182_000C
+        && signature_checksum(sys, pc, DIV2I_SIZE) == DIV2I_CHECKSUM
+}
 
 #[derive(Clone, Copy)]
 pub struct ExternFuncs {
@@ -75,6 +123,7 @@ pub struct ExternFuncs {
     pub do_psq_store: FuncId,
     pub read_timebase: FuncId,
     pub cause_icbi: FuncId,
+    pub mark_memory_writeback: FuncId,
     pub cause_smc_write: FuncId,
     pub dcbz: FuncId,
 }
@@ -85,6 +134,7 @@ pub struct JitEngine<const SYSTEM: SystemId> {
     builder_ctx: FunctionBuilderContext,
     cache: FxHashMap<u32, BlockEntry>,
     block_func_ids: FxHashMap<u32, FuncId>,
+    hle_code_sizes: FxHashMap<u32, u32>,
     target_slots: std::cell::RefCell<FxHashMap<u32, usize>>,
     blocks_by_line: FxHashMap<u32, smallvec::SmallVec<[u32; 2]>>,
     pub(crate) drain_scratch: Vec<u32>,
@@ -155,6 +205,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             do_psq_store: (&'static str, *const u8),
             read_timebase: (&'static str, *const u8),
             cause_icbi: (&'static str, *const u8),
+            mark_memory_writeback: (&'static str, *const u8),
             cause_smc_write: (&'static str, *const u8),
             dcbz: (&'static str, *const u8),
         }
@@ -209,6 +260,10 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
                 do_psq_store: ("gecko_jit_do_psq_store_gc", runtime::do_psq_store_gc as *const u8),
                 read_timebase: ("gecko_jit_read_timebase_gc", runtime::read_timebase_gc as *const u8),
                 cause_icbi: ("gecko_jit_cause_icbi_gc", runtime::cause_icbi_gc as *const u8),
+                mark_memory_writeback: (
+                    "gecko_jit_mark_memory_writeback_gc",
+                    runtime::mark_memory_writeback_gc as *const u8,
+                ),
                 cause_smc_write: ("gecko_jit_cause_smc_write_gc", runtime::cause_smc_write_gc as *const u8),
                 dcbz: ("gecko_jit_dcbz_gc", runtime::dcbz_gc as *const u8),
             },
@@ -265,6 +320,10 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
                 do_psq_store: ("gecko_jit_do_psq_store_wii", runtime::do_psq_store_wii as *const u8),
                 read_timebase: ("gecko_jit_read_timebase_wii", runtime::read_timebase_wii as *const u8),
                 cause_icbi: ("gecko_jit_cause_icbi_wii", runtime::cause_icbi_wii as *const u8),
+                mark_memory_writeback: (
+                    "gecko_jit_mark_memory_writeback_wii",
+                    runtime::mark_memory_writeback_wii as *const u8,
+                ),
                 cause_smc_write: (
                     "gecko_jit_cause_smc_write_wii",
                     runtime::cause_smc_write_wii as *const u8,
@@ -306,6 +365,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             syms.do_psq_store,
             syms.read_timebase,
             syms.cause_icbi,
+            syms.mark_memory_writeback,
             syms.cause_smc_write,
             syms.dcbz,
         ] {
@@ -322,6 +382,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
 
         let mut block_sig = Signature::new(CallConv::Tail);
         block_sig.params.push(AbiParam::new(pointer_type));
+        block_sig.params.push(AbiParam::new(types::I32));
         block_sig.returns.push(AbiParam::new(types::I32));
 
         let mut fallback_sig = Signature::new(call_conv);
@@ -481,6 +542,9 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             cause_icbi: module
                 .declare_function(syms.cause_icbi.0, Linkage::Import, &ctx_u32_sig)
                 .expect("declare cause_icbi"),
+            mark_memory_writeback: module
+                .declare_function(syms.mark_memory_writeback.0, Linkage::Import, &ctx_u32_sig)
+                .expect("declare mark_memory_writeback"),
             dcbz: module
                 .declare_function(syms.dcbz.0, Linkage::Import, &ctx_u32_sig)
                 .expect("declare dcbz"),
@@ -508,6 +572,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             builder_ctx: FunctionBuilderContext::new(),
             cache: FxHashMap::default(),
             block_func_ids: FxHashMap::default(),
+            hle_code_sizes: FxHashMap::default(),
             target_slots: std::cell::RefCell::new(FxHashMap::default()),
             blocks_by_line: FxHashMap::default(),
             drain_scratch: Vec::new(),
@@ -624,10 +689,17 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             return entry;
         }
 
+        let hle_div2i = is_div2i(sys, pc);
         let spec = block::discover::<SYSTEM>(sys, pc);
         let gprs_snapshot = sys.gekko.gprs;
 
-        let entry = self.compile(&spec, &gprs_snapshot);
+        let entry = if hle_div2i {
+            self.hle_code_sizes.insert(pc, DIV2I_SIZE);
+            self.compile_div2i(pc)
+        } else {
+            self.compile(&spec, &gprs_snapshot)
+        };
+
         self.cache.insert(pc, entry);
         self.block_specs.insert(pc, spec);
         self.register_block(&mut sys.mmio, pc);
@@ -637,8 +709,21 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
 
     fn register_block(&mut self, mmio: &mut crate::mmio::Mmio<SYSTEM>, pc: u32) {
         let Some(spec) = self.block_specs.get(&pc) else { return };
+
+        let tracked_pcs = if let Some(&size) = self.hle_code_sizes.get(&pc) {
+            std::borrow::Cow::Owned(
+                (0..size)
+                    .step_by(4)
+                    .map(|offset| pc.wrapping_add(offset))
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            std::borrow::Cow::Borrowed(spec.pcs.as_slice())
+        };
+
         let mut last = u32::MAX;
-        for &vpc in &spec.pcs {
+
+        for &vpc in tracked_pcs.iter() {
             let line = crate::mmio::virt_to_phys(vpc) & crate::mmio::CODE_LINE_MASK;
             if line == last {
                 continue;
@@ -654,6 +739,18 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         let Some(spec) = self.block_specs.remove(&pc) else {
             return;
         };
+
+        let tracked_pcs = if let Some(size) = self.hle_code_sizes.remove(&pc) {
+            std::borrow::Cow::Owned(
+                (0..size)
+                    .step_by(4)
+                    .map(|offset| pc.wrapping_add(offset))
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            std::borrow::Cow::Borrowed(spec.pcs.as_slice())
+        };
+
         self.cache.remove(&pc);
         self.block_func_ids.remove(&pc);
 
@@ -672,7 +769,8 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         }
 
         let mut last = u32::MAX;
-        for &vpc in &spec.pcs {
+
+        for &vpc in tracked_pcs.iter() {
             let line = crate::mmio::virt_to_phys(vpc) & crate::mmio::CODE_LINE_MASK;
             if line == last {
                 continue;
@@ -901,6 +999,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
     pub fn flush(&mut self) {
         self.cache.clear();
         self.block_func_ids.clear();
+        self.hle_code_sizes.clear();
         self.block_specs.clear();
         self.blocks_by_line.clear();
 
@@ -927,11 +1026,140 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
     }
 
     #[cfg_attr(feature = "hotpath", hotpath::measure(label = "ppc_jit_compile"))]
-    fn compile(&mut self, spec: &block::BlockSpec, gprs: &[u32; 32]) -> BlockEntry {
-        let func_id = self.func_id_for(spec.start_pc);
+    fn compile_div2i(&mut self, pc: u32) -> BlockEntry {
+        let func_id = self.func_id_for(pc);
+
+        #[cfg(feature = "jit-stats")]
+        let entry_counter_addr = self.block_entry_counter_slot(pc);
 
         self.ctx.clear();
         self.ctx.func.signature = self.block_sig.clone();
+
+        let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_ctx);
+        translator::register_alias_regions(&mut builder);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+        let ctx_ptr = builder.block_params(entry)[0];
+
+        #[cfg(feature = "jit-stats")]
+        {
+            let slot = builder.ins().iconst(types::I64, entry_counter_addr as i64);
+            let count = builder.ins().load(types::I64, translator::vmctx_flags(), slot, 0);
+            let next = builder.ins().iadd_imm(count, 1);
+            builder.ins().store(translator::vmctx_flags(), next, slot, 0);
+        }
+
+        let load_gpr = |builder: &mut FunctionBuilder, index: usize| {
+            builder.ins().load(
+                types::I32,
+                translator::vmctx_flags(),
+                ctx_ptr,
+                (abi::gpr_base_offset::<SYSTEM>() + index * 4) as i32,
+            )
+        };
+
+        let hi_lhs = load_gpr(&mut builder, 3);
+        let lo_lhs = load_gpr(&mut builder, 4);
+        let hi_rhs = load_gpr(&mut builder, 5);
+        let lo_rhs = load_gpr(&mut builder, 6);
+
+        let hi_lhs = builder.ins().uextend(types::I64, hi_lhs);
+        let lo_lhs = builder.ins().uextend(types::I64, lo_lhs);
+        let hi_rhs = builder.ins().uextend(types::I64, hi_rhs);
+        let lo_rhs = builder.ins().uextend(types::I64, lo_rhs);
+        let lhs_hi = builder.ins().ishl_imm(hi_lhs, 32);
+        let rhs_hi = builder.ins().ishl_imm(hi_rhs, 32);
+        let lhs = builder.ins().bor(lhs_hi, lo_lhs);
+        let rhs = builder.ins().bor(rhs_hi, lo_rhs);
+
+        let zero_block = builder.create_block();
+        let nonzero_block = builder.create_block();
+        let overflow_block = builder.create_block();
+        let divide_block = builder.create_block();
+        let merge_block = builder.create_block();
+        builder.append_block_param(merge_block, types::I64);
+
+        let rhs_zero = builder.ins().icmp_imm(IntCC::Equal, rhs, 0);
+        builder.ins().brif(rhs_zero, zero_block, &[], nonzero_block, &[]);
+
+        builder.switch_to_block(zero_block);
+        builder.seal_block(zero_block);
+        let zero = builder.ins().iconst(types::I64, 0);
+        builder.ins().jump(merge_block, &[zero.into()]);
+
+        builder.switch_to_block(nonzero_block);
+        builder.seal_block(nonzero_block);
+        let lhs_min = builder.ins().icmp_imm(IntCC::Equal, lhs, i64::MIN);
+        let rhs_neg_one = builder.ins().icmp_imm(IntCC::Equal, rhs, -1);
+        let overflows = builder.ins().band(lhs_min, rhs_neg_one);
+        builder.ins().brif(overflows, overflow_block, &[], divide_block, &[]);
+
+        builder.switch_to_block(overflow_block);
+        builder.seal_block(overflow_block);
+        builder.ins().jump(merge_block, &[lhs.into()]);
+
+        builder.switch_to_block(divide_block);
+        builder.seal_block(divide_block);
+        let quotient = builder.ins().sdiv(lhs, rhs);
+        builder.ins().jump(merge_block, &[quotient.into()]);
+
+        builder.switch_to_block(merge_block);
+        builder.seal_block(merge_block);
+        let quotient = builder.block_params(merge_block)[0];
+        let quotient_hi = builder.ins().ushr_imm(quotient, 32);
+        let quotient_hi = builder.ins().ireduce(types::I32, quotient_hi);
+        let quotient_lo = builder.ins().ireduce(types::I32, quotient);
+        builder.ins().store(
+            translator::vmctx_flags(),
+            quotient_hi,
+            ctx_ptr,
+            (abi::gpr_base_offset::<SYSTEM>() + 3 * 4) as i32,
+        );
+        builder.ins().store(
+            translator::vmctx_flags(),
+            quotient_lo,
+            ctx_ptr,
+            (abi::gpr_base_offset::<SYSTEM>() + 4 * 4) as i32,
+        );
+
+        let cycles_off = abi::cycles_offset::<SYSTEM>() as i32;
+        let cycles = builder
+            .ins()
+            .load(types::I64, translator::vmctx_flags(), ctx_ptr, cycles_off);
+        let cycles = builder.ins().iadd_imm(cycles, 300);
+        builder
+            .ins()
+            .store(translator::vmctx_flags(), cycles, ctx_ptr, cycles_off);
+
+        let lr = builder.ins().load(
+            types::I32,
+            translator::vmctx_flags(),
+            ctx_ptr,
+            abi::lr_offset::<SYSTEM>() as i32,
+        );
+        builder.ins().return_(&[lr]);
+        builder.finalize();
+
+        self.module
+            .define_function(func_id, &mut self.ctx)
+            .expect("define __div2i intrinsic");
+        self.module.finalize_definitions().expect("finalize __div2i intrinsic");
+        let entry = self.module.get_finalized_function(func_id) as usize;
+
+        let slot_addr = self.target_slot_addr(pc);
+        unsafe {
+            *(slot_addr as *mut usize) = entry;
+        }
+
+        self.register_in_lookup_table(pc, entry);
+
+        entry
+    }
+
+    fn compile(&mut self, spec: &block::BlockSpec, gprs: &[u32; 32]) -> BlockEntry {
+        let func_id = self.func_id_for(spec.start_pc);
 
         let _ = self.target_slot_addr(spec.start_pc);
 
@@ -939,6 +1167,28 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         let entry_counter_addr = Some(self.block_entry_counter_slot(spec.start_pc));
         #[cfg(not(feature = "jit-stats"))]
         let entry_counter_addr: Option<usize> = None;
+
+        let entry = self.compile_function(spec, gprs, func_id, entry_counter_addr);
+
+        let slot_addr = self.target_slot_addr(spec.start_pc);
+        unsafe {
+            *(slot_addr as *mut usize) = entry;
+        }
+
+        self.register_in_lookup_table(spec.start_pc, entry);
+
+        entry
+    }
+
+    fn compile_function(
+        &mut self,
+        spec: &block::BlockSpec,
+        gprs: &[u32; 32],
+        func_id: FuncId,
+        entry_counter_addr: Option<usize>,
+    ) -> BlockEntry {
+        self.ctx.clear();
+        self.ctx.func.signature = self.block_sig.clone();
 
         let block_lookup_table_addr = self.block_lookup_table_addr as i64;
         let chain = translator::ChainContext {
@@ -966,13 +1216,12 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
 
         self.module.finalize_definitions().expect("finalize");
         let entry = self.module.get_finalized_function(func_id) as usize;
-
-        let slot_addr = self.target_slot_addr(spec.start_pc);
-        unsafe {
-            *(slot_addr as *mut usize) = entry;
-        }
-
-        self.register_in_lookup_table(spec.start_pc, entry);
+        crate::jit::register_jit_code(
+            "ppc",
+            spec.start_pc,
+            entry,
+            self.ctx.compiled_code().unwrap().code_buffer().len(),
+        );
 
         entry
     }
@@ -1061,7 +1310,10 @@ fn build_trampoline(
 
         let ctx_ptr = builder.block_params(entry)[0];
         let block_ptr = builder.block_params(entry)[1];
-        let call = builder.ins().call_indirect(block_sig_ref, block_ptr, &[ctx_ptr]);
+        let no_host_return = builder.ins().iconst(types::I32, u32::MAX as i64);
+        let call = builder
+            .ins()
+            .call_indirect(block_sig_ref, block_ptr, &[ctx_ptr, no_host_return]);
         let result = builder.inst_results(call)[0];
         builder.ins().return_(&[result]);
         builder.finalize();

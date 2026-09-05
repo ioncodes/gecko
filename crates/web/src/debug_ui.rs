@@ -22,6 +22,7 @@ pub struct DebugState {
     pub dvd_cover_open: Option<bool>,
     pub gx_invalidate_requested: bool,
     pub gx_dump_requested: bool,
+    pub freecam: dbglib::windows::gx::Freecam,
 }
 
 impl Default for DebugState {
@@ -48,6 +49,7 @@ impl Default for DebugState {
             dvd_cover_open: None,
             gx_invalidate_requested: false,
             gx_dump_requested: false,
+            freecam: Default::default(),
         }
     }
 }
@@ -69,6 +71,11 @@ impl DebugState {
 
         // Dump action is for desktop only.
         self.gx_dump_requested = false;
+
+        if let Some((matrix, enabled)) = self.freecam.take_action() {
+            emulator.render_sink.exec(gecko::host::GxAction::SetFreelook { matrix, enabled });
+        }
+
         self.debugger.tick(emulator);
     }
 
@@ -145,8 +152,10 @@ impl DebugState {
                 &emulator.mmio,
                 &mut self.gx_invalidate_requested,
                 &mut self.gx_dump_requested,
+                &mut self.freecam,
             );
         }
+        self.freecam.update_input(ctx);
         if self.show_mmio {
             dbglib::windows::mmio::show_mmio(
                 ctx,

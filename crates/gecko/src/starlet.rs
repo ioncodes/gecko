@@ -15,6 +15,8 @@ const FINALIZE_DELAY_US: u64 = 20;
 // would otherwise hammer the IPC handler nonstop and starve the DSP IRQ.
 const ACK_TO_NEXT_DELAY_US: u64 = 100;
 
+const DEVICE_STATE_CAPACITY: usize = 256;
+
 pub struct PendingResponse {
     pub cmd_paddr: u32,
     pub result: i32,
@@ -171,13 +173,7 @@ fn default_host_fs_root() -> PathBuf {
         return PathBuf::from(custom);
     }
 
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            return dir.join("fs");
-        }
-    }
-
-    PathBuf::from("fs")
+    crate::paths::resolve("fs")
 }
 
 impl System<{ crate::WII }> {
@@ -237,7 +233,7 @@ fn ensure_delivery_scheduled<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, d
     sys.starlet.delivery_scheduled = true;
     sys.scheduler.schedule_in(
         microseconds_to_cycles(SYSTEM, delay_us),
-        self::deliver_pending::<SYSTEM>,
+        crate::scheduler::Handler::IpcDeliver,
     );
 }
 
@@ -411,7 +407,7 @@ fn bind_fd_context(starlet: &Starlet, ctx: &mut DeviceContext<'_>, fd: i32) -> S
     device_path
 }
 
-fn deliver_pending<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+pub(crate) fn deliver_pending<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     sys.starlet.delivery_scheduled = false;
 
     if sys.hollywood.ipc.ppcctrl.arm_response() {
@@ -443,5 +439,118 @@ fn deliver_pending<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
 
     if !sys.starlet.pending.is_empty() {
         self::ensure_delivery_scheduled::<SYSTEM>(sys, ACK_TO_NEXT_DELAY_US);
+    }
+}
+
+impl Starlet {
+    pub fn save_state(&mut self, w: &mut crate::savestate::StateWriter) {
+        w.i32(self.next_fd);
+        w.bool(self.delivery_scheduled);
+
+        w.u32(self.pending.len() as u32);
+        for response in &self.pending {
+            w.u32(response.cmd_paddr);
+            w.i32(response.result);
+        }
+
+        let mut devices: Vec<_> = self.devices.iter_mut().collect();
+        devices.sort_by(|a, b| a.0.cmp(b.0));
+
+        w.u32(devices.len() as u32);
+        for (path, dev) in devices {
+            w.str(path);
+
+            let mut inner = crate::savestate::StateWriter::with_capacity(DEVICE_STATE_CAPACITY);
+            dev.save_state(&mut inner);
+            w.bytes(&inner.into_inner());
+        }
+
+        let mut handles: Vec<_> = self.handles.iter_mut().collect();
+        handles.sort_by_key(|(fd, _)| **fd);
+
+        w.u32(handles.len() as u32);
+        for (fd, entry) in handles {
+            w.i32(*fd);
+            match entry {
+                FdEntry::Shared(path) => {
+                    w.u8(0);
+                    w.str(path);
+                }
+                FdEntry::Owned { path, dev } => {
+                    w.u8(1);
+                    w.str(path);
+
+                    let (mode, offset) = dev.host_file_state().unwrap_or((0, 0));
+                    w.u32(mode);
+                    w.u64(offset);
+                }
+            }
+        }
+    }
+
+    pub fn load_state(
+        &mut self,
+        r: &mut crate::savestate::StateReader<'_>,
+    ) -> Result<(), crate::savestate::StateError> {
+        self.next_fd = r.i32()?;
+        self.delivery_scheduled = r.bool()?;
+
+        self.pending.clear();
+        let pending_count = r.u32()?;
+        for _ in 0..pending_count {
+            self.pending.push_back(PendingResponse {
+                cmd_paddr: r.u32()?,
+                result: r.i32()?,
+            });
+        }
+
+        let device_count = r.u32()?;
+        for _ in 0..device_count {
+            let path = r.str()?;
+            let payload = r.bytes()?;
+
+            let Some(dev) = self.devices.get_mut(&path) else {
+                return Err(crate::savestate::StateError::Corrupt(
+                    "savestate references an unregistered IOS device",
+                ));
+            };
+
+            let mut inner = crate::savestate::StateReader::new(payload);
+            dev.load_state(&mut inner)?;
+        }
+
+        self.handles.clear();
+        let handle_count = r.u32()?;
+        for _ in 0..handle_count {
+            let fd = r.i32()?;
+            match r.u8()? {
+                0 => {
+                    self.handles.insert(fd, FdEntry::Shared(r.str()?));
+                }
+                1 => {
+                    let path = r.str()?;
+                    let mode = r.u32()?;
+                    let offset = r.u64()?;
+
+                    match HostBackedFile::reopen(&self.host_fs_root, &path, mode, offset) {
+                        Some(dev) => {
+                            self.handles.insert(
+                                fd,
+                                FdEntry::Owned {
+                                    path,
+                                    dev: Box::new(dev),
+                                },
+                            );
+                        }
+                        None => {
+                            tracing::warn!(path, "savestate: failed to reopen NAND file, dropping fd");
+                        }
+                    }
+                }
+                _ => return Err(crate::savestate::StateError::Corrupt("bad fd entry tag")),
+            }
+        }
+
+        Ok(())
     }
 }

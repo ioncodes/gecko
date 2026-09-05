@@ -12,8 +12,10 @@ pub mod input;
 pub mod ipl;
 pub mod jit;
 pub mod mmio;
+pub mod paths;
 #[cfg(any(feature = "jit-stats", feature = "profile", feature = "gx-stats"))]
 pub mod profile;
+pub mod savestate;
 pub mod scheduler;
 pub mod starlet;
 pub mod system;

@@ -32,12 +32,12 @@ pub fn spr<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
             let val = ctx.gekko.read_gpr(instr.rs());
             match spr_num {
                 22 => {
-                    ctx.scheduler.cancel(crate::gekko::dec::underflow_handler::<SYSTEM>);
+                    ctx.scheduler.cancel(crate::scheduler::Handler::DecUnderflow);
                     ctx.gekko.dec.write(ctx.scheduler.cycles, val);
                     ctx.gekko.spr.dec = val;
                     ctx.scheduler.schedule_in(
                         crate::gekko::dec::cycles_until_underflow(val),
-                        crate::gekko::dec::underflow_handler::<SYSTEM>,
+                        crate::scheduler::Handler::DecUnderflow,
                     );
                     tracing::debug!(cycles = ctx.scheduler.cycles, value = val, "decrementer set");
                 }
@@ -155,8 +155,17 @@ pub fn tw<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) 
 }
 
 #[inline(always)]
-pub fn nop<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, _instr: Instruction) {
+pub fn nop<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, instr: Instruction) {
     ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP) as u64;
+
+    if matches!(OP, OP_DCBF | OP_DCBST) {
+        let base = ctx.gekko.read_gpr_or_zero(instr.ra());
+        let ea = base.wrapping_add(ctx.gekko.read_gpr(instr.rb()));
+        ctx.mmio.mark_memory_dirty_range(
+            crate::mmio::virt_to_phys(ea) & crate::mmio::CODE_LINE_MASK,
+            crate::mmio::CODE_LINE_BYTES,
+        );
+    }
 }
 
 /// dcbz / dcbz_l zero the targeted 32-byte cache line via `System::dcbz_line`.

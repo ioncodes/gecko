@@ -1,5 +1,5 @@
 use cranelift_codegen::ir::{InstBuilder, MemFlagsData, Value, types};
-use cranelift_frontend::FunctionBuilder;
+use cranelift_frontend::{FunctionBuilder, Variable};
 use cranelift_module::Module;
 
 use crate::flipper::dsp::instruction::{GcDspExt, Instruction};
@@ -9,13 +9,287 @@ use crate::system::SystemId;
 use super::abi;
 use super::translator::ExternFuncs;
 
+const REG_CACHE_LEN: usize = 15;
+
+#[inline]
+fn reg_cache_offsets() -> [i32; REG_CACHE_LEN] {
+    [
+        abi::dsp_ac0_high_offset() as i32,
+        abi::dsp_ac1_high_offset() as i32,
+        abi::dsp_ac0_mid_offset() as i32,
+        abi::dsp_ac1_mid_offset() as i32,
+        abi::dsp_ac0_low_offset() as i32,
+        abi::dsp_ac1_low_offset() as i32,
+        abi::dsp_product_low_offset() as i32,
+        abi::dsp_product_mid1_offset() as i32,
+        abi::dsp_product_high_offset() as i32,
+        abi::dsp_product_mid2_offset() as i32,
+        abi::dsp_ax_base_offset() as i32,
+        (abi::dsp_ax_base_offset() + 2) as i32,
+        abi::dsp_axh_base_offset() as i32,
+        (abi::dsp_axh_base_offset() + 2) as i32,
+        abi::dsp_status_offset() as i32,
+    ]
+}
+
+fn split_ac(builder: &mut FunctionBuilder, value: Value) -> (Value, Value, Value) {
+    let mid_shift = builder.ins().sshr_imm(value, 16);
+    let mid = builder.ins().ireduce(types::I16, mid_shift);
+    let low = builder.ins().ireduce(types::I16, value);
+    let high_shift = builder.ins().sshr_imm(value, 32);
+    let high_byte = builder.ins().ireduce(types::I8, high_shift);
+    let high = builder.ins().sextend(types::I16, high_byte);
+
+    (high, mid, low)
+}
+
+fn compose_ac_parts(builder: &mut FunctionBuilder, high: Value, mid: Value, low: Value) -> Value {
+    let high64 = builder.ins().sextend(types::I64, high);
+    let high_byte = builder.ins().band_imm(high64, 0xFF);
+    let mid64 = builder.ins().uextend(types::I64, mid);
+    let low64 = builder.ins().uextend(types::I64, low);
+    let h_shl = builder.ins().ishl_imm(high_byte, 32);
+    let m_shl = builder.ins().ishl_imm(mid64, 16);
+    let hm = builder.ins().bor(h_shl, m_shl);
+    let merged = builder.ins().bor(hm, low64);
+    let shl = builder.ins().ishl_imm(merged, 24);
+
+    builder.ins().sshr_imm(shl, 24)
+}
+
+pub(crate) struct DspRegCache {
+    vars: [Variable; REG_CACHE_LEN],
+    ac_full: [Variable; 2],
+    product_full: Variable,
+    ac_full_stale: [bool; 2],
+    product_full_stale: bool,
+    dmem_bases: [Value; 2],
+    dirty: [bool; REG_CACHE_LEN],
+}
+
+impl DspRegCache {
+    pub(crate) fn new(builder: &mut FunctionBuilder, sys_ptr: Value) -> Self {
+        let offsets = reg_cache_offsets();
+        let vars = std::array::from_fn(|idx| {
+            let var = builder.declare_var(types::I16);
+            let value = builder
+                .ins()
+                .load(types::I16, MemFlagsData::trusted(), sys_ptr, offsets[idx]);
+            builder.def_var(var, value);
+
+            var
+        });
+
+        let dmem_base_offsets = [abi::dsp_dram_ptr_offset(), abi::dsp_coef_ptr_offset()];
+        let dmem_bases = std::array::from_fn(|idx| {
+            builder.ins().load(
+                types::I64,
+                MemFlagsData::trusted(),
+                sys_ptr,
+                dmem_base_offsets[idx] as i32,
+            )
+        });
+
+        let mut cache = Self {
+            vars,
+            ac_full: std::array::from_fn(|_| builder.declare_var(types::I64)),
+            product_full: builder.declare_var(types::I64),
+            ac_full_stale: [false; 2],
+            product_full_stale: false,
+            dmem_bases,
+            dirty: [false; REG_CACHE_LEN],
+        };
+        cache.rebuild_composites(builder);
+
+        cache
+    }
+
+    fn compose_ac(&self, builder: &mut FunctionBuilder, d: u8) -> Value {
+        let (high_off, mid_off, low_off) = TranslatorCtx::ac_offsets(d);
+        let high = builder.use_var(self.vars[Self::index(high_off).unwrap()]);
+        let mid = builder.use_var(self.vars[Self::index(mid_off).unwrap()]);
+        let low = builder.use_var(self.vars[Self::index(low_off).unwrap()]);
+
+        compose_ac_parts(builder, high, mid, low)
+    }
+
+    fn compose_product(&self, builder: &mut FunctionBuilder) -> Value {
+        let ph = builder.use_var(self.vars[Self::index(abi::dsp_product_high_offset() as i32).unwrap()]);
+        let pm1 = builder.use_var(self.vars[Self::index(abi::dsp_product_mid1_offset() as i32).unwrap()]);
+        let pm2 = builder.use_var(self.vars[Self::index(abi::dsp_product_mid2_offset() as i32).unwrap()]);
+        let pl = builder.use_var(self.vars[Self::index(abi::dsp_product_low_offset() as i32).unwrap()]);
+
+        let ph_u8 = builder.ins().band_imm(ph, 0xFF);
+        let ph_shl = builder.ins().ishl_imm(ph_u8, 8);
+        let ph_i16 = builder.ins().sshr_imm(ph_shl, 8);
+        let ph_i64 = builder.ins().sextend(types::I64, ph_i16);
+        let ph_shifted = builder.ins().ishl_imm(ph_i64, 32);
+        let pm1_64 = builder.ins().uextend(types::I64, pm1);
+        let pm2_64 = builder.ins().uextend(types::I64, pm2);
+        let mid_sum = builder.ins().iadd(pm1_64, pm2_64);
+        let mid_shifted = builder.ins().ishl_imm(mid_sum, 16);
+        let pl_64 = builder.ins().uextend(types::I64, pl);
+        let upper = builder.ins().iadd(ph_shifted, mid_shifted);
+
+        builder.ins().iadd(upper, pl_64)
+    }
+
+    fn rebuild_composites(&mut self, builder: &mut FunctionBuilder) {
+        for d in 0..2 {
+            let value = self.compose_ac(builder, d);
+            builder.def_var(self.ac_full[d as usize], value);
+            self.ac_full_stale[d as usize] = false;
+        }
+
+        let product = self.compose_product(builder);
+        builder.def_var(self.product_full, product);
+        self.product_full_stale = false;
+    }
+
+    #[inline]
+    fn index(offset: i32) -> Option<usize> {
+        reg_cache_offsets().iter().position(|&candidate| candidate == offset)
+    }
+
+    #[inline]
+    pub(crate) fn load(&self, builder: &mut FunctionBuilder, sys_ptr: Value, offset: i32) -> Value {
+        if let Some(idx) = Self::index(offset) {
+            builder.use_var(self.vars[idx])
+        } else {
+            builder.ins().load(types::I16, MemFlagsData::trusted(), sys_ptr, offset)
+        }
+    }
+
+    #[inline]
+    fn store(&mut self, builder: &mut FunctionBuilder, sys_ptr: Value, value: Value, offset: i32) {
+        if let Some(idx) = Self::index(offset) {
+            builder.def_var(self.vars[idx], value);
+            self.dirty[idx] = true;
+
+            if [
+                abi::dsp_ac0_high_offset() as i32,
+                abi::dsp_ac0_mid_offset() as i32,
+                abi::dsp_ac0_low_offset() as i32,
+            ]
+            .contains(&offset)
+            {
+                self.ac_full_stale[0] = true;
+            } else if [
+                abi::dsp_ac1_high_offset() as i32,
+                abi::dsp_ac1_mid_offset() as i32,
+                abi::dsp_ac1_low_offset() as i32,
+            ]
+            .contains(&offset)
+            {
+                self.ac_full_stale[1] = true;
+            } else if [
+                abi::dsp_product_low_offset() as i32,
+                abi::dsp_product_mid1_offset() as i32,
+                abi::dsp_product_high_offset() as i32,
+                abi::dsp_product_mid2_offset() as i32,
+            ]
+            .contains(&offset)
+            {
+                self.product_full_stale = true;
+            }
+        } else {
+            builder.ins().store(MemFlagsData::trusted(), value, sys_ptr, offset);
+        }
+    }
+
+    pub(crate) fn flush(&self, builder: &mut FunctionBuilder, sys_ptr: Value) {
+        let offsets = reg_cache_offsets();
+
+        for (idx, &dirty) in self.dirty.iter().enumerate() {
+            if dirty {
+                let value = builder.use_var(self.vars[idx]);
+                builder
+                    .ins()
+                    .store(MemFlagsData::trusted(), value, sys_ptr, offsets[idx]);
+            }
+        }
+    }
+
+    fn reload(&mut self, builder: &mut FunctionBuilder, sys_ptr: Value) {
+        for (idx, offset) in reg_cache_offsets().into_iter().enumerate() {
+            let value = builder.ins().load(types::I16, MemFlagsData::trusted(), sys_ptr, offset);
+            builder.def_var(self.vars[idx], value);
+        }
+
+        self.rebuild_composites(builder);
+    }
+
+    #[inline]
+    fn set_piece(&mut self, builder: &mut FunctionBuilder, offset: i32, value: Value) {
+        let idx = Self::index(offset).expect("composite register piece must be cached");
+        builder.def_var(self.vars[idx], value);
+        self.dirty[idx] = true;
+    }
+
+    fn read_ac_i64(&mut self, builder: &mut FunctionBuilder, d: u8) -> Value {
+        if self.ac_full_stale[d as usize] {
+            let value = self.compose_ac(builder, d);
+            builder.def_var(self.ac_full[d as usize], value);
+            self.ac_full_stale[d as usize] = false;
+        }
+
+        builder.use_var(self.ac_full[d as usize])
+    }
+
+    fn write_ac_i64(&mut self, builder: &mut FunctionBuilder, d: u8, value: Value) {
+        let shifted = builder.ins().ishl_imm(value, 24);
+        let value = builder.ins().sshr_imm(shifted, 24);
+        builder.def_var(self.ac_full[d as usize], value);
+        let (high_off, mid_off, low_off) = TranslatorCtx::ac_offsets(d);
+        let (high, mid, low) = split_ac(builder, value);
+        self.set_piece(builder, high_off, high);
+        self.set_piece(builder, mid_off, mid);
+        self.set_piece(builder, low_off, low);
+        self.ac_full_stale[d as usize] = false;
+    }
+
+    fn read_product_i64(&mut self, builder: &mut FunctionBuilder) -> Value {
+        if self.product_full_stale {
+            let value = self.compose_product(builder);
+            builder.def_var(self.product_full, value);
+            self.product_full_stale = false;
+        }
+
+        builder.use_var(self.product_full)
+    }
+
+    fn write_product_i64(&mut self, builder: &mut FunctionBuilder, value: Value) {
+        let shifted = builder.ins().ishl_imm(value, 24);
+        let value = builder.ins().sshr_imm(shifted, 24);
+        builder.def_var(self.product_full, value);
+        let (high, pm1, low) = split_ac(builder, value);
+        let zero = builder.ins().iconst(types::I16, 0);
+        self.set_piece(builder, abi::dsp_product_high_offset() as i32, high);
+        self.set_piece(builder, abi::dsp_product_mid1_offset() as i32, pm1);
+        self.set_piece(builder, abi::dsp_product_low_offset() as i32, low);
+        self.set_piece(builder, abi::dsp_product_mid2_offset() as i32, zero);
+        self.product_full_stale = false;
+    }
+
+    #[inline]
+    fn dmem_base(&self, ptr_field_offset: usize) -> Option<Value> {
+        match ptr_field_offset {
+            offset if offset == abi::dsp_dram_ptr_offset() => Some(self.dmem_bases[0]),
+            offset if offset == abi::dsp_coef_ptr_offset() => Some(self.dmem_bases[1]),
+            _ => None,
+        }
+    }
+}
+
 pub struct TranslatorCtx<'a, 'b> {
     pub builder: &'a mut FunctionBuilder<'b>,
     pub module: &'a mut cranelift_jit::JITModule,
     pub extern_funcs: ExternFuncs,
     pub sys_ptr: Value,
+    pub(crate) reg_cache: &'a mut DspRegCache,
     pub pc: u16,
     pub size: u8,
+    pub szat_needed: bool,
 }
 
 impl<'a, 'b> TranslatorCtx<'a, 'b> {
@@ -26,16 +300,12 @@ impl<'a, 'b> TranslatorCtx<'a, 'b> {
 
     #[inline]
     fn load_u16(&mut self, offset: i32) -> Value {
-        self.builder
-            .ins()
-            .load(types::I16, MemFlagsData::trusted(), self.sys_ptr, offset)
+        self.reg_cache.load(self.builder, self.sys_ptr, offset)
     }
 
     #[inline]
     fn store_u16(&mut self, val: Value, offset: i32) {
-        self.builder
-            .ins()
-            .store(MemFlagsData::trusted(), val, self.sys_ptr, offset);
+        self.reg_cache.store(self.builder, self.sys_ptr, val, offset);
     }
 
     fn simple_reg_offset(slot: u8) -> Option<i32> {
@@ -64,6 +334,16 @@ impl<'a, 'b> TranslatorCtx<'a, 'b> {
     }
 
     pub fn try_emit_reg_read(&mut self, slot: u8) -> Option<Value> {
+        if (30..=31).contains(&slot) {
+            let (high_off, mid_off, _) = Self::ac_offsets(slot - 30);
+            let high = self.load_u16(high_off);
+            let mid = self.load_u16(mid_off);
+            let sxm = self.read_status_bit(14);
+            let saturated = super::translator::emit_saturate_ac_mid(self.builder, high, mid);
+
+            return Some(self.builder.ins().select(sxm, saturated, mid));
+        }
+
         let off = Self::simple_reg_offset(slot)?;
         let raw = self.load_u16(off);
         let v = match slot {
@@ -76,6 +356,22 @@ impl<'a, 'b> TranslatorCtx<'a, 'b> {
     }
 
     pub fn try_emit_reg_write(&mut self, slot: u8, value: Value) -> bool {
+        if (30..=31).contains(&slot) {
+            let (high_off, mid_off, low_off) = Self::ac_offsets(slot - 30);
+            let high = self.load_u16(high_off);
+            let low = self.load_u16(low_off);
+            let sxm = self.read_status_bit(14);
+            let sign = self.builder.ins().sshr_imm(value, 15);
+            let zero = self.iconst16(0);
+            let high = self.builder.ins().select(sxm, sign, high);
+            let low = self.builder.ins().select(sxm, zero, low);
+            self.store_u16(high, high_off);
+            self.store_u16(value, mid_off);
+            self.store_u16(low, low_off);
+
+            return true;
+        }
+
         let Some(off) = Self::simple_reg_offset(slot) else {
             return false;
         };
@@ -137,76 +433,19 @@ impl<'a, 'b> TranslatorCtx<'a, 'b> {
     }
 
     pub fn read_ac_i64(&mut self, d: u8) -> Value {
-        let (h_off, m_off, l_off) = Self::ac_offsets(d);
-        let high = self.load_u16(h_off);
-        let mid = self.load_u16(m_off);
-        let low = self.load_u16(l_off);
-
-        let high64 = self.builder.ins().sextend(types::I64, high);
-        let high_byte = self.builder.ins().band_imm(high64, 0xFFi64);
-        let mid64 = self.builder.ins().uextend(types::I64, mid);
-        let low64 = self.builder.ins().uextend(types::I64, low);
-        let h_shl = self.builder.ins().ishl_imm(high_byte, 32);
-        let m_shl = self.builder.ins().ishl_imm(mid64, 16);
-        let hm = self.builder.ins().bor(h_shl, m_shl);
-        let merged = self.builder.ins().bor(hm, low64);
-
-        let shl = self.builder.ins().ishl_imm(merged, 24);
-        self.builder.ins().sshr_imm(shl, 24)
+        self.reg_cache.read_ac_i64(self.builder, d)
     }
 
     pub fn write_ac_i64(&mut self, d: u8, val: Value) {
-        let (h_off, m_off, l_off) = Self::ac_offsets(d);
-        let mid_shift = self.builder.ins().sshr_imm(val, 16);
-        let mid = self.builder.ins().ireduce(types::I16, mid_shift);
-        let low = self.builder.ins().ireduce(types::I16, val);
-        let high_shift = self.builder.ins().sshr_imm(val, 32);
-
-        let high_byte = self.builder.ins().ireduce(types::I8, high_shift);
-        let high = self.builder.ins().sextend(types::I16, high_byte);
-        self.store_u16(high, h_off);
-        self.store_u16(mid, m_off);
-        self.store_u16(low, l_off);
+        self.reg_cache.write_ac_i64(self.builder, d, val);
     }
 
     pub fn read_product_i64(&mut self) -> Value {
-        let ph = self.load_u16(abi::dsp_product_high_offset() as i32);
-        let pm1 = self.load_u16(abi::dsp_product_mid1_offset() as i32);
-        let pm2 = self.load_u16(abi::dsp_product_mid2_offset() as i32);
-        let pl = self.load_u16(abi::dsp_product_low_offset() as i32);
-
-        let ph_u8 = self.builder.ins().band_imm(ph, 0xFF);
-        let ph_shl = self.builder.ins().ishl_imm(ph_u8, 8);
-        let ph_i16 = self.builder.ins().sshr_imm(ph_shl, 8);
-        let ph_i64 = self.builder.ins().sextend(types::I64, ph_i16);
-        let ph_shifted = self.builder.ins().ishl_imm(ph_i64, 32);
-
-        let pm1_64 = self.builder.ins().uextend(types::I64, pm1);
-        let pm2_64 = self.builder.ins().uextend(types::I64, pm2);
-        let mid_sum = self.builder.ins().iadd(pm1_64, pm2_64);
-        let mid_shifted = self.builder.ins().ishl_imm(mid_sum, 16);
-
-        let pl_64 = self.builder.ins().uextend(types::I64, pl);
-
-        let part1 = self.builder.ins().iadd(ph_shifted, mid_shifted);
-        self.builder.ins().iadd(part1, pl_64)
+        self.reg_cache.read_product_i64(self.builder)
     }
 
     pub fn write_product_i64(&mut self, val: Value) {
-        let high_shift = self.builder.ins().sshr_imm(val, 32);
-        let high_i8 = self.builder.ins().ireduce(types::I8, high_shift);
-        let high = self.builder.ins().sextend(types::I16, high_i8);
-        self.store_u16(high, abi::dsp_product_high_offset() as i32);
-
-        let pm1_shift = self.builder.ins().sshr_imm(val, 16);
-        let pm1 = self.builder.ins().ireduce(types::I16, pm1_shift);
-        self.store_u16(pm1, abi::dsp_product_mid1_offset() as i32);
-
-        let pl = self.builder.ins().ireduce(types::I16, val);
-        self.store_u16(pl, abi::dsp_product_low_offset() as i32);
-
-        let zero = self.iconst16(0);
-        self.store_u16(zero, abi::dsp_product_mid2_offset() as i32);
+        self.reg_cache.write_product_i64(self.builder, val);
     }
 
     pub fn multiply_i64(&mut self, a_i16: Value, b_i16: Value) -> Value {
@@ -467,6 +706,9 @@ impl<'a, 'b> TranslatorCtx<'a, 'b> {
     }
 
     fn flags40_szat(&mut self, r40: Value) -> Value {
+        if !self.szat_needed {
+            return self.iconst16(0);
+        }
         use cranelift_codegen::ir::condcodes::IntCC;
 
         let sign64 = self.builder.ins().ushr_imm(r40, 39);
@@ -575,12 +817,14 @@ impl<'a, 'b> TranslatorCtx<'a, 'b> {
     }
 
     fn emit_dmem_word_addr(&mut self, ptr_field_offset: usize, addr: Value, word_bias: i64) -> Value {
-        let base = self.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            self.sys_ptr,
-            ptr_field_offset as i32,
-        );
+        let base = self.reg_cache.dmem_base(ptr_field_offset).unwrap_or_else(|| {
+            self.builder.ins().load(
+                types::I64,
+                MemFlagsData::trusted(),
+                self.sys_ptr,
+                ptr_field_offset as i32,
+            )
+        });
 
         let biased = if word_bias != 0 {
             self.builder.ins().iadd_imm(addr, word_bias)
@@ -999,6 +1243,7 @@ impl<'a, 'b> TranslatorCtx<'a, 'b> {
     }
 
     pub fn emit_read_reg_full(&mut self, slot: u32) -> Value {
+        self.reg_cache.flush(self.builder, self.sys_ptr);
         let f = self
             .module
             .declare_func_in_func(self.extern_funcs.read_reg_full, self.builder.func);
@@ -1008,12 +1253,14 @@ impl<'a, 'b> TranslatorCtx<'a, 'b> {
     }
 
     pub fn emit_write_reg_full(&mut self, slot: u32, value: Value) {
+        self.reg_cache.flush(self.builder, self.sys_ptr);
         let f = self
             .module
             .declare_func_in_func(self.extern_funcs.write_reg_full, self.builder.func);
         let slot_v = self.builder.ins().iconst(types::I32, slot as i64);
         let value_u32 = self.builder.ins().uextend(types::I32, value);
         self.builder.ins().call(f, &[self.sys_ptr, slot_v, value_u32]);
+        self.reg_cache.reload(self.builder, self.sys_ptr);
     }
 
     pub fn emit_read_reg(&mut self, slot: u8) -> Value {

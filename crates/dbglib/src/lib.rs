@@ -4,14 +4,8 @@ pub mod windows;
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::Write;
 
-use gecko::scheduler::{DSP_BATCH_SIZE, ScheduledFn, cpu_cycles_per_dsp_tick, dsp_batch_handler};
+use gecko::scheduler::{DSP_BATCH_SIZE, Handler, cpu_cycles_per_dsp_tick};
 use gecko::system::{System, SystemId};
-
-/// Identify the DSP batch handler so the debugger can intercept it for per-instruction tracing.
-#[inline(always)]
-fn is_dsp_batch<const SYSTEM: SystemId>(f: ScheduledFn<SYSTEM>) -> bool {
-    (f as usize) == (dsp_batch_handler::<SYSTEM> as ScheduledFn<SYSTEM> as usize)
-}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum EmulatorState {
@@ -159,8 +153,8 @@ impl Debugger {
     /// Drain and process scheduler events, tracing DSP ticks when active.
     #[inline(always)]
     fn drain_events<const SYSTEM: SystemId>(&mut self, emulator: &mut System<SYSTEM>) {
-        while let Some(f) = emulator.scheduler.poll() {
-            if is_dsp_batch::<SYSTEM>(f) && self.is_dsp_tracing() {
+        while let Some(handler) = emulator.scheduler.poll() {
+            if handler == Handler::DspBatch && self.is_dsp_tracing() {
                 for _ in 0..DSP_BATCH_SIZE {
                     self.dsp_trace_step(emulator);
                     if !emulator.step_dsp_instruction() {
@@ -168,12 +162,11 @@ impl Debugger {
                     }
                 }
                 gecko::flipper::dsp::refresh_interrupts(emulator);
-                emulator.scheduler.schedule_in(
-                    cpu_cycles_per_dsp_tick(SYSTEM) * DSP_BATCH_SIZE,
-                    dsp_batch_handler::<SYSTEM>,
-                );
+                emulator
+                    .scheduler
+                    .schedule_in(cpu_cycles_per_dsp_tick(SYSTEM) * DSP_BATCH_SIZE, Handler::DspBatch);
             } else {
-                f(emulator);
+                handler.resolve::<SYSTEM>()(emulator);
             }
         }
     }
@@ -184,8 +177,8 @@ impl Debugger {
     #[inline(always)]
     fn drain_events_until_dsp<const SYSTEM: SystemId>(&mut self, emulator: &mut System<SYSTEM>) -> bool {
         let mut dsp_hit = false;
-        while let Some(f) = emulator.scheduler.poll() {
-            if is_dsp_batch::<SYSTEM>(f) {
+        while let Some(handler) = emulator.scheduler.poll() {
+            if handler == Handler::DspBatch {
                 if self.is_dsp_tracing() {
                     for _ in 0..DSP_BATCH_SIZE {
                         self.dsp_trace_step(emulator);
@@ -194,16 +187,15 @@ impl Debugger {
                         }
                     }
                     gecko::flipper::dsp::refresh_interrupts(emulator);
-                    emulator.scheduler.schedule_in(
-                        cpu_cycles_per_dsp_tick(SYSTEM) * DSP_BATCH_SIZE,
-                        dsp_batch_handler::<SYSTEM>,
-                    );
+                    emulator
+                        .scheduler
+                        .schedule_in(cpu_cycles_per_dsp_tick(SYSTEM) * DSP_BATCH_SIZE, Handler::DspBatch);
                 } else {
-                    f(emulator);
+                    handler.resolve::<SYSTEM>()(emulator);
                 }
                 dsp_hit = true;
             } else {
-                f(emulator);
+                handler.resolve::<SYSTEM>()(emulator);
             }
         }
         dsp_hit

@@ -34,6 +34,10 @@ pub struct GraphicsProcessor {
     pub xf_mem: Vec<u32>,
     pub fifo: Vec<u8>,
     pub dl_scratch: Vec<u8>,
+    draw_batch_data: Vec<u8>,
+    draw_batch_entries: Vec<vertex::DrawBatchEntry>,
+    draw_segments_scratch: Vec<crate::host::DrawSegment>,
+    pub(crate) pending_efb_writeback_ranges: Vec<(u32, usize)>,
 
     // FIFO recording stuff
     pub recorder: Option<Box<recorder::FifoRecorder>>,
@@ -102,6 +106,10 @@ pub struct GraphicsProcessor {
     pub jit_vtx: jit::JitVertexEngine,
     #[cfg(feature = "jit")]
     pub jit_vtx_arrays: jit::ResolvedArrays,
+    #[cfg(feature = "jit")]
+    pub jit_vtx_arrays_key: Option<jit::VtxKey>,
+    #[cfg(feature = "jit")]
+    pub jit_vtx_arrays_ok: bool,
     #[cfg(feature = "vtx-jit-validate")]
     pub jit_vtx_validator: jit::validate::VertexJitValidator,
     pub lighting_dirty: bool,
@@ -114,11 +122,7 @@ pub struct GraphicsProcessor {
     pub cached_lights: [LightData; 8],
     #[cfg(feature = "gx-stats")]
     pub(crate) stats: GxStats,
-    // Hash of the raw texture data at each cache key; used to detect when
-    // texture content changes and avoid redundant decodes + LoadTexture
-    // sends. Keyed by the same `TextureKey` sent to the renderer in
-    // [`GxAction::LoadTexture`].
-    pub texture_hashes: FxHashMap<TextureKey, u64>,
+    pub texture_hashes: FxHashMap<TextureKey, (u64, u64)>,
     pub execution_mode: ExecutionMode,
 }
 
@@ -153,6 +157,15 @@ pub(crate) struct GxStats {
 }
 
 impl GraphicsProcessor {
+    pub(crate) fn defer_pending_efb_writebacks<const SYSTEM: SystemId>(
+        &mut self,
+        mmio: &mut crate::mmio::Mmio<SYSTEM>,
+    ) {
+        for (addr, len) in self.pending_efb_writeback_ranges.drain(..) {
+            mmio.defer_efb_writeback(addr, len);
+        }
+    }
+
     pub fn new() -> Self {
         GraphicsProcessor {
             raise_interrupt: false,
@@ -165,6 +178,10 @@ impl GraphicsProcessor {
             xf_mem: vec![0; XF_MEM_SIZE],
             fifo: Vec::with_capacity(256),
             dl_scratch: Vec::with_capacity(4096),
+            draw_batch_data: Vec::with_capacity(4096),
+            draw_batch_entries: Vec::with_capacity(32),
+            draw_segments_scratch: Vec::with_capacity(32),
+            pending_efb_writeback_ranges: Vec::new(),
             recorder: None,
             projection: Matrix4::default(),
             cur_textures: Default::default(),
@@ -209,6 +226,10 @@ impl GraphicsProcessor {
             jit_vtx: jit::JitVertexEngine::new(),
             #[cfg(feature = "jit")]
             jit_vtx_arrays: jit::ResolvedArrays::default(),
+            #[cfg(feature = "jit")]
+            jit_vtx_arrays_key: None,
+            #[cfg(feature = "jit")]
+            jit_vtx_arrays_ok: false,
             #[cfg(feature = "vtx-jit-validate")]
             jit_vtx_validator: jit::validate::VertexJitValidator::new(),
             lighting_dirty: true,
@@ -241,6 +262,12 @@ pub fn present_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     sys.gx.xfb_fields_since_emit = sys.gx.xfb_fields_since_emit.saturating_add(1);
 
     let (frame_w, frame_h) = sys.vi.frame_dimensions();
+
+    if sys.gx.xfb_copy_seq == 0 {
+        let base = sys.vi.latched_xfb_base;
+        self::present_raw_xfb(sys, base, frame_w, frame_h);
+        return;
+    }
 
     let Some(bytes_per_row) = sys
         .gx
@@ -412,11 +439,24 @@ pub fn present_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     let parts = if frame_base != 0 {
         let mut p = build_parts(frame_base);
         if p.is_empty() {
+            // The VI can scan from an address that lands *inside* a copy
+            // region rather than at its start: Animal Crossing copies the
+            // full frame to the buffer base, then points the scan a few rows
+            // in.
+            let containing = sys
+                .gx
+                .xfb_regions
+                .iter()
+                .filter(|&(&addr, _)| addr <= frame_base && (frame_base as u64) < addr as u64 + xfb_bytes)
+                .max_by_key(|&(&addr, _)| addr)
+                .map(|(&addr, region)| (region.first_seq, region.copy_seq, addr));
+
+            let (first_seq, copy_seq, id) = containing.unwrap_or((0, 0, frame_base));
             p.push((
-                0,
-                0,
+                first_seq,
+                copy_seq,
                 XfbPart {
-                    id: frame_base,
+                    id,
                     offset_x: 0,
                     offset_y: 0,
                 },
@@ -445,6 +485,34 @@ pub fn present_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     sys.gx.xfb_last_present_base = frame_base;
 }
 
+fn present_raw_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, base: u32, width: u32, height: u32) {
+    if base == 0 || width == 0 || height == 0 {
+        return;
+    }
+
+    let pixel_count = (width as usize) * (height as usize);
+    let mut pixels = vec![0u32; pixel_count];
+
+    let to_bgra = |y: f32, cb: f32, cr: f32| -> u32 {
+        let r = (1.164 * y + 1.596 * cr).clamp(0.0, 255.0) as u32;
+        let g = (1.164 * y - 0.813 * cr - 0.391 * cb).clamp(0.0, 255.0) as u32;
+        let b = (1.164 * y + 2.018 * cb).clamp(0.0, 255.0) as u32;
+        0xFF00_0000 | (r << 16) | (g << 8) | b
+    };
+
+    for i in 0..pixel_count / 2 {
+        let word = sys.mmio.phys_read_u32(base + (i as u32) * 4);
+        let y0 = ((word >> 24) & 0xFF) as f32 - 16.0;
+        let cb = ((word >> 16) & 0xFF) as f32 - 128.0;
+        let y1 = ((word >> 8) & 0xFF) as f32 - 16.0;
+        let cr = (word & 0xFF) as f32 - 128.0;
+        pixels[i * 2] = to_bgra(y0, cb, cr);
+        pixels[i * 2 + 1] = to_bgra(y1, cb, cr);
+    }
+
+    sys.render_sink.exec(GxAction::PresentRawXfb { width, height, pixels });
+}
+
 impl<const SYSTEM: SystemId> System<SYSTEM> {
     /// Check if the GX stub detected a finish or token command and signal PE
     pub fn check_gx_pe_interrupts(&mut self) {
@@ -464,5 +532,180 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         }
 
         crate::flipper::pe::refresh_interrupts(self);
+    }
+}
+
+impl GraphicsProcessor {
+    pub fn save_state(&self, w: &mut crate::savestate::StateWriter) {
+        w.bool(self.raise_interrupt);
+        w.bool(self.raise_token_interrupt);
+        w.u16(self.pending_token);
+        w.bool(self.token_dirty);
+        w.pod(&self.projection);
+        w.u32(self.bp_mask);
+
+        w.bytes(bytemuck::cast_slice(&self.bp_regs));
+        w.bytes(bytemuck::cast_slice(&self.cp_regs));
+        w.bytes(bytemuck::cast_slice(&self.xf_mem));
+        w.bytes(bytemuck::cast_slice(&self.palette_mem));
+        w.bytes(&self.fifo);
+
+        w.pod(&self.cur_textures);
+        w.pod(&self.cur_tluts);
+        w.pod(&self.cur_tev_color_env);
+        w.pod(&self.cur_tev_alpha_env);
+        w.pod(&self.cur_tev_color_regs_lo);
+        w.pod(&self.cur_tev_color_regs_hi);
+        w.pod(&self.cur_tev_const_regs_lo);
+        w.pod(&self.cur_tev_const_regs_hi);
+        w.pod(&self.cur_tev_orders);
+        w.u8(self.cur_num_tev_stages);
+        w.pod(&self.cur_tev_konst_colors);
+        w.pod(&self.cur_indirect_matrices);
+        w.pod(&self.cur_indirect_scales);
+        w.pod(&self.cur_indirect_refs);
+        w.pod(&self.cur_tev_indirect);
+        w.u8(self.cur_num_indirect_stages);
+        w.u32(self.cur_bump_imask);
+        w.pod(&self.cur_zmode);
+        w.pod(&self.cur_pe_control);
+        w.pod(&self.cur_blend_mode);
+        w.pod(&self.cur_alpha_compare);
+        w.pod(&self.cur_viewport);
+        w.pod(&self.cur_scissor);
+        w.i32(self.cur_scissor_offset_x);
+        w.i32(self.cur_scissor_offset_y);
+
+        w.u32(self.xfb_regions.len() as u32);
+        for (&base, region) in &self.xfb_regions {
+            w.u32(base);
+            w.u32(region.stride);
+            w.u64(region.first_seq);
+            w.u64(region.copy_seq);
+            w.u64(region.seen_present_seq);
+        }
+
+        w.bool(self.xfb_dirty);
+        w.u64(self.xfb_copy_seq);
+        w.u64(self.xfb_present_seq);
+        w.u32(self.xfb_last_present_base);
+        w.u32(self.xfb_last_seen_base);
+        w.u32(self.xfb_prev_base);
+        w.u32(self.xfb_fields_since_flip);
+        w.u32(self.xfb_flip_interval);
+        w.u32(self.xfb_fields_since_emit);
+        w.u64(self.xfb_last_emit_gen);
+
+        w.pod(&self.cached_color_ctrl);
+        w.pod(&self.cached_alpha_ctrl);
+        w.pod(&self.cached_ambient_color);
+        w.pod(&self.cached_material_color);
+        w.pod(&self.cached_lights);
+    }
+
+    pub fn load_state(
+        &mut self,
+        r: &mut crate::savestate::StateReader<'_>,
+    ) -> Result<(), crate::savestate::StateError> {
+        self.raise_interrupt = r.bool()?;
+        self.raise_token_interrupt = r.bool()?;
+        self.pending_token = r.u16()?;
+        self.token_dirty = r.bool()?;
+        self.projection = r.pod()?;
+        self.bp_mask = r.u32()?;
+
+        r.bytes_into(bytemuck::cast_slice_mut(&mut self.bp_regs))?;
+        r.bytes_into(bytemuck::cast_slice_mut(&mut self.cp_regs))?;
+        r.bytes_into(bytemuck::cast_slice_mut(&mut self.xf_mem))?;
+        r.bytes_into(bytemuck::cast_slice_mut(&mut self.palette_mem))?;
+
+        self.fifo.clear();
+        self.fifo.extend_from_slice(r.bytes()?);
+
+        self.cur_textures = r.pod()?;
+        self.cur_tluts = r.pod()?;
+        self.cur_tev_color_env = r.pod()?;
+        self.cur_tev_alpha_env = r.pod()?;
+        self.cur_tev_color_regs_lo = r.pod()?;
+        self.cur_tev_color_regs_hi = r.pod()?;
+        self.cur_tev_const_regs_lo = r.pod()?;
+        self.cur_tev_const_regs_hi = r.pod()?;
+        self.cur_tev_orders = r.pod()?;
+        self.cur_num_tev_stages = r.u8()?;
+        self.cur_tev_konst_colors = r.pod()?;
+        self.cur_indirect_matrices = r.pod()?;
+        self.cur_indirect_scales = r.pod()?;
+        self.cur_indirect_refs = r.pod()?;
+        self.cur_tev_indirect = r.pod()?;
+        self.cur_num_indirect_stages = r.u8()?;
+        self.cur_bump_imask = r.u32()?;
+        self.cur_zmode = r.pod()?;
+        self.cur_pe_control = r.pod()?;
+        self.cur_blend_mode = r.pod()?;
+        self.cur_alpha_compare = r.pod()?;
+        self.cur_viewport = r.pod()?;
+        self.cur_scissor = r.pod()?;
+        self.cur_scissor_offset_x = r.i32()?;
+        self.cur_scissor_offset_y = r.i32()?;
+
+        self.xfb_regions.clear();
+        let region_count = r.u32()?;
+        for _ in 0..region_count {
+            let base = r.u32()?;
+            let region = XfbRegion {
+                stride: r.u32()?,
+                first_seq: r.u64()?,
+                copy_seq: r.u64()?,
+                seen_present_seq: r.u64()?,
+            };
+            self.xfb_regions.insert(base, region);
+        }
+
+        self.xfb_dirty = r.bool()?;
+        self.xfb_copy_seq = r.u64()?;
+        self.xfb_present_seq = r.u64()?;
+        self.xfb_last_present_base = r.u32()?;
+        self.xfb_last_seen_base = r.u32()?;
+        self.xfb_prev_base = r.u32()?;
+        self.xfb_fields_since_flip = r.u32()?;
+        self.xfb_flip_interval = r.u32()?;
+        self.xfb_fields_since_emit = r.u32()?;
+        self.xfb_last_emit_gen = r.u64()?;
+
+        self.xfb_regions.clear();
+        self.xfb_dirty = false;
+        self.xfb_copy_seq = 0;
+        self.xfb_present_seq = 0;
+        self.xfb_last_present_base = 0;
+        self.xfb_last_seen_base = 0;
+        self.xfb_prev_base = 0;
+        self.xfb_fields_since_flip = 0;
+        self.xfb_flip_interval = 1;
+        self.xfb_fields_since_emit = 0;
+        self.xfb_last_emit_gen = 0;
+
+        self.cached_color_ctrl = r.pod()?;
+        self.cached_alpha_ctrl = r.pod()?;
+        self.cached_ambient_color = r.pod()?;
+        self.cached_material_color = r.pod()?;
+        self.cached_lights = r.pod()?;
+
+        self.dl_scratch.clear();
+        self.draw_batch_data.clear();
+        self.draw_batch_entries.clear();
+        self.draw_segments_scratch.clear();
+        self.texture_hashes.clear();
+        #[cfg(feature = "jit")]
+        {
+            self.jit_vtx_arrays_key = None;
+            self.jit_vtx_arrays_ok = false;
+        }
+
+        self.tex_dirty = 0xFF;
+        self.lighting_dirty = true;
+        self.konst_dirty = true;
+        self.frame_state_dirty = true;
+
+        Ok(())
     }
 }

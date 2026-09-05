@@ -1,5 +1,6 @@
 pub mod regs;
 
+#[derive(Clone, Copy)]
 pub struct MemoryInterface {
     pub interrupt_mask: regs::MiInterruptMask,
 }

@@ -24,6 +24,7 @@ impl Default for SerialChannel {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct SerialInterface {
     pub channels: [SerialChannel; NUM_CHANNELS],
     pub poll: regs::SiPoll,

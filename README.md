@@ -44,6 +44,7 @@ Gecko is developed with homebrew development and reverse engineering in mind, bu
 - FIFO recorder, player and [debugger](https://www.youtube.com/watch?v=8mTPH3iAjy4)
   - Compatible with Dolphin
 - GameCube memory cards
+- Savestates
 - Frame pacing
 - Modular audio backend, defaults to `cpal`
   - Supports mixing audio sinks
@@ -51,6 +52,7 @@ Gecko is developed with homebrew development and reverse engineering in mind, bu
 - MCP server
 - Lua scripting system for runtime introspection
 - A beautiful yet advanced egui-based debugging UI
+- Experimental freecam in the debugger
 - Symbol parsing from ELFs and IDA Pro databases
 - IDA Pro loaders for DOL and Apploader
 - RenderDoc captures with all sorts of debug markers
@@ -104,6 +106,8 @@ On Wii, the pointer source is picked automatically based on what the connected g
 
 Bindings, pointer source, sensitivity and axis inversion are configurable in `gecko` under `Settings > Controller Bindings`, persisted in the `[input]` section of `config.toml` (see [`other/example.conf`](other/example.conf) for every option). `tinyapp` uses the default bindings and points with the mouse. Pass `--pointer gyro|stick|touchpad|auto` to override.
 
+Keyboard and player-window hotkeys are configurable the same way under `Settings > Keyboard Bindings`, persisted in the `[keyboard]` section of `config.toml`. The keyboard and hotkey tables below are the defaults.
+
 > [!NOTE]
 > DualSense motion sensors and rumble on Linux require hidraw permissions. Install the `steam-devices` package (or an equivalent udev rule for `054c:0ce6`) and replug the controller. Without it the pad still works, but falls back to buttons and sticks only.
 
@@ -112,38 +116,38 @@ Bindings, pointer source, sensitivity and axis inversion are configurable in `ge
 
 #### GameCube
 
-| Gamepad     | Action          |
-| ----------- | --------------- |
-| Left stick  | Main stick      |
-| Right stick | C-stick         |
-| D-pad       | D-pad           |
-| `South`     | A               |
-| `West`      | B               |
-| `East`      | X               |
-| `North`     | Y               |
-| `Start`     | Start           |
-| `L2` `R2`   | L / R (analog)  |
-| `R1`        | Z               |
+| Gamepad     | Action         |
+| ----------- | -------------- |
+| Left stick  | Main stick     |
+| Right stick | C-stick        |
+| D-pad       | D-pad          |
+| `South`     | A              |
+| `West`      | B              |
+| `East`      | X              |
+| `North`     | Y              |
+| `Start`     | Start          |
+| `L2` `R2`   | L / R (analog) |
+| `R1`        | Z              |
 
 #### Wii
 
-| Gamepad      | Action                       |
-| ------------ | ---------------------------- |
-| Gyro         | IR pointer (if available)    |
-| Right stick  | IR pointer or D-pad          |
-| Left stick   | Nunchuk stick                |
-| D-pad        | D-pad                        |
-| `South`      | A                            |
-| `R2`         | B                            |
-| `West`       | 1                            |
-| `North`      | 2                            |
-| `Start`      | Plus                         |
-| `Select`     | Minus                        |
-| `Guide`      | Home                         |
-| `L1`         | Nunchuk C                    |
-| `L2`         | Nunchuk Z                    |
-| `R1`         | Shake (pads without sensors) |
-| `R3`         | Recenter pointer             |
+| Gamepad     | Action                       |
+| ----------- | ---------------------------- |
+| Gyro        | IR pointer (if available)    |
+| Right stick | IR pointer or D-pad          |
+| Left stick  | Nunchuk stick                |
+| D-pad       | D-pad                        |
+| `South`     | A                            |
+| `R2`        | B                            |
+| `West`      | 1                            |
+| `North`     | 2                            |
+| `Start`     | Plus                         |
+| `Select`    | Minus                        |
+| `Guide`     | Home                         |
+| `L1`        | Nunchuk C                    |
+| `L2`        | Nunchuk Z                    |
+| `R1`        | Shake (pads without sensors) |
+| `R3`        | Recenter pointer             |
 
 </details>
 
@@ -155,22 +159,28 @@ Bindings, pointer source, sensitivity and axis inversion are configurable in `ge
 | Key     | Action                                                             |
 | ------- | ------------------------------------------------------------------ |
 | `Space` | Start emulation from the splash screen (`--wait` flag)             |
+| `F5`    | Save state (overwrites the game's existing state)                  |
+| `F7`    | Load state                                                         |
 | `F10`   | Trigger a RenderDoc capture (requires `renderdoc-capture` feature) |
 | `F11`   | Screenshot the full window                                         |
 | `F12`   | Screenshot the emulated framebuffer only                           |
 
 `gecko` player window:
 
-| Key   | Action                                                                |
-| ----- | --------------------------------------------------------------------- |
-| `F10` | Toggle borderless fullscreen                                          |
-| `F11` | Toggle the FPS and emulation speed overlay                            |
-| `F12` | Screenshot the emulated framebuffer to `<gecko exe dir>/screenshots/` |
+| Key     | Action                                                                |
+| ------- | --------------------------------------------------------------------- |
+| `Space` | Pause / resume emulation                                              |
+| `Tab`   | Toggle the speed limit (run uncapped)                                 |
+| `F5`    | Save state (overwrites the game's existing state)                     |
+| `F7`    | Load state                                                            |
+| `F10`   | Toggle borderless fullscreen                                          |
+| `F11`   | Toggle the FPS and emulation speed overlay                            |
+| `F12`   | Screenshot the emulated framebuffer to `<gecko exe dir>/screenshots/` |
 
 </details>
 
 <details>
-<summary>Keyboard bindings (hardcoded)</summary>
+<summary>Keyboard bindings</summary>
 
 #### GameCube
 
@@ -213,6 +223,28 @@ Nunchuk:
 | `E`             | C            |
 
 </details>
+
+### Savestates
+
+`tinyapp`, `debugger` and the `gecko` player support saving and loading GameCube and Wii emulation state with `F5` and `F7`. The debugger also provides Save State and Load State menu actions. In `gecko`, these hotkeys are configurable under `Settings > Keyboard Bindings`; requests made while paused are processed after emulation resumes.
+
+Each game has one state slot at `<data dir>/cache/<game ID>/state.gkst`; saving again overwrites it. The data directory defaults to the executable's directory and can be overridden with `GECKO_DATA_DIR`. Sessions without a game ID use `cache/default/state.gkst`.
+
+`tinyapp` and `debugger` can also load a state immediately after boot with `--load-state <file>`.
+
+### Freecam (experimental)
+
+In `debugger`, open `Windows > GX`, expand `Freecam` and enable `Unlock camera`. Freecam controls are not exposed in `tinyapp` or the `gecko` player.
+
+| Input                            | Action                                 |
+| -------------------------------- | -------------------------------------- |
+| Hold right mouse button and move | Look around                            |
+| `W` `A` `S` `D`                  | Move forward, left, backward and right |
+| `Q` / `E`                        | Move down / up                         |
+| `Shift`                          | Move 5x faster                         |
+| Mouse wheel                      | Adjust movement speed                  |
+
+The panel also provides a speed slider and `Reset view` button. Game input is suspended while freecam is enabled; disable `Unlock camera` to return to normal controls.
 
 ## Required files
 

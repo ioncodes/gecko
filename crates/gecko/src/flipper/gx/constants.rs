@@ -13,6 +13,7 @@ pub const DRAW_COMMANDS_START: u8 = 0x80;
 pub const DRAW_COMMANDS_END: u8 = 0xBF; // TODO: Double check this
 
 pub const DRAW_QUADS_CMD: u8 = 0x80;
+pub const DRAW_QUADS2_CMD: u8 = 0x88;
 pub const DRAW_TRIANGLES_CMD: u8 = 0x90;
 pub const DRAW_TRIANGLE_STRIP_CMD: u8 = 0x98;
 pub const DRAW_TRIANGLE_FAN_CMD: u8 = 0xA0;

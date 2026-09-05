@@ -97,6 +97,16 @@ pub trait IosDevice: Send {
         false
     }
 
+    fn save_state(&mut self, _w: &mut crate::savestate::StateWriter) {}
+
+    fn load_state(&mut self, _r: &mut crate::savestate::StateReader<'_>) -> Result<(), crate::savestate::StateError> {
+        Ok(())
+    }
+
+    fn host_file_state(&mut self) -> Option<(u32, u64)> {
+        None
+    }
+
     fn set_wiimote_shake(&mut self, _active: bool) {}
 
     fn set_wiimote_accel(&mut self, _accel: Option<[f32; 3]>) {}
@@ -116,6 +126,7 @@ pub trait IosDevice: Send {
     fn tick_input_report(&mut self) {}
 }
 
+#[derive(Clone, Copy)]
 pub struct Ipc {
     pub ppcmsg: PpcMsg,
     pub ppcctrl: PpcCtrl,

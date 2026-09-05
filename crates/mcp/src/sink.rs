@@ -62,7 +62,7 @@ impl RenderSink for McpSink {
                     i.bound[*slot] = Some(*id);
                 }
             }
-            GxAction::PresentXfb { width, height, .. } => {
+            GxAction::PresentXfb { width, height, .. } | GxAction::PresentRawXfb { width, height, .. } => {
                 let mut i = self.introspect.lock().unwrap();
                 i.last_xfb_size = (*width, *height);
                 i.frame_index = i.frame_index.wrapping_add(1);

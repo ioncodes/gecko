@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::game::{CpuMode, ThemePreference};
+use crate::keybinds::KeyboardConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -24,6 +25,7 @@ pub struct Config {
     #[serde(default = "self::default_sram_enabled")]
     pub sram_enabled: bool,
     pub input: hostinput::InputConfig,
+    pub keyboard: KeyboardConfig,
 }
 
 fn default_skip_ipl() -> bool {
@@ -58,6 +60,7 @@ impl Default for Config {
             memcard_enabled: self::default_memcard_enabled(),
             sram_enabled: self::default_sram_enabled(),
             input: hostinput::InputConfig::default(),
+            keyboard: KeyboardConfig::default(),
         }
     }
 }
@@ -85,11 +88,7 @@ impl Config {
 }
 
 pub fn exe_relative(rel: impl AsRef<Path>) -> PathBuf {
-    let rel = rel.as_ref();
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|p| p.join(rel)))
-        .unwrap_or_else(|| rel.to_path_buf())
+    gecko::paths::resolve(rel)
 }
 
 pub fn config_path() -> PathBuf {

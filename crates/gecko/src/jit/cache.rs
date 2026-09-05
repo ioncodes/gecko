@@ -76,7 +76,7 @@ pub fn dol_cache_id(data: &[u8]) -> String {
 }
 
 pub fn cache_dir(game_id: &str) -> PathBuf {
-    PathBuf::from("cache").join(game_id)
+    crate::paths::cache(game_id)
 }
 
 pub fn ppc_cache_path(game_id: &str) -> PathBuf {

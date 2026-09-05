@@ -15,6 +15,7 @@ use iced::mouse::Button as MouseButton;
 
 use crate::config::{self, Config, DSP_COEF_FILE, DSP_ROM_FILE, IPL_FILE, MEMCARD_A_FILE, SRAM_FILE};
 use crate::game::{Format, Game, Platform};
+use crate::keybinds::{Hotkey, Keymap};
 use crate::player::{audio, emu_thread, input};
 
 struct BootParams {
@@ -41,9 +42,12 @@ pub struct PlayerState {
     shutdown: Arc<AtomicBool>,
     throttle: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    save_state: Arc<AtomicBool>,
+    load_state: Arc<AtomicBool>,
     aspect: TargetAspect,
     upscale: u32,
     input: Arc<Mutex<HostInput>>,
+    keymap: Keymap,
     platform: Platform,
     boot_error: Option<String>,
     first_frame: Arc<AtomicBool>,
@@ -97,9 +101,12 @@ impl PlayerState {
             shutdown: Arc::new(AtomicBool::new(false)),
             throttle: Arc::new(AtomicBool::new(true)),
             paused: Arc::new(AtomicBool::new(false)),
+            save_state: Arc::new(AtomicBool::new(false)),
+            load_state: Arc::new(AtomicBool::new(false)),
             aspect,
             upscale: config.upscale,
             input: Arc::new(Mutex::new(neutral)),
+            keymap: config.keyboard.resolve(),
             platform: game.platform,
             boot_error,
             first_frame: Arc::new(AtomicBool::new(false)),
@@ -149,7 +156,7 @@ impl PlayerState {
     pub fn handle_keyboard(&self, key: Code, pressed: bool) {
         let mut input_guard = self.input.lock().unwrap();
         match &mut *input_guard {
-            HostInput::Gc(pad) => input::update_pad(pad, key, pressed),
+            HostInput::Gc(pad) => input::update_pad(pad, &self.keymap.gc, key, pressed),
             HostInput::Wii {
                 wiimote_buttons,
                 wiimote_shake,
@@ -158,11 +165,22 @@ impl PlayerState {
                 nunchuk_stick_y,
                 ..
             } => {
-                input::update_wiimote_keys(wiimote_buttons, key, pressed);
-                input::update_wiimote_motion_keys(wiimote_shake, key, pressed);
-                input::update_nunchuk_keys(nunchuk_buttons, nunchuk_stick_x, nunchuk_stick_y, key, pressed);
+                input::update_wiimote_keys(wiimote_buttons, &self.keymap.wii, key, pressed);
+                input::update_wiimote_motion_keys(wiimote_shake, &self.keymap.wii, key, pressed);
+                input::update_nunchuk_keys(
+                    nunchuk_buttons,
+                    nunchuk_stick_x,
+                    nunchuk_stick_y,
+                    &self.keymap.wii,
+                    key,
+                    pressed,
+                );
             }
         }
+    }
+
+    pub fn hotkey(&self, key: Code) -> Option<Hotkey> {
+        self.keymap.hotkeys.lookup(key)
     }
 
     pub fn handle_mouse_button(&self, button: MouseButton, pressed: bool) {
@@ -217,6 +235,14 @@ impl PlayerState {
 
     pub fn toggle_pause(&self) {
         self.paused.fetch_xor(true, Ordering::Relaxed);
+    }
+
+    pub fn request_save_state(&self) {
+        self.save_state.store(true, Ordering::Relaxed);
+    }
+
+    pub fn request_load_state(&self) {
+        self.load_state.store(true, Ordering::Relaxed);
     }
 
     pub fn is_paused(&self) -> bool {
@@ -306,6 +332,8 @@ fn finish_boot<const S: gecko::system::SystemId>(
     let _ = emu.load_jit_cache(&game_id);
     self::set_initialized(&state, renderer, audio, &game_id);
 
+    let savestate_path = gecko::savestate::state_path(Some(&game_id));
+
     emu_thread::run::<S>(
         emu,
         state.input.clone(),
@@ -314,6 +342,9 @@ fn finish_boot<const S: gecko::system::SystemId>(
         state.throttle.clone(),
         state.paused.clone(),
         state.shutdown.clone(),
+        savestate_path,
+        state.save_state.clone(),
+        state.load_state.clone(),
     );
 }
 

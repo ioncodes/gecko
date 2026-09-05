@@ -15,6 +15,9 @@ struct Args {
     #[arg(long)]
     coef: Option<String>,
 
+    #[arg(long)]
+    load_state: Option<std::path::PathBuf>,
+
     #[arg(long, default_value_t = 60.0)]
     seconds: f64,
 
@@ -46,6 +49,10 @@ fn main() {
     if let Some(ref coef_path) = args.coef {
         let coef_data = std::fs::read(coef_path).expect("failed to read DSP coef");
         emulator.dsp.load_coef(&coef_data);
+    }
+
+    if let Some(path) = &args.load_state {
+        emulator.load_state_from_file(path).expect("failed to load savestate");
     }
 
     if !args.no_jit_cache {

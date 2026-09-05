@@ -1,5 +1,7 @@
-use crate::shader_specialization::{KEY_BYTES as SHADER_KEY_BYTES, ShaderKey};
-use crate::{GxRenderer, helpers};
+use crate::helpers;
+use crate::shader_specialization::{
+    KEY_BYTES as SHADER_KEY_BYTES, SPECIALIZATION_KEY_BYTES, ShaderKey, ShaderSpecializationKey,
+};
 use chapa::BitField;
 use gecko::flipper::gx::regs::{BlendFactor, CompareFunc, CullMode, LogicOp};
 
@@ -107,19 +109,39 @@ impl PipelineKey {
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub(crate) struct FullPipelineKey {
     pub shader: ShaderKey,
+    pub specialization: ShaderSpecializationKey,
     pub fixed: PipelineKey,
 }
 
-pub(crate) const FULL_PIPELINE_KEY_BYTES: usize = SHADER_KEY_BYTES + PipelineKey::BYTES;
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+pub(crate) struct UberPipelineKey {
+    pub shader: ShaderKey,
+    pub fixed: PipelineKey,
+}
+
+impl From<FullPipelineKey> for UberPipelineKey {
+    fn from(key: FullPipelineKey) -> Self {
+        Self {
+            shader: key.shader,
+            fixed: key.fixed,
+        }
+    }
+}
+
+pub(crate) const FULL_PIPELINE_KEY_BYTES: usize = SHADER_KEY_BYTES + SPECIALIZATION_KEY_BYTES + PipelineKey::BYTES;
 const PIPELINE_CACHE_MAGIC: [u8; 4] = *b"GPKC";
 const PIPELINE_CACHE_VERSION: u32 = crate::shader_specialization::CACHE_VERSION;
-pub(crate) const PIPELINE_CACHE_PATH: &str = "cache/pipeline_keys.bin";
+pub(crate) fn pipeline_cache_path() -> std::path::PathBuf {
+    gecko::paths::cache("pipeline_keys.bin")
+}
 
 impl FullPipelineKey {
     fn to_bytes(self) -> [u8; FULL_PIPELINE_KEY_BYTES] {
         let mut out = [0u8; FULL_PIPELINE_KEY_BYTES];
         out[..SHADER_KEY_BYTES].copy_from_slice(&self.shader.to_bytes());
-        out[SHADER_KEY_BYTES..].copy_from_slice(&self.fixed.to_bytes());
+        out[SHADER_KEY_BYTES..SHADER_KEY_BYTES + SPECIALIZATION_KEY_BYTES]
+            .copy_from_slice(&self.specialization.to_bytes());
+        out[SHADER_KEY_BYTES + SPECIALIZATION_KEY_BYTES..].copy_from_slice(&self.fixed.to_bytes());
         out
     }
 
@@ -127,11 +149,15 @@ impl FullPipelineKey {
         let mut shader_bytes = [0u8; SHADER_KEY_BYTES];
         shader_bytes.copy_from_slice(&b[..SHADER_KEY_BYTES]);
 
+        let mut specialization_bytes = [0u8; SPECIALIZATION_KEY_BYTES];
+        specialization_bytes.copy_from_slice(&b[SHADER_KEY_BYTES..SHADER_KEY_BYTES + SPECIALIZATION_KEY_BYTES]);
+
         let mut fixed_bytes = [0u8; PipelineKey::BYTES];
-        fixed_bytes.copy_from_slice(&b[SHADER_KEY_BYTES..]);
+        fixed_bytes.copy_from_slice(&b[SHADER_KEY_BYTES + SPECIALIZATION_KEY_BYTES..]);
 
         Self {
             shader: ShaderKey::from_bytes(&shader_bytes),
+            specialization: ShaderSpecializationKey::from_bytes(&specialization_bytes),
             fixed: PipelineKey::from_bytes(&fixed_bytes),
         }
     }
@@ -186,155 +212,298 @@ pub(crate) fn save_pipeline_keys(path: &Path, keys: &[FullPipelineKey]) -> std::
     Ok(())
 }
 
-impl GxRenderer {
-    pub(crate) fn create_pipeline(
-        &self,
-        device: &wgpu::Device,
-        shader: &wgpu::ShaderModule,
-        full_key: &FullPipelineKey,
-    ) -> wgpu::RenderPipeline {
-        let key = &full_key.fixed;
-        let active_texcoords = full_key.shader.active_texcoords.min(8) as usize;
+pub(crate) fn create_specialized_pipeline(
+    device: &wgpu::Device,
+    pipeline_layout: &wgpu::PipelineLayout,
+    surface_format: wgpu::TextureFormat,
+    shader: &wgpu::ShaderModule,
+    full_key: &FullPipelineKey,
+) -> wgpu::RenderPipeline {
+    let constants = full_key.specialization.pipeline_constants(full_key.shader);
+    create_pipeline(
+        device,
+        pipeline_layout,
+        surface_format,
+        shader,
+        full_key.shader,
+        &full_key.fixed,
+        &constants,
+        "gx_pipeline_specialized",
+    )
+}
 
-        const BASE_ATTRS: [wgpu::VertexAttribute; 5] = [
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x3,
-                offset: 0,
-                shader_location: 0,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 12,
-                shader_location: 1,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 28,
-                shader_location: 2,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x3,
-                offset: 44,
-                shader_location: 3,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x3,
-                offset: 56,
-                shader_location: 4,
-            },
-        ];
+pub(crate) fn create_uber_pipeline(
+    device: &wgpu::Device,
+    pipeline_layout: &wgpu::PipelineLayout,
+    surface_format: wgpu::TextureFormat,
+    shader: &wgpu::ShaderModule,
+    key: &UberPipelineKey,
+) -> wgpu::RenderPipeline {
+    create_pipeline(
+        device,
+        pipeline_layout,
+        surface_format,
+        shader,
+        key.shader,
+        &key.fixed,
+        &[("gx_ubershader", 1.0)],
+        "gx_pipeline_uber",
+    )
+}
 
-        let mut attrs: Vec<wgpu::VertexAttribute> = Vec::with_capacity(5 + active_texcoords);
-        attrs.extend_from_slice(&BASE_ATTRS);
+#[allow(clippy::too_many_arguments)]
+fn create_pipeline(
+    device: &wgpu::Device,
+    pipeline_layout: &wgpu::PipelineLayout,
+    surface_format: wgpu::TextureFormat,
+    shader: &wgpu::ShaderModule,
+    shader_key: ShaderKey,
+    key: &PipelineKey,
+    constants: &[(&str, f64)],
+    label: &str,
+) -> wgpu::RenderPipeline {
+    let active_texcoords = shader_key.active_texcoords.min(8) as usize;
 
-        for i in 0..active_texcoords {
-            attrs.push(wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x3,
-                offset: 68 + (i as u64) * 12,
-                shader_location: 5 + i as u32,
-            });
-        }
+    const BASE_ATTRS: [wgpu::VertexAttribute; 5] = [
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 0,
+            shader_location: 0,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x4,
+            offset: 12,
+            shader_location: 1,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x4,
+            offset: 28,
+            shader_location: 2,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 44,
+            shader_location: 3,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 56,
+            shader_location: 4,
+        },
+    ];
 
-        let vertex_layout = wgpu::VertexBufferLayout {
-            array_stride: 68 + (active_texcoords as u64) * 12,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &attrs,
+    let mut attrs: Vec<wgpu::VertexAttribute> = Vec::with_capacity(5 + active_texcoords);
+    attrs.extend_from_slice(&BASE_ATTRS);
+
+    for i in 0..active_texcoords {
+        attrs.push(wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 68 + (i as u64) * 12,
+            shader_location: 5 + i as u32,
+        });
+    }
+
+    let vertex_layout = wgpu::VertexBufferLayout {
+        array_stride: 68 + (active_texcoords as u64) * 12,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &attrs,
+    };
+
+    let blend = if key.blend_enable {
+        // In subtract mode the hardware ignores the configured src/dst
+        // factors and computes `dst = dst - src` with ONE/ONE.
+        let (src_factor, dst_factor, operation) = if key.subtract {
+            (
+                wgpu::BlendFactor::One,
+                wgpu::BlendFactor::One,
+                wgpu::BlendOperation::ReverseSubtract,
+            )
+        } else {
+            (
+                helpers::map_src_blend_factor(key.src_factor),
+                helpers::map_dst_blend_factor(key.dst_factor),
+                wgpu::BlendOperation::Add,
+            )
         };
-
-        let blend = if key.blend_enable {
-            // In subtract mode the hardware ignores the configured src/dst
-            // factors and computes `dst = dst - src` with ONE/ONE.
-            let (src_factor, dst_factor, operation) = if key.subtract {
-                (
-                    wgpu::BlendFactor::One,
-                    wgpu::BlendFactor::One,
-                    wgpu::BlendOperation::ReverseSubtract,
-                )
+        Some(make_blend_state(src_factor, dst_factor, operation))
+    } else if key.logic_op_enable {
+        let (be, sub, sf, df) = logic_op_approximation(key.logic_op);
+        be.then(|| {
+            let operation = if sub {
+                wgpu::BlendOperation::ReverseSubtract
             } else {
-                (
-                    helpers::map_src_blend_factor(key.src_factor),
-                    helpers::map_dst_blend_factor(key.dst_factor),
-                    wgpu::BlendOperation::Add,
-                )
+                wgpu::BlendOperation::Add
             };
-            Some(make_blend_state(src_factor, dst_factor, operation))
-        } else if key.logic_op_enable {
-            let (be, sub, sf, df) = logic_op_approximation(key.logic_op);
-            be.then(|| {
-                let operation = if sub {
-                    wgpu::BlendOperation::ReverseSubtract
-                } else {
-                    wgpu::BlendOperation::Add
-                };
-                make_blend_state(sf, df, operation)
-            })
-        } else {
-            None
-        };
+            make_blend_state(sf, df, operation)
+        })
+    } else {
+        None
+    };
 
-        let depth_stencil = if key.z_enable {
-            Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24Plus,
-                depth_write_enabled: Some(key.z_write),
-                depth_compare: Some(helpers::map_compare_func(key.z_func)),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            })
-        } else {
-            Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24Plus,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            })
-        };
+    let depth_stencil = if key.z_enable {
+        Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth24Plus,
+            depth_write_enabled: Some(key.z_write),
+            depth_compare: Some(helpers::map_compare_func(key.z_func)),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        })
+    } else {
+        Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth24Plus,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        })
+    };
 
-        let mut write_mask = wgpu::ColorWrites::empty();
-        if key.color_update {
-            write_mask |= wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN | wgpu::ColorWrites::BLUE;
-        }
-        if key.alpha_update {
-            write_mask |= wgpu::ColorWrites::ALPHA;
-        }
+    let mut write_mask = wgpu::ColorWrites::empty();
+    if key.color_update {
+        write_mask |= wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN | wgpu::ColorWrites::BLUE;
+    }
+    if key.alpha_update {
+        write_mask |= wgpu::ColorWrites::ALPHA;
+    }
 
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("gx_pipeline"),
-            layout: Some(&self.pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_main"),
-                buffers: &[vertex_layout],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: Some(if key.ztex { "fs_main_ztex" } else { "fs_main" }),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: self.surface_format,
-                    blend,
-                    write_mask,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Cw,
-                cull_mode: match key.cull_mode {
-                    CullMode::Back => Some(wgpu::Face::Back),
-                    CullMode::Front => Some(wgpu::Face::Front),
-                    CullMode::None | CullMode::All => None,
-                },
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            buffers: &[vertex_layout],
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants,
                 ..Default::default()
             },
-            depth_stencil,
-            multisample: wgpu::MultisampleState {
-                count: crate::EFB_SAMPLE_COUNT,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some(if key.ztex { "fs_main_ztex" } else { "fs_main" }),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend,
+                write_mask,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants,
+                ..Default::default()
             },
-            multiview_mask: None,
-            cache: None,
-        })
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Cw,
+            cull_mode: match key.cull_mode {
+                CullMode::Back => Some(wgpu::Face::Back),
+                CullMode::Front => Some(wgpu::Face::Front),
+                CullMode::None | CullMode::All => None,
+            },
+            ..Default::default()
+        },
+        depth_stencil,
+        multisample: wgpu::MultisampleState {
+            count: crate::EFB_SAMPLE_COUNT,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct PipelineCompiler {
+    request_tx: crossbeam_channel::Sender<PipelineCompileRequest>,
+    result_rx: crossbeam_channel::Receiver<PipelineCompileResult>,
+    shutdown_tx: crossbeam_channel::Sender<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct PipelineCompileRequest {
+    generation: u64,
+    key: FullPipelineKey,
+    shader: wgpu::ShaderModule,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct PipelineCompileResult {
+    pub generation: u64,
+    pub key: FullPipelineKey,
+    pub pipeline: wgpu::RenderPipeline,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl PipelineCompiler {
+    const QUEUE_LIMIT: usize = 64;
+
+    pub(crate) fn new(
+        device: wgpu::Device,
+        pipeline_layout: wgpu::PipelineLayout,
+        surface_format: wgpu::TextureFormat,
+    ) -> Self {
+        let (request_tx, request_rx) = crossbeam_channel::bounded::<PipelineCompileRequest>(Self::QUEUE_LIMIT);
+        let (result_tx, result_rx) = crossbeam_channel::unbounded::<PipelineCompileResult>();
+        let (shutdown_tx, shutdown_rx) = crossbeam_channel::bounded::<()>(1);
+        let thread = std::thread::Builder::new()
+            .name("gx pipeline compiler".into())
+            .spawn(move || {
+                loop {
+                    crossbeam_channel::select_biased! {
+                        recv(shutdown_rx) -> _ => break,
+                        recv(request_rx) -> request => {
+                            let Ok(request) = request else { break };
+                            let pipeline = create_specialized_pipeline(
+                                &device,
+                                &pipeline_layout,
+                                surface_format,
+                                &request.shader,
+                                &request.key,
+                            );
+                            let result = PipelineCompileResult {
+                                generation: request.generation,
+                                key: request.key,
+                                pipeline,
+                            };
+                            if result_tx.send(result).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            })
+            .expect("failed to start GX pipeline compiler");
+
+        Self {
+            request_tx,
+            result_rx,
+            shutdown_tx,
+            thread: Some(thread),
+        }
+    }
+
+    pub(crate) fn request(&self, generation: u64, key: FullPipelineKey, shader: wgpu::ShaderModule) -> bool {
+        self.request_tx
+            .try_send(PipelineCompileRequest {
+                generation,
+                key,
+                shader,
+            })
+            .is_ok()
+    }
+
+    pub(crate) fn try_recv(&self) -> Option<PipelineCompileResult> {
+        self.result_rx.try_recv().ok()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for PipelineCompiler {
+    fn drop(&mut self) {
+        let _ = self.shutdown_tx.try_send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }

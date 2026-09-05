@@ -533,6 +533,7 @@ dependencies = [
  "egui",
  "egui-phosphor",
  "gecko",
+ "glam",
  "image",
 ]
 

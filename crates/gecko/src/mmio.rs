@@ -17,6 +17,11 @@ pub const CODE_LINE_BYTES: u32 = 32;
 pub const CODE_LINE_SHIFT: u32 = 5;
 pub const CODE_LINE_MASK: u32 = !(CODE_LINE_BYTES - 1);
 
+pub const MEMORY_DIRTY_PAGE_SHIFT: u32 = 12;
+pub const MEMORY_DIRTY_PAGE_BYTES: usize = 1 << MEMORY_DIRTY_PAGE_SHIFT;
+const MEM1_DIRTY_PAGES: usize = RAM_SIZE.div_ceil(MEMORY_DIRTY_PAGE_BYTES);
+const MEM2_DIRTY_PAGES: usize = MEM2_SIZE.div_ceil(MEMORY_DIRTY_PAGE_BYTES);
+
 pub const PHYS_MASK: u32 = 0x3FFF_FFFF;
 
 pub const MEM1_LINES: usize = RAM_SIZE >> CODE_LINE_SHIFT as usize;
@@ -34,6 +39,9 @@ pub struct Mmio<const SYSTEM: SystemId> {
     pub fastmem_lut_ptr: usize,
     pub code_refcount: Box<[u8]>,
     pub code_refcount_ptr: usize,
+    memory_write_generation: u64,
+    memory_page_generations: Box<[u64]>,
+    efb_writeback_pages: FxHashSet<u32>,
     #[cfg(feature = "jit")]
     pub pending_icbi: FxHashSet<u32>,
     #[cfg(feature = "jit")]
@@ -46,6 +54,7 @@ pub struct Mmio<const SYSTEM: SystemId> {
 pub struct RamView<'a> {
     pub mem1: &'a [u8],
     pub mem2: &'a [u8],
+    pub memory_page_generations: &'a [u64],
 }
 
 impl<'a> RamView<'a> {
@@ -65,12 +74,33 @@ impl<'a> RamView<'a> {
             None
         }
     }
+
+    #[inline]
+    pub fn range_generation(&self, addr: usize, len: usize) -> Option<u64> {
+        if len == 0 {
+            return Some(0);
+        }
+
+        let end = addr.checked_add(len - 1)?;
+        let (first, last) = if end < self.mem1.len() {
+            (addr >> MEMORY_DIRTY_PAGE_SHIFT, end >> MEMORY_DIRTY_PAGE_SHIFT)
+        } else if addr >= MEM2_BASE as usize && end < (MEM2_BASE as usize).checked_add(self.mem2.len())? {
+            let first = MEM1_DIRTY_PAGES + ((addr - MEM2_BASE as usize) >> MEMORY_DIRTY_PAGE_SHIFT);
+            let last = MEM1_DIRTY_PAGES + ((end - MEM2_BASE as usize) >> MEMORY_DIRTY_PAGE_SHIFT);
+            (first, last)
+        } else {
+            return None;
+        };
+
+        self.memory_page_generations.get(first..=last)?.iter().copied().max()
+    }
 }
 
 /// Mutable counterpart of `RamView`. Used by EFB writeback into RAM.
 pub struct RamViewMut<'a> {
     pub mem1: &'a mut [u8],
     pub mem2: &'a mut [u8],
+    pub memory_page_generations: &'a [u64],
 }
 
 impl<'a> RamViewMut<'a> {
@@ -79,6 +109,7 @@ impl<'a> RamViewMut<'a> {
         RamView {
             mem1: self.mem1,
             mem2: self.mem2,
+            memory_page_generations: self.memory_page_generations,
         }
     }
 
@@ -145,6 +176,11 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
         };
         let code_refcount: Box<[u8]> = vec![0u8; refcount_len].into_boxed_slice();
         let code_refcount_ptr = code_refcount.as_ptr() as usize;
+        let dirty_page_count = if SYSTEM == WII {
+            MEM1_DIRTY_PAGES + MEM2_DIRTY_PAGES
+        } else {
+            MEM1_DIRTY_PAGES
+        };
 
         Mmio {
             ram,
@@ -158,10 +194,99 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
             fastmem_lut_ptr,
             code_refcount,
             code_refcount_ptr,
+            memory_write_generation: 0,
+            memory_page_generations: vec![0; dirty_page_count].into_boxed_slice(),
+            efb_writeback_pages: FxHashSet::default(),
             #[cfg(feature = "jit")]
             pending_icbi: FxHashSet::default(),
             #[cfg(feature = "jit")]
             jit_dirty: 0,
+        }
+    }
+
+    pub fn defer_efb_writeback(&mut self, addr: u32, len: usize) {
+        if len == 0 {
+            return;
+        }
+
+        let Ok(len) = u32::try_from(len) else {
+            return;
+        };
+
+        let Some(end) = addr.checked_add(len) else {
+            return;
+        };
+
+        let first_page = addr >> FASTMEM_PAGE_SHIFT;
+        let last_page = (end - 1) >> FASTMEM_PAGE_SHIFT;
+
+        for page in first_page..=last_page {
+            if !self.efb_writeback_pages.insert(page) {
+                continue;
+            }
+
+            let phys_base = page << FASTMEM_PAGE_SHIFT;
+            let is_fastmem = phys_base <= RAM_END || (SYSTEM == WII && (MEM2_BASE..=MEM2_END).contains(&phys_base));
+            let aliases: &[u32] = if is_fastmem {
+                &[0x0000_0000, 0x8000_0000, 0xC000_0000]
+            } else {
+                &[]
+            };
+
+            for &alias in aliases {
+                self.fastmem_lut[((phys_base | alias) >> FASTMEM_PAGE_SHIFT) as usize] = 0;
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub fn efb_writeback_needed(&self, phys: u32, len: usize) -> bool {
+        if self.efb_writeback_pages.is_empty() {
+            return false;
+        }
+
+        let end = phys.saturating_add(len.saturating_sub(1) as u32);
+        let first_page = phys >> FASTMEM_PAGE_SHIFT;
+        let last_page = end >> FASTMEM_PAGE_SHIFT;
+
+        (first_page..=last_page).any(|page| self.efb_writeback_pages.contains(&page))
+    }
+
+    pub fn clear_deferred_efb_writebacks(&mut self) {
+        if !self.efb_writeback_pages.is_empty() {
+            self.memory_write_generation = self.memory_write_generation.wrapping_add(1).max(1);
+        }
+
+        let write_generation = self.memory_write_generation;
+
+        for page in self.efb_writeback_pages.drain() {
+            let phys_base = page << FASTMEM_PAGE_SHIFT;
+            let phys_end = phys_base + FASTMEM_PAGE_BYTES as u32 - 1;
+
+            if let (Some(first), Some(last)) = (
+                Self::memory_dirty_page_index(phys_base),
+                Self::memory_dirty_page_index(phys_end),
+            ) {
+                self.memory_page_generations[first..=last].fill(write_generation);
+            }
+
+            let (host_addr, aliases): (usize, &[u32]) = if phys_base <= RAM_END {
+                (
+                    self.ram_ptr + phys_base as usize,
+                    &[0x0000_0000, 0x8000_0000, 0xC000_0000],
+                )
+            } else if SYSTEM == WII && (MEM2_BASE..=MEM2_END).contains(&phys_base) {
+                (
+                    self.mem2.as_ptr() as usize + (phys_base - MEM2_BASE) as usize,
+                    &[0x0000_0000, 0x8000_0000, 0xC000_0000],
+                )
+            } else {
+                continue;
+            };
+
+            for &alias in aliases {
+                self.fastmem_lut[((phys_base | alias) >> FASTMEM_PAGE_SHIFT) as usize] = host_addr;
+            }
         }
     }
 
@@ -376,9 +501,41 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
         self.code_refcount.fill(0);
     }
 
+    #[inline]
+    fn memory_dirty_page_index(phys: u32) -> Option<usize> {
+        match phys {
+            RAM_BASE..=RAM_END => Some((phys as usize) >> MEMORY_DIRTY_PAGE_SHIFT),
+            MEM2_BASE..=MEM2_END if SYSTEM == WII => {
+                Some(MEM1_DIRTY_PAGES + (((phys - MEM2_BASE) as usize) >> MEMORY_DIRTY_PAGE_SHIFT))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn mark_memory_dirty_range(&mut self, phys: u32, len: u32) {
+        if len == 0 {
+            return;
+        }
+
+        let Some(last_phys) = phys.checked_add(len - 1) else {
+            return;
+        };
+
+        let (Some(first), Some(last)) = (
+            Self::memory_dirty_page_index(phys),
+            Self::memory_dirty_page_index(last_phys),
+        ) else {
+            return;
+        };
+
+        self.memory_write_generation = self.memory_write_generation.wrapping_add(1).max(1);
+        self.memory_page_generations[first..=last].fill(self.memory_write_generation);
+    }
+
     #[cfg(feature = "jit")]
     #[inline(always)]
     pub fn queue_icbi_for_range(&mut self, phys: u32, len: u32) {
+        self.mark_memory_dirty_range(phys, len);
         Self::for_each_code_line(phys, len, |line| {
             if self.is_code_chunk(line) {
                 self.pending_icbi.insert(line);
@@ -394,6 +551,7 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
         RamView {
             mem1: &self.ram,
             mem2: &self.mem2,
+            memory_page_generations: &self.memory_page_generations,
         }
     }
 
@@ -403,6 +561,7 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
         RamViewMut {
             mem1: &mut self.ram,
             mem2: &mut self.mem2,
+            memory_page_generations: &self.memory_page_generations,
         }
     }
 
@@ -610,4 +769,38 @@ unsafe fn write_be_u32_unchecked(ptr: *mut u8, value: u32) {
 #[inline(always)]
 unsafe fn write_be_u64_unchecked(ptr: *mut u8, value: u64) {
     unsafe { std::ptr::write_unaligned(ptr.cast::<u64>(), value.to_be()) };
+}
+
+impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
+    pub fn save_state(&self, w: &mut crate::savestate::StateWriter) {
+        w.bytes(&self.ram);
+        w.bytes(&self.mem2);
+        w.bytes(&self.efb);
+        w.bytes(&self.hwr);
+        w.bytes(&self.lcache);
+        w.bytes(&self.ipl);
+    }
+
+    pub fn load_state(
+        &mut self,
+        r: &mut crate::savestate::StateReader<'_>,
+    ) -> Result<(), crate::savestate::StateError> {
+        r.bytes_into(&mut self.ram)?;
+        r.bytes_into(&mut self.mem2)?;
+        r.bytes_into(&mut self.efb)?;
+        r.bytes_into(&mut self.hwr)?;
+        r.bytes_into(&mut self.lcache)?;
+        r.bytes_into(&mut self.ipl)?;
+
+        self.memory_write_generation = 0;
+        self.memory_page_generations.fill(0);
+
+        #[cfg(feature = "jit")]
+        {
+            self.pending_icbi.clear();
+            self.jit_dirty = 0;
+        }
+
+        Ok(())
+    }
 }

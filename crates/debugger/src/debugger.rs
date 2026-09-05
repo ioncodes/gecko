@@ -37,6 +37,11 @@ pub struct DebuggerUi {
     pub fifo_path_input: String,
     pub fifo_last_result: String,
     pub fifo_action: Option<dbglib::windows::fifo::FifoRecorderAction>,
+    pub freecam: dbglib::windows::gx::Freecam,
+    pub savestate_path: std::path::PathBuf,
+    pub save_state_requested: bool,
+    pub load_state_requested: bool,
+    pub savestate_last_result: String,
 }
 
 impl Default for DebuggerUi {
@@ -70,6 +75,11 @@ impl Default for DebuggerUi {
             fifo_path_input: "fifo_dump.dff".to_string(),
             fifo_last_result: String::new(),
             fifo_action: None,
+            freecam: Default::default(),
+            savestate_path: gecko::savestate::state_path(None),
+            save_state_requested: false,
+            load_state_requested: false,
+            savestate_last_result: String::new(),
         }
     }
 }

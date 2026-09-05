@@ -1525,6 +1525,7 @@ dependencies = [
  "egui",
  "egui-phosphor",
  "gecko",
+ "glam 0.33.2",
  "image 0.1.0",
 ]
 
@@ -2309,6 +2310,7 @@ dependencies = [
  "twox-hash",
  "windows-sys 0.61.2",
  "zerocopy",
+ "zstd",
 ]
 
 [[package]]
@@ -2455,6 +2457,12 @@ checksum = "f70749695b063ecbf6b62949ccccde2e733ec3ecbbd71d467dca4e5c6c97cca0"
 dependencies = [
  "bytemuck",
 ]
+
+[[package]]
+name = "glam"
+version = "0.33.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f22fb22f065b308be0d8724e3706c7fa3fc2a6c7d6899df4cad7860e7a75436"
 
 [[package]]
 name = "glob"

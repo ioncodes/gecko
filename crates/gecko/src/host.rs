@@ -34,6 +34,14 @@ pub enum GxAction {
     },
     SetViewport(Viewport),
 
+    /// Debug action: extra free-look view transform composed with the
+    /// projection on perspective draws (freecam). Disabled restores normal
+    /// rendering.
+    SetFreelook {
+        matrix: [[f32; 4]; 4],
+        enabled: bool,
+    },
+
     // BP
     SetScissor(Scissor),
     SetDepthMode(ZMode),
@@ -106,6 +114,14 @@ pub enum GxAction {
         parts: Vec<XfbPart>,
     },
 
+    /// Present a CPU-drawn external framebuffer read straight from guest RAM
+    /// (no GX EFB copy happened, e.g. consoletest).
+    PresentRawXfb {
+        width: u32,
+        height: u32,
+        pixels: Vec<u32>,
+    },
+
     /// Copy an EFB region back into system RAM, encoded in a GX texture
     /// format. The renderer does a GPU readback, converts the pixels to
     /// `copy_format`, and ships the encoded bytes back over the writeback
@@ -148,19 +164,24 @@ pub struct XfbPart {
     pub offset_y: u32,
 }
 
-/// Per-draw data: primitive type, vertex range, modelview transform,
-/// and TEV/lighting configuration (snapshotted at draw time since TEV is
-/// built up incrementally via BP writes). Vertices live in the renderer's
-/// scratch buffer (see [`RenderSink::vertex_scratch`]); `base_vertex` is
-/// the index into that buffer where this draw's vertices start and
-/// `vertex_count` is how many of them belong to this draw.
-#[derive(Debug, Default)]
-pub struct DrawData {
+#[derive(Debug, Clone, Copy)]
+pub struct DrawSegment {
     pub primitive: Primitive,
     pub base_vertex: u32,
     pub vertex_count: u32,
+}
+
+#[derive(Debug, Default)]
+pub struct DrawData {
+    pub segments: Vec<DrawSegment>,
+    /// Present only when GX frame state changed since the preceding draw.
+    /// Renderers retain the last snapshot across draw-buffer flushes.
+    pub state: Option<DrawState>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DrawState {
     pub active_texcoords: u8,
-    pub modelview: [[f32; 4]; 4],
     // TEV combiner state
     pub tev_color_env: [u32; 16],
     pub tev_alpha_env: [u32; 16],
@@ -191,7 +212,6 @@ pub struct DrawData {
     pub ztex_bias: u32,
     pub ztex_type: u8,
     pub ztex_op: u8,
-    pub frame_dirty: bool,
 }
 
 /// Per-vertex data after decode, ready for the renderer. Field order
@@ -219,17 +239,72 @@ pub struct LightData {
     pub direction: [f32; 4],
 }
 
+/// Cumulative renderer-side profiling counters. Backends that do not expose
+/// profiling data return the all-zero default through [`RenderSink`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RenderStats {
+    pub actions_sent: u64,
+    pub batches_sent: u64,
+    pub channel_len: usize,
+    pub channel_cap: usize,
+    pub channel_high_water: usize,
+    pub queue_wait_ns: u64,
+    pub efb_drain_wait_ns: u64,
+    pub efb_drain_requests: u64,
+    pub efb_drain_nonempty: u64,
+    pub efb_writebacks: u64,
+    pub efb_writeback_cpu_ns: u64,
+    pub worker_batch_cpu_ns: u64,
+    pub draws_encoded: u64,
+    pub draw_render_passes: u64,
+    pub pipeline_changes: u64,
+    pub pipelines_created: u64,
+    pub pipeline_create_cpu_ns: u64,
+    pub shader_modules_created: u64,
+    pub shader_create_cpu_ns: u64,
+    pub bind_group_sets: u64,
+    pub bind_groups_created: u64,
+    pub bind_group_key_changes: u64,
+    pub frame_uniform_changes: u64,
+    pub draw_uniform_changes: u64,
+    pub vertex_stride_changes: u64,
+    pub potential_merged_draws: u64,
+    pub viewport_changes: u64,
+    pub scissor_changes: u64,
+    pub draw_pass_encode_ns: u64,
+    pub queue_submits: u64,
+    pub command_buffers_submitted: u64,
+    pub queue_submit_cpu_ns: u64,
+}
+
 /// One-way sink for GX actions. The emulator pushes actions here.
 pub trait RenderSink: Send {
     /// Submit a single action.
     fn exec(&mut self, action: GxAction);
 
-    /// Mutable handle to the sink's vertex scratch buffer. Callers append
-    /// per-draw vertices here before issuing [`GxAction::Draw`] and store the
-    /// pre-append length as [`DrawData::base_vertex`]. Real renderers
-    /// (e.g. wgpu) keep this buffer alive across draws and upload it in one
-    /// shot at flush time; headless sinks can use a throwaway local.
+    fn peek_efb_depth(&mut self, _x: u32, _y: u32) -> u32 {
+        0x00FF_FFFF
+    }
+
+    fn exec_draw(&mut self, segment: DrawSegment, state: Option<DrawState>) {
+        let mut draw = self.take_draw_data();
+        draw.segments.clear();
+        draw.segments.push(segment);
+        draw.state = state;
+        self.exec(GxAction::Draw(draw));
+    }
+
+    fn exec_draw_batch(&mut self, segments: &[DrawSegment], mut state: Option<DrawState>) {
+        for &segment in segments {
+            self.exec_draw(segment, state.take());
+        }
+    }
+
     fn vertex_scratch(&mut self) -> &mut Vec<DrawVertex>;
+
+    fn has_pending_efb_texture(&self, _addr: u32, _width: u32, _height: u32, _fmt: TextureFormat) -> bool {
+        false
+    }
 
     fn flush_efb_copies(&mut self, ram: &mut crate::mmio::RamViewMut<'_>) {
         let _ = ram;
@@ -245,6 +320,11 @@ pub trait RenderSink: Send {
     /// don't need to be reset.
     fn take_draw_data(&mut self) -> Box<DrawData> {
         Box::default()
+    }
+
+    /// Return a cheap, non-blocking snapshot of cumulative renderer metrics.
+    fn render_stats(&self) -> RenderStats {
+        RenderStats::default()
     }
 }
 

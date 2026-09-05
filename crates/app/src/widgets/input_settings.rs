@@ -6,6 +6,7 @@ use iced::widget::{button, column, container, pick_list, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
 
 use crate::app::Message;
+use crate::keybinds::{self, KeyTarget, KeyboardConfig, Keymap};
 use crate::theme::Palette;
 use crate::widgets::overlay;
 
@@ -13,6 +14,13 @@ use crate::widgets::overlay;
 pub enum InputTab {
     Gc,
     Wii,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyboardTab {
+    Gc,
+    Wii,
+    Hotkeys,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -384,6 +392,82 @@ pub fn overlay(
     overlay::modal(palette, 360.0, 20.0, Message::InputClose, card_col.into())
 }
 
+pub fn keyboard_overlay(
+    palette: &Palette,
+    keyboard: &KeyboardConfig,
+    tab: KeyboardTab,
+    capture: Option<KeyTarget>,
+) -> Element<'static, Message> {
+    let status = text("Click a binding, then press a key")
+        .size(11)
+        .color(palette.text_mute);
+
+    let header = column![text("Keyboard Bindings").size(16).color(palette.text), status,].spacing(2);
+
+    let tabs = row![
+        self::chip(
+            palette,
+            "GameCube",
+            Message::KeyboardTab(KeyboardTab::Gc),
+            tab == KeyboardTab::Gc
+        ),
+        self::chip(
+            palette,
+            "Wii",
+            Message::KeyboardTab(KeyboardTab::Wii),
+            tab == KeyboardTab::Wii
+        ),
+        self::chip(
+            palette,
+            "Hotkeys",
+            Message::KeyboardTab(KeyboardTab::Hotkeys),
+            tab == KeyboardTab::Hotkeys
+        ),
+    ]
+    .spacing(6);
+
+    let keymap = keyboard.resolve();
+
+    let targets: &[(KeyTarget, &str)] = match tab {
+        KeyboardTab::Gc => keybinds::GC_KEY_TARGETS,
+        KeyboardTab::Wii => keybinds::WII_KEY_TARGETS,
+        KeyboardTab::Hotkeys => keybinds::HOTKEY_TARGETS,
+    };
+
+    let mut body = column![].spacing(4);
+    for (target, label) in targets {
+        body = body.push(self::key_binding_row(palette, label, *target, &keymap, capture));
+    }
+
+    let footer = row![
+        self::chip(palette, "Reset to Defaults", Message::KeyboardReset, false),
+        container(text("")).width(Length::Fill),
+        self::chip(palette, "Close", Message::KeyboardClose, false),
+    ]
+    .align_y(Alignment::Center);
+
+    let card_col = column![header, tabs, body, footer].spacing(14);
+
+    overlay::modal(palette, 360.0, 20.0, Message::KeyboardClose, card_col.into())
+}
+
+fn key_binding_row(
+    palette: &Palette,
+    label: &'static str,
+    target: KeyTarget,
+    keymap: &Keymap,
+    capture: Option<KeyTarget>,
+) -> Element<'static, Message> {
+    let capturing = capture == Some(target);
+    let value = if capturing {
+        "press a key".to_owned()
+    } else {
+        keybinds::key_label(keymap.code(target))
+    };
+
+    self::bind_row(palette, label, value, Message::KeyboardCapture(target), capturing)
+}
+
 fn control_style(
     surface: Color,
     surface_2: Color,
@@ -416,6 +500,16 @@ fn binding_row(
     target: BindTarget,
     capturing: bool,
 ) -> Element<'static, Message> {
+    self::bind_row(palette, label, value, Message::InputCapture(target), capturing)
+}
+
+fn bind_row(
+    palette: &Palette,
+    label: &str,
+    value: String,
+    on_press: Message,
+    capturing: bool,
+) -> Element<'static, Message> {
     let value_color = if capturing { palette.accent } else { palette.text_dim };
     let border = if capturing { palette.accent } else { palette.border_2 };
 
@@ -426,7 +520,7 @@ fn binding_row(
     )
     .width(Length::Fixed(180.0))
     .padding(Padding::from([4, 10]))
-    .on_press(Message::InputCapture(target))
+    .on_press(on_press)
     .style(self::control_style(
         palette.surface,
         palette.surface_2,
@@ -435,7 +529,7 @@ fn binding_row(
     ));
 
     row![
-        container(text(label).size(13).color(palette.text)).width(Length::Fixed(130.0)),
+        container(text(label.to_owned()).size(13).color(palette.text)).width(Length::Fixed(130.0)),
         bind,
     ]
     .spacing(6)

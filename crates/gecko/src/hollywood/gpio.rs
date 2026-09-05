@@ -3,6 +3,7 @@ use crate::hollywood::regs::{
     GpioIntFlag, GpioIntLvl, GpioIntMask, GpioOut, GpioOwner, GpioStraps,
 };
 
+#[derive(Clone, Copy)]
 pub struct Gpio {
     pub ppc_out: GpioBOut,
     pub ppc_dir: GpioBDir,

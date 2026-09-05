@@ -12,6 +12,7 @@ const IOCTL_GET_FILE_STATS: u32 = 0xB;
 pub struct HostBackedFile {
     path: PathBuf,
     file: File,
+    mode: u32,
 }
 
 impl HostBackedFile {
@@ -35,7 +36,11 @@ impl HostBackedFile {
         };
 
         match opts.open(&host_path) {
-            Ok(file) => Some(Self { path: host_path, file }),
+            Ok(file) => Some(Self {
+                path: host_path,
+                file,
+                mode,
+            }),
             Err(err) => {
                 tracing::warn!(
                     path = format!("{}", host_path.display()),
@@ -45,6 +50,16 @@ impl HostBackedFile {
                 None
             }
         }
+    }
+
+    pub fn reopen(host_root: &Path, nand_path: &str, mode: u32, offset: u64) -> Option<Self> {
+        let mut this = Self::try_open(host_root, nand_path, mode)?;
+
+        if let Err(err) = this.file.seek(SeekFrom::Start(offset)) {
+            tracing::warn!(path = format!("{}", this.path.display()), %err, "HostBackedFile: reopen seek failed");
+        }
+
+        Some(this)
     }
 }
 
@@ -120,6 +135,11 @@ impl IosDevice for HostBackedFile {
                 IPC_EINVAL
             }
         }
+    }
+
+    fn host_file_state(&mut self) -> Option<(u32, u64)> {
+        let offset = self.file.stream_position().unwrap_or(0);
+        Some((self.mode, offset))
     }
 }
 

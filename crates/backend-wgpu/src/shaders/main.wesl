@@ -5,18 +5,129 @@ import super::tev_combiners::{tev_combine_color, tev_combine_alpha};
 import super::alpha_test::{alpha_compare, alpha_combine};
 import super::lighting::{compute_lighting_c0, compute_lighting_c1};
 
+override gx_ubershader: bool = false;
+override gx_tev_color_env_0: u32 = 0u;
+override gx_tev_color_env_1: u32 = 0u;
+override gx_tev_color_env_2: u32 = 0u;
+override gx_tev_color_env_3: u32 = 0u;
+override gx_tev_color_env_4: u32 = 0u;
+override gx_tev_color_env_5: u32 = 0u;
+override gx_tev_color_env_6: u32 = 0u;
+override gx_tev_color_env_7: u32 = 0u;
+override gx_tev_color_env_8: u32 = 0u;
+override gx_tev_color_env_9: u32 = 0u;
+override gx_tev_color_env_10: u32 = 0u;
+override gx_tev_color_env_11: u32 = 0u;
+override gx_tev_color_env_12: u32 = 0u;
+override gx_tev_color_env_13: u32 = 0u;
+override gx_tev_color_env_14: u32 = 0u;
+override gx_tev_color_env_15: u32 = 0u;
+
+override gx_tev_alpha_env_0: u32 = 0u;
+override gx_tev_alpha_env_1: u32 = 0u;
+override gx_tev_alpha_env_2: u32 = 0u;
+override gx_tev_alpha_env_3: u32 = 0u;
+override gx_tev_alpha_env_4: u32 = 0u;
+override gx_tev_alpha_env_5: u32 = 0u;
+override gx_tev_alpha_env_6: u32 = 0u;
+override gx_tev_alpha_env_7: u32 = 0u;
+override gx_tev_alpha_env_8: u32 = 0u;
+override gx_tev_alpha_env_9: u32 = 0u;
+override gx_tev_alpha_env_10: u32 = 0u;
+override gx_tev_alpha_env_11: u32 = 0u;
+override gx_tev_alpha_env_12: u32 = 0u;
+override gx_tev_alpha_env_13: u32 = 0u;
+override gx_tev_alpha_env_14: u32 = 0u;
+override gx_tev_alpha_env_15: u32 = 0u;
+
+override gx_tev_order_0: u32 = 0u;
+override gx_tev_order_1: u32 = 0u;
+override gx_tev_order_2: u32 = 0u;
+override gx_tev_order_3: u32 = 0u;
+override gx_tev_order_4: u32 = 0u;
+override gx_tev_order_5: u32 = 0u;
+override gx_tev_order_6: u32 = 0u;
+override gx_tev_order_7: u32 = 0u;
+override gx_tev_order_8: u32 = 0u;
+override gx_tev_order_9: u32 = 0u;
+override gx_tev_order_10: u32 = 0u;
+override gx_tev_order_11: u32 = 0u;
+override gx_tev_order_12: u32 = 0u;
+override gx_tev_order_13: u32 = 0u;
+override gx_tev_order_14: u32 = 0u;
+override gx_tev_order_15: u32 = 0u;
+
+override gx_tev_indirect_0: u32 = 0u;
+override gx_tev_indirect_1: u32 = 0u;
+override gx_tev_indirect_2: u32 = 0u;
+override gx_tev_indirect_3: u32 = 0u;
+override gx_tev_indirect_4: u32 = 0u;
+override gx_tev_indirect_5: u32 = 0u;
+override gx_tev_indirect_6: u32 = 0u;
+override gx_tev_indirect_7: u32 = 0u;
+override gx_tev_indirect_8: u32 = 0u;
+override gx_tev_indirect_9: u32 = 0u;
+override gx_tev_indirect_10: u32 = 0u;
+override gx_tev_indirect_11: u32 = 0u;
+override gx_tev_indirect_12: u32 = 0u;
+override gx_tev_indirect_13: u32 = 0u;
+override gx_tev_indirect_14: u32 = 0u;
+override gx_tev_indirect_15: u32 = 0u;
+
+override gx_tev_ksel_0: u32 = 0u;
+override gx_tev_ksel_1: u32 = 0u;
+override gx_tev_ksel_2: u32 = 0u;
+override gx_tev_ksel_3: u32 = 0u;
+override gx_tev_ksel_4: u32 = 0u;
+override gx_tev_ksel_5: u32 = 0u;
+override gx_tev_ksel_6: u32 = 0u;
+override gx_tev_ksel_7: u32 = 0u;
+override gx_indirect_refs: u32 = 0u;
+
+override gx_color_ctrl_0: u32 = 0u;
+override gx_color_ctrl_1: u32 = 0u;
+override gx_alpha_ctrl_0: u32 = 0u;
+override gx_alpha_ctrl_1: u32 = 0u;
+override gx_alpha_comp_0: u32 = 7u;
+override gx_alpha_comp_1: u32 = 7u;
+override gx_alpha_op: u32 = 0u;
+override gx_ztex_type: u32 = 0u;
+override gx_ztex_op: u32 = 0u;
+
+fn shader_state(specialized: u32, dynamic: u32) -> u32 {
+    return select(specialized, dynamic, gx_ubershader);
+}
+
+fn dynamic_tev_color_env(stage: u32) -> u32 {
+    return frame.tev_color_env[stage / 4u][stage % 4u];
+}
+
+fn dynamic_tev_alpha_env(stage: u32) -> u32 {
+    return frame.tev_alpha_env[stage / 4u][stage % 4u];
+}
+
+fn dynamic_tev_order(stage: u32) -> u32 {
+    return frame.tev_orders[stage / 4u][stage % 4u];
+}
+
+fn dynamic_tev_indirect(stage: u32) -> u32 {
+    return frame.tev_indirect[stage / 4u][stage % 4u];
+}
+
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
     var out: VsOut;
     out.clip_pos = draw.mvp * vec4<f32>(in.pos_view, 1.0);
     out.clip_pos.z = out.clip_pos.z + out.clip_pos.w;
     out.color = compute_lighting_c0(
-        frame.color_ctrl0, frame.alpha_ctrl0,
+        shader_state(gx_color_ctrl_0, frame.color_ctrl0),
+        shader_state(gx_alpha_ctrl_0, frame.alpha_ctrl0),
         frame.ambient_color0, frame.material_color0,
         in.color, in.normal, in.pos_view,
     );
     out.color1 = compute_lighting_c1(
-        frame.color_ctrl1, frame.alpha_ctrl1,
+        shader_state(gx_color_ctrl_1, frame.color_ctrl1),
+        shader_state(gx_alpha_ctrl_1, frame.alpha_ctrl1),
         frame.ambient_color1, frame.material_color1,
         in.color1, in.normal, in.pos_view,
     );
@@ -44,20 +155,32 @@ struct TevState {
     last_raw_tex: vec4<f32>,
 }
 
+fn specialized_tev_ksel(idx: u32) -> u32 {
+    var specialized: u32;
+    switch idx {
+        case 0u: { specialized = gx_tev_ksel_0; }
+        case 1u: { specialized = gx_tev_ksel_1; }
+        case 2u: { specialized = gx_tev_ksel_2; }
+        case 3u: { specialized = gx_tev_ksel_3; }
+        case 4u: { specialized = gx_tev_ksel_4; }
+        case 5u: { specialized = gx_tev_ksel_5; }
+        case 6u: { specialized = gx_tev_ksel_6; }
+        default: { specialized = gx_tev_ksel_7; }
+    }
+    return shader_state(specialized, frame.tev_ksel[idx / 4u][idx % 4u]);
+}
+
 fn run_stage(
     stage: u32,
+    order: u32,
+    cenv: u32,
+    aenv: u32,
+    ind_cmd: u32,
     in: VsOut,
     color0: vec4<f32>,
     presampled: IndirectSamples,
     state: ptr<function, TevState>,
 ) {
-    let row = stage / 4u;
-    let col = stage % 4u;
-    let order = frame.tev_orders[row][col];
-    let cenv = frame.tev_color_env[row][col];
-    let aenv = frame.tev_alpha_env[row][col];
-    let ind_cmd = frame.tev_indirect[row][col];
-
     let texmap_idx = order & 7u;
     let texcoord_idx = (order >> 3u) & 7u;
     let tex_enabled = ((order >> 6u) & 1u) != 0u;
@@ -89,8 +212,18 @@ fn run_stage(
         tex_color = vec4<f32>(1.0, 1.0, 1.0, 1.0);
     }
 
-    ras_color = swizzle_tev_color(extract_bits(aenv, 0u, 2u), ras_color);
-    tex_color = swizzle_tev_color(extract_bits(aenv, 2u, 2u), tex_color);
+    let ras_swap = extract_bits(aenv, 0u, 2u) * 2u;
+    let tex_swap = extract_bits(aenv, 2u, 2u) * 2u;
+    ras_color = swizzle_tev_color(
+        specialized_tev_ksel(ras_swap),
+        specialized_tev_ksel(ras_swap + 1u),
+        ras_color,
+    );
+    tex_color = swizzle_tev_color(
+        specialized_tev_ksel(tex_swap),
+        specialized_tev_ksel(tex_swap + 1u),
+        tex_color,
+    );
 
     let c_d = extract_bits(cenv, 0u, 4u);
     let c_c = extract_bits(cenv, 4u, 4u);
@@ -151,31 +284,31 @@ fn run_tev(in: VsOut) -> TevResult {
     state.last_raw_tex = vec4<f32>(0.0, 0.0, 0.0, 0.0);
 
     let color0 = in.color;
-    let presampled = sample_indirect_textures(in);
+    let presampled = sample_indirect_textures(in, shader_state(gx_indirect_refs, frame.indirect_refs));
 
-    @if(TEV_STAGE_1_ENABLED)  { run_stage( 0u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_2_ENABLED)  { run_stage( 1u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_3_ENABLED)  { run_stage( 2u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_4_ENABLED)  { run_stage( 3u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_5_ENABLED)  { run_stage( 4u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_6_ENABLED)  { run_stage( 5u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_7_ENABLED)  { run_stage( 6u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_8_ENABLED)  { run_stage( 7u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_9_ENABLED)  { run_stage( 8u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_10_ENABLED) { run_stage( 9u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_11_ENABLED) { run_stage(10u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_12_ENABLED) { run_stage(11u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_13_ENABLED) { run_stage(12u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_14_ENABLED) { run_stage(13u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_15_ENABLED) { run_stage(14u, in, color0, presampled, &state); }
-    @if(TEV_STAGE_16_ENABLED) { run_stage(15u, in, color0, presampled, &state); }
+    @if(TEV_STAGE_1_ENABLED)  { run_stage( 0u, shader_state(gx_tev_order_0,  dynamic_tev_order( 0u)), shader_state(gx_tev_color_env_0,  dynamic_tev_color_env( 0u)), shader_state(gx_tev_alpha_env_0,  dynamic_tev_alpha_env( 0u)), shader_state(gx_tev_indirect_0,  dynamic_tev_indirect( 0u)), in, color0, presampled, &state); }
+    @if(TEV_STAGE_2_ENABLED)  { run_stage( 1u, shader_state(gx_tev_order_1,  dynamic_tev_order( 1u)), shader_state(gx_tev_color_env_1,  dynamic_tev_color_env( 1u)), shader_state(gx_tev_alpha_env_1,  dynamic_tev_alpha_env( 1u)), shader_state(gx_tev_indirect_1,  dynamic_tev_indirect( 1u)), in, color0, presampled, &state); }
+    @if(TEV_STAGE_3_ENABLED)  { run_stage( 2u, shader_state(gx_tev_order_2,  dynamic_tev_order( 2u)), shader_state(gx_tev_color_env_2,  dynamic_tev_color_env( 2u)), shader_state(gx_tev_alpha_env_2,  dynamic_tev_alpha_env( 2u)), shader_state(gx_tev_indirect_2,  dynamic_tev_indirect( 2u)), in, color0, presampled, &state); }
+    @if(TEV_STAGE_4_ENABLED)  { run_stage( 3u, shader_state(gx_tev_order_3,  dynamic_tev_order( 3u)), shader_state(gx_tev_color_env_3,  dynamic_tev_color_env( 3u)), shader_state(gx_tev_alpha_env_3,  dynamic_tev_alpha_env( 3u)), shader_state(gx_tev_indirect_3,  dynamic_tev_indirect( 3u)), in, color0, presampled, &state); }
+    @if(TEV_STAGE_5_ENABLED)  { run_stage( 4u, shader_state(gx_tev_order_4,  dynamic_tev_order( 4u)), shader_state(gx_tev_color_env_4,  dynamic_tev_color_env( 4u)), shader_state(gx_tev_alpha_env_4,  dynamic_tev_alpha_env( 4u)), shader_state(gx_tev_indirect_4,  dynamic_tev_indirect( 4u)), in, color0, presampled, &state); }
+    @if(TEV_STAGE_6_ENABLED)  { run_stage( 5u, shader_state(gx_tev_order_5,  dynamic_tev_order( 5u)), shader_state(gx_tev_color_env_5,  dynamic_tev_color_env( 5u)), shader_state(gx_tev_alpha_env_5,  dynamic_tev_alpha_env( 5u)), shader_state(gx_tev_indirect_5,  dynamic_tev_indirect( 5u)), in, color0, presampled, &state); }
+    @if(TEV_STAGE_7_ENABLED)  { run_stage( 6u, shader_state(gx_tev_order_6,  dynamic_tev_order( 6u)), shader_state(gx_tev_color_env_6,  dynamic_tev_color_env( 6u)), shader_state(gx_tev_alpha_env_6,  dynamic_tev_alpha_env( 6u)), shader_state(gx_tev_indirect_6,  dynamic_tev_indirect( 6u)), in, color0, presampled, &state); }
+    @if(TEV_STAGE_8_ENABLED)  { run_stage( 7u, shader_state(gx_tev_order_7,  dynamic_tev_order( 7u)), shader_state(gx_tev_color_env_7,  dynamic_tev_color_env( 7u)), shader_state(gx_tev_alpha_env_7,  dynamic_tev_alpha_env( 7u)), shader_state(gx_tev_indirect_7,  dynamic_tev_indirect( 7u)), in, color0, presampled, &state); }
+    @if(TEV_STAGE_9_ENABLED)  { run_stage( 8u, shader_state(gx_tev_order_8,  dynamic_tev_order( 8u)), shader_state(gx_tev_color_env_8,  dynamic_tev_color_env( 8u)), shader_state(gx_tev_alpha_env_8,  dynamic_tev_alpha_env( 8u)), shader_state(gx_tev_indirect_8,  dynamic_tev_indirect( 8u)), in, color0, presampled, &state); }
+    @if(TEV_STAGE_10_ENABLED) { run_stage( 9u, shader_state(gx_tev_order_9,  dynamic_tev_order( 9u)), shader_state(gx_tev_color_env_9,  dynamic_tev_color_env( 9u)), shader_state(gx_tev_alpha_env_9,  dynamic_tev_alpha_env( 9u)), shader_state(gx_tev_indirect_9,  dynamic_tev_indirect( 9u)), in, color0, presampled, &state); }
+    @if(TEV_STAGE_11_ENABLED) { run_stage(10u, shader_state(gx_tev_order_10, dynamic_tev_order(10u)), shader_state(gx_tev_color_env_10, dynamic_tev_color_env(10u)), shader_state(gx_tev_alpha_env_10, dynamic_tev_alpha_env(10u)), shader_state(gx_tev_indirect_10, dynamic_tev_indirect(10u)), in, color0, presampled, &state); }
+    @if(TEV_STAGE_12_ENABLED) { run_stage(11u, shader_state(gx_tev_order_11, dynamic_tev_order(11u)), shader_state(gx_tev_color_env_11, dynamic_tev_color_env(11u)), shader_state(gx_tev_alpha_env_11, dynamic_tev_alpha_env(11u)), shader_state(gx_tev_indirect_11, dynamic_tev_indirect(11u)), in, color0, presampled, &state); }
+    @if(TEV_STAGE_13_ENABLED) { run_stage(12u, shader_state(gx_tev_order_12, dynamic_tev_order(12u)), shader_state(gx_tev_color_env_12, dynamic_tev_color_env(12u)), shader_state(gx_tev_alpha_env_12, dynamic_tev_alpha_env(12u)), shader_state(gx_tev_indirect_12, dynamic_tev_indirect(12u)), in, color0, presampled, &state); }
+    @if(TEV_STAGE_14_ENABLED) { run_stage(13u, shader_state(gx_tev_order_13, dynamic_tev_order(13u)), shader_state(gx_tev_color_env_13, dynamic_tev_color_env(13u)), shader_state(gx_tev_alpha_env_13, dynamic_tev_alpha_env(13u)), shader_state(gx_tev_indirect_13, dynamic_tev_indirect(13u)), in, color0, presampled, &state); }
+    @if(TEV_STAGE_15_ENABLED) { run_stage(14u, shader_state(gx_tev_order_14, dynamic_tev_order(14u)), shader_state(gx_tev_color_env_14, dynamic_tev_color_env(14u)), shader_state(gx_tev_alpha_env_14, dynamic_tev_alpha_env(14u)), shader_state(gx_tev_indirect_14, dynamic_tev_indirect(14u)), in, color0, presampled, &state); }
+    @if(TEV_STAGE_16_ENABLED) { run_stage(15u, shader_state(gx_tev_order_15, dynamic_tev_order(15u)), shader_state(gx_tev_color_env_15, dynamic_tev_color_env(15u)), shader_state(gx_tev_alpha_env_15, dynamic_tev_alpha_env(15u)), shader_state(gx_tev_indirect_15, dynamic_tev_indirect(15u)), in, color0, presampled, &state); }
 
     let color = vec4<f32>(state.regs[state.last_color_dest].rgb, state.regs[state.last_alpha_dest].a);
 
     @if(ALPHA_TEST_ENABLED) {
-        let c0 = alpha_compare(color.a, frame.alpha_ref0, frame.alpha_comp0);
-        let c1 = alpha_compare(color.a, frame.alpha_ref1, frame.alpha_comp1);
-        if !alpha_combine(c0, c1, frame.alpha_op) {
+        let c0 = alpha_compare(color.a, frame.alpha_ref0, shader_state(gx_alpha_comp_0, frame.alpha_comp0));
+        let c1 = alpha_compare(color.a, frame.alpha_ref1, shader_state(gx_alpha_comp_1, frame.alpha_comp1));
+        if !alpha_combine(c0, c1, shader_state(gx_alpha_op, frame.alpha_op)) {
             discard;
         }
     }
@@ -201,12 +334,12 @@ fn fs_main_ztex(in: VsOut) -> FsOutZtex {
     let r = run_tev(in);
     let texel = vec4<u32>(round(r.raw_tex * 255.0));
     var z: u32 = frame.ztex_bias;
-    switch frame.ztex_type {
+    switch shader_state(gx_ztex_type, frame.ztex_type) {
         case 0u: { z += texel.a; }
         case 1u: { z += (texel.a << 8u) | texel.r; }
         default: { z += (texel.r << 16u) | (texel.g << 8u) | texel.b; }
     }
-    if frame.ztex_op == 1u {
+    if shader_state(gx_ztex_op, frame.ztex_op) == 1u {
         z += u32(round(in.clip_pos.z * 16777215.0));
     }
     z = z & 0x00FFFFFFu;

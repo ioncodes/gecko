@@ -3,7 +3,9 @@ use gecko::host::GxAction;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::GxRenderer;
 #[cfg(not(target_arch = "wasm32"))]
-use gecko::host::{DrawData, DrawVertex, RenderSink};
+use gecko::host::{DrawData, DrawSegment, DrawState, DrawVertex, RenderSink};
+#[cfg(all(not(target_arch = "wasm32"), feature = "gx-stats"))]
+use std::sync::atomic::Ordering;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(not(target_arch = "wasm32"))]
@@ -15,7 +17,10 @@ use std::time::Instant;
 pub type FrameReadyCallback = Box<dyn Fn(Instant) + Send + Sync>;
 
 #[cfg(not(target_arch = "wasm32"))]
-const WORK_QUEUE_LIMIT: usize = 4096;
+// Keep only a few GX batches in flight. This used to count individual actions,
+// so leaving it at 4096 after batching would allow thousands of whole frames to
+// accumulate behind the render worker.
+const WORK_QUEUE_LIMIT: usize = 8;
 
 /// Holds the XFB output texture that the render worker updates and the
 /// windowing thread reads for blitting and screenshots.
@@ -55,9 +60,24 @@ impl TargetAspect {
 pub struct ThreadedSink {
     work_tx: crossbeam_channel::Sender<WorkerCommand>,
     recycled_draw_data_rx: crossbeam_channel::Receiver<Box<DrawData>>,
+    recycled_batches_rx: crossbeam_channel::Receiver<ActionBatch>,
+    #[cfg(feature = "gx-stats")]
+    stats: Arc<crate::RendererStats>,
     worker_thread: Option<JoinHandle<()>>,
+    pending_actions: Vec<GxAction>,
     scratch: Vec<DrawVertex>,
-    scratch_sent_len: usize,
+    immediate_draw_data: Option<Box<DrawData>>,
+    efb_writeback_pending: bool,
+    pending_efb_textures: Vec<PendingEfbTexture>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct PendingEfbTexture {
+    addr: u32,
+    end: u32,
+    width: u32,
+    height: u32,
+    format: gecko::flipper::gx::draw::TextureFormat,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -68,14 +88,16 @@ struct RenderWorker {
     shared: Arc<Shared>,
     frame_ready_cb: Arc<OnceLock<FrameReadyCallback>>,
     recycled_draw_data_tx: crossbeam_channel::Sender<Box<DrawData>>,
+    recycled_batches_tx: crossbeam_channel::Sender<ActionBatch>,
     #[cfg(feature = "renderdoc-capture")]
     renderdoc: Arc<Mutex<crate::renderdoc_capture::RenderDocCapture>>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-struct ActionMessage {
-    action: GxAction,
+struct ActionBatch {
+    actions: Vec<GxAction>,
     vertices: Vec<DrawVertex>,
+    resets_scratch: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -84,13 +106,20 @@ struct EfbDrainRequest {
     mem1_len: usize,
     mem2_addr: usize,
     mem2_len: usize,
-    done_tx: crossbeam_channel::Sender<()>,
+    batch: ActionBatch,
+    done_tx: crossbeam_channel::Sender<ActionBatch>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 enum WorkerCommand {
-    Action(ActionMessage),
+    Actions(ActionBatch),
     DrainEfbCopies(EfbDrainRequest),
+    PeekEfbDepth {
+        x: u32,
+        y: u32,
+        batch: ActionBatch,
+        done_tx: crossbeam_channel::Sender<(ActionBatch, u32)>,
+    },
     Shutdown,
 }
 
@@ -99,13 +128,30 @@ impl RenderWorker {
     fn run(mut self, work_rx: crossbeam_channel::Receiver<WorkerCommand>) {
         while let Ok(command) = work_rx.recv() {
             match command {
-                WorkerCommand::Action(message) => self.exec(message),
+                WorkerCommand::Actions(batch) => self.exec_batch(batch),
                 WorkerCommand::DrainEfbCopies(request) => self.drain_efb_copies(request),
+                WorkerCommand::PeekEfbDepth {
+                    x,
+                    y,
+                    mut batch,
+                    done_tx,
+                } => {
+                    let worker_scratch = self.gx.replace_vertex_scratch(std::mem::take(&mut batch.vertices));
+                    for action in batch.actions.drain(..) {
+                        self.exec_action(action);
+                    }
+
+                    let depth = self.gx.peek_efb_depth(&self.device, &self.queue, x, y);
+                    batch.vertices = self.gx.replace_vertex_scratch(worker_scratch);
+
+                    let _ = done_tx.send((batch, depth));
+                }
                 WorkerCommand::Shutdown => break,
             }
         }
 
-        self.gx.submit_pending(&self.queue);
+        let _ = self.gx.submit_pending(&self.queue);
+        self.gx.poll_compiled_pipelines();
         #[cfg(feature = "renderdoc-capture")]
         if let Ok(mut rd) = self.renderdoc.lock() {
             rd.end_emulated_frame();
@@ -120,16 +166,15 @@ impl RenderWorker {
         }
     }
 
-    fn exec(&mut self, message: ActionMessage) {
-        if !message.vertices.is_empty() {
-            self.gx.scratch_vertices.extend_from_slice(&message.vertices);
+    fn exec_action(&mut self, action: GxAction) {
+        self.gx.process_action(&self.device, &self.queue, &action);
+
+        if matches!(&action, GxAction::CopyEfbToTexture { .. }) {
+            let _ = self.gx.submit_pending(&self.queue);
         }
 
-        let resets_scratch = action_resets_vertex_scratch(&message.action);
-        self.gx.process_action(&self.device, &self.queue, &message.action);
-
-        match message.action {
-            GxAction::PresentXfb { .. } => {
+        match action {
+            GxAction::PresentXfb { .. } | GxAction::PresentRawXfb { .. } => {
                 #[cfg(feature = "renderdoc-capture")]
                 if let Ok(mut rd) = self.renderdoc.lock() {
                     rd.end_emulated_frame();
@@ -146,80 +191,329 @@ impl RenderWorker {
             }
             _ => {}
         }
-
-        if resets_scratch {
-            self.gx.scratch_vertices.clear();
-        }
     }
 
-    fn drain_efb_copies(&mut self, request: EfbDrainRequest) {
+    fn exec_batch_returning_vertices(&mut self, batch: &mut ActionBatch) {
+        let worker_scratch = self.gx.replace_vertex_scratch(std::mem::take(&mut batch.vertices));
+        for action in batch.actions.drain(..) {
+            self.exec_action(action);
+        }
+        batch.vertices = self.gx.replace_vertex_scratch(worker_scratch);
+    }
+
+    fn exec_batch(&mut self, mut batch: ActionBatch) {
+        #[cfg(feature = "gx-stats")]
+        let batch_started = std::time::Instant::now();
+
+        if batch.resets_scratch {
+            self.exec_batch_returning_vertices(&mut batch);
+            batch.vertices.clear();
+
+            debug_assert!(batch.actions.is_empty());
+            debug_assert!(batch.vertices.is_empty());
+
+            let _ = self.recycled_batches_tx.send(batch);
+        } else {
+            let _old_scratch = self.gx.replace_vertex_scratch(batch.vertices);
+            for action in batch.actions {
+                self.exec_action(action);
+            }
+        }
+
+        #[cfg(feature = "gx-stats")]
+        self.gx
+            .stats
+            .worker_batch_cpu_ns
+            .fetch_add(batch_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+    }
+
+    fn drain_efb_copies(&mut self, mut request: EfbDrainRequest) {
+        #[cfg(feature = "gx-stats")]
+        let batch_started = std::time::Instant::now();
+
+        let expected_vertex_len = request.batch.vertices.len();
+        self.exec_batch_returning_vertices(&mut request.batch);
+        debug_assert_eq!(request.batch.vertices.len(), expected_vertex_len);
+
         let mut ram = unsafe {
             // The emu thread blocks on `done_tx` and holds the only mutable
             // RamViewMut while this command runs. FIFO channel ordering also
             // ensures all prior EFB copy commands have reached the worker.
             let mem1 = std::slice::from_raw_parts_mut(request.mem1_addr as *mut u8, request.mem1_len);
             let mem2 = std::slice::from_raw_parts_mut(request.mem2_addr as *mut u8, request.mem2_len);
-            gecko::mmio::RamViewMut { mem1, mem2 }
+            gecko::mmio::RamViewMut {
+                mem1,
+                mem2,
+                memory_page_generations: &[],
+            }
         };
+        #[cfg(feature = "gx-stats")]
+        let writeback_count = self.gx.pending_writebacks.len() as u64;
+        #[cfg(feature = "gx-stats")]
+        let writeback_started = std::time::Instant::now();
         self.gx.drain_pending_writebacks(&self.device, &self.queue, &mut ram);
-        let _ = request.done_tx.send(());
+
+        #[cfg(feature = "gx-stats")]
+        {
+            self.gx.stats.efb_drain_requests.fetch_add(1, Ordering::Relaxed);
+            if writeback_count != 0 {
+                self.gx.stats.efb_drain_nonempty.fetch_add(1, Ordering::Relaxed);
+                self.gx
+                    .stats
+                    .efb_writebacks
+                    .fetch_add(writeback_count, Ordering::Relaxed);
+                self.gx
+                    .stats
+                    .efb_writeback_cpu_ns
+                    .fetch_add(writeback_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            }
+            self.gx
+                .stats
+                .worker_batch_cpu_ns
+                .fetch_add(batch_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
+
+        let _ = request.done_tx.send(request.batch);
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl ThreadedSink {
-    fn pending_vertices(&mut self) -> Vec<DrawVertex> {
-        if self.scratch.len() <= self.scratch_sent_len {
-            return Vec::new();
+    fn reclaim_batch(&mut self) {
+        if !self.pending_actions.is_empty() || !self.scratch.is_empty() {
+            return;
         }
 
-        let vertices = self.scratch[self.scratch_sent_len..].to_vec();
-        self.scratch_sent_len = self.scratch.len();
-        vertices
+        if let Ok(batch) = self.recycled_batches_rx.try_recv() {
+            debug_assert!(batch.actions.is_empty());
+            debug_assert!(batch.vertices.is_empty());
+            self.pending_actions = batch.actions;
+            self.scratch = batch.vertices;
+        }
+    }
+
+    fn take_batch(&mut self, resets_scratch: bool) -> ActionBatch {
+        ActionBatch {
+            actions: std::mem::take(&mut self.pending_actions),
+            vertices: std::mem::take(&mut self.scratch),
+            resets_scratch,
+        }
+    }
+
+    fn send_reset_batch(&mut self) {
+        let batch = self.take_batch(true);
+        #[cfg(feature = "gx-stats")]
+        let send_started = std::time::Instant::now();
+        self.work_tx
+            .send(WorkerCommand::Actions(batch))
+            .expect("render worker thread stopped");
+        #[cfg(feature = "gx-stats")]
+        {
+            self.stats.batches_sent.fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .channel_high_water
+                .fetch_max(self.work_tx.len() as u64, Ordering::Relaxed);
+            self.stats
+                .queue_wait_ns
+                .fetch_add(send_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
+        self.reclaim_batch();
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl RenderSink for ThreadedSink {
+    fn peek_efb_depth(&mut self, x: u32, y: u32) -> u32 {
+        let (done_tx, done_rx) = crossbeam_channel::bounded(0);
+        let command = WorkerCommand::PeekEfbDepth {
+            x,
+            y,
+            batch: self.take_batch(false),
+            done_tx,
+        };
+        self.work_tx.send(command).expect("render worker thread stopped");
+        let (batch, depth) = done_rx.recv().expect("render worker thread stopped");
+        self.pending_actions = batch.actions;
+        self.scratch = batch.vertices;
+
+        depth
+    }
+
     fn exec(&mut self, action: GxAction) {
-        let resets_scratch = action_resets_vertex_scratch(&action);
-        let message = ActionMessage {
-            action,
-            vertices: self.pending_vertices(),
+        #[cfg(feature = "gx-stats")]
+        self.stats.actions_sent.fetch_add(1, Ordering::Relaxed);
+
+        let action = match action {
+            GxAction::Draw(mut draw) if draw.state.is_none() => {
+                if let Some(GxAction::Draw(previous)) = self.pending_actions.last_mut() {
+                    previous.segments.append(&mut draw.segments);
+                    self.immediate_draw_data = Some(draw);
+
+                    return;
+                }
+
+                GxAction::Draw(draw)
+            }
+            action => action,
         };
 
-        self.work_tx
-            .send(WorkerCommand::Action(message))
-            .expect("render worker thread stopped");
+        if let GxAction::CopyEfbToTexture {
+            dest_addr,
+            src_x,
+            src_y,
+            src_w,
+            src_h,
+            copy_format,
+            mipmap,
+            stride,
+            depth_copy,
+            ..
+        } = &action
+        {
+            use gecko::flipper::gx::texture::{CopyFormat, encoded_row_bytes, encoded_row_count};
+            self.efb_writeback_pending = true;
+            let format = if *depth_copy {
+                CopyFormat::from_u8_depth(*copy_format)
+            } else {
+                CopyFormat::from_u8_color(*copy_format)
+            };
+
+            if let Some(format) = format {
+                let divisor = if *mipmap { 2 } else { 1 };
+                let width = src_w.min(&crate::EFB_WIDTH.saturating_sub(*src_x)) / divisor;
+                let height = src_h.min(&crate::EFB_HEIGHT.saturating_sub(*src_y)) / divisor;
+                let row_bytes = encoded_row_bytes(width, format);
+                let rows = encoded_row_count(height, format);
+                let len = rows.saturating_sub(1) * *stride as usize + row_bytes;
+                let end = dest_addr.saturating_add(len as u32);
+                self.pending_efb_textures
+                    .retain(|copy| copy.end <= *dest_addr || end <= copy.addr);
+                if width > 0 && height > 0 && *stride as usize == row_bytes {
+                    self.pending_efb_textures.push(PendingEfbTexture {
+                        addr: *dest_addr,
+                        end,
+                        width,
+                        height,
+                        format: format.base_texture_format(),
+                    });
+                }
+            }
+        } else if matches!(&action, GxAction::InvalidateCaches) {
+            self.pending_efb_textures.clear();
+        }
+
+        let resets_scratch = action_resets_vertex_scratch(&action);
+        self.pending_actions.push(action);
 
         if resets_scratch {
-            self.scratch.clear();
-            self.scratch_sent_len = 0;
+            self.send_reset_batch();
         }
     }
 
+    fn exec_draw(&mut self, segment: DrawSegment, state: Option<DrawState>) {
+        self.exec_draw_batch(std::slice::from_ref(&segment), state);
+    }
+
+    fn exec_draw_batch(&mut self, segments: &[DrawSegment], state: Option<DrawState>) {
+        if segments.is_empty() {
+            return;
+        }
+
+        #[cfg(feature = "gx-stats")]
+        self.stats
+            .actions_sent
+            .fetch_add(segments.len() as u64, Ordering::Relaxed);
+
+        self.reclaim_batch();
+
+        if state.is_none()
+            && let Some(GxAction::Draw(previous)) = self.pending_actions.last_mut()
+        {
+            previous.segments.extend_from_slice(segments);
+
+            return;
+        }
+
+        let mut draw = self.take_draw_data();
+        draw.segments.clear();
+        draw.segments.extend_from_slice(segments);
+        draw.state = state;
+        self.pending_actions.push(GxAction::Draw(draw));
+    }
+
+    fn has_pending_efb_texture(
+        &self,
+        addr: u32,
+        width: u32,
+        height: u32,
+        fmt: gecko::flipper::gx::draw::TextureFormat,
+    ) -> bool {
+        self.pending_efb_textures
+            .iter()
+            .any(|copy| copy.addr == addr && copy.width == width && copy.height == height && copy.format == fmt)
+    }
+
     fn flush_efb_copies(&mut self, ram: &mut gecko::mmio::RamViewMut<'_>) {
+        if !self.efb_writeback_pending {
+            return;
+        }
+
         let (done_tx, done_rx) = crossbeam_channel::bounded(0);
         let request = EfbDrainRequest {
             mem1_addr: ram.mem1.as_mut_ptr() as usize,
             mem1_len: ram.mem1.len(),
             mem2_addr: ram.mem2.as_mut_ptr() as usize,
             mem2_len: ram.mem2.len(),
+            batch: self.take_batch(false),
             done_tx,
         };
 
+        #[cfg(feature = "gx-stats")]
+        let drain_started = std::time::Instant::now();
         self.work_tx
             .send(WorkerCommand::DrainEfbCopies(request))
             .expect("render worker thread stopped");
-        done_rx.recv().expect("render worker thread stopped");
+        let batch = done_rx.recv().expect("render worker thread stopped");
+        #[cfg(feature = "gx-stats")]
+        {
+            self.stats.batches_sent.fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .channel_high_water
+                .fetch_max(self.work_tx.len() as u64, Ordering::Relaxed);
+            self.stats
+                .efb_drain_wait_ns
+                .fetch_add(drain_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
+        debug_assert!(batch.actions.is_empty());
+        self.pending_actions = batch.actions;
+        self.scratch = batch.vertices;
+        self.efb_writeback_pending = false;
+        self.pending_efb_textures.clear();
     }
 
     fn vertex_scratch(&mut self) -> &mut Vec<DrawVertex> {
+        self.reclaim_batch();
         &mut self.scratch
     }
 
     fn take_draw_data(&mut self) -> Box<DrawData> {
-        self.recycled_draw_data_rx.try_recv().unwrap_or_default()
+        self.reclaim_batch();
+        self.immediate_draw_data
+            .take()
+            .or_else(|| self.recycled_draw_data_rx.try_recv().ok())
+            .unwrap_or_default()
+    }
+
+    fn render_stats(&self) -> gecko::host::RenderStats {
+        #[cfg(feature = "gx-stats")]
+        {
+            return self
+                .stats
+                .snapshot(self.work_tx.len(), self.work_tx.capacity().unwrap_or(0));
+        }
+
+        #[cfg(not(feature = "gx-stats"))]
+        gecko::host::RenderStats::default()
     }
 }
 
@@ -227,6 +521,12 @@ impl RenderSink for ThreadedSink {
 impl Drop for ThreadedSink {
     fn drop(&mut self) {
         if let Some(worker_thread) = self.worker_thread.take() {
+            if !self.pending_actions.is_empty() || !self.scratch.is_empty() {
+                let batch = self.take_batch(false);
+                let _ = self.work_tx.send(WorkerCommand::Actions(batch));
+                #[cfg(feature = "gx-stats")]
+                self.stats.batches_sent.fetch_add(1, Ordering::Relaxed);
+            }
             let _ = self.work_tx.send(WorkerCommand::Shutdown);
             if let Err(err) = worker_thread.join() {
                 tracing::error!(?err, "render worker thread panicked");
@@ -265,6 +565,14 @@ impl InlineSink {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl RenderSink for InlineSink {
+    fn peek_efb_depth(&mut self, x: u32, y: u32) -> u32 {
+        let mut gx = self.gx.lock().unwrap();
+        let depth = gx.peek_efb_depth(&self.device, &self.queue, x, y);
+        self.scratch.truncate(gx.scratch_vertices.len());
+
+        depth
+    }
+
     fn exec(&mut self, action: GxAction) {
         self.gx.lock().unwrap().process_action_with_external_scratch(
             &self.device,
@@ -303,6 +611,7 @@ pub fn action_resets_vertex_scratch(action: &GxAction) -> bool {
         GxAction::InvalidateCaches
         | GxAction::CopyXfb { .. }
         | GxAction::PresentXfb { .. }
+        | GxAction::PresentRawXfb { .. }
         | GxAction::CopyEfbToTexture { .. } => true,
         #[cfg(not(target_arch = "wasm32"))]
         GxAction::DumpTextures { .. } => true,
@@ -336,6 +645,8 @@ impl Renderer {
     ) -> (Self, ThreadedSink) {
         let mut gx = GxRenderer::new(&device, &queue, surface_format, efb_scale);
         gx.prewarm_pipeline_cache(&device);
+        #[cfg(feature = "gx-stats")]
+        let stats = gx.stats.clone();
 
         // Initial shared output: the XFB texture (black until first PresentXfb).
         let shared = Arc::new(Shared {
@@ -415,6 +726,7 @@ impl Renderer {
 
         let (work_tx, work_rx) = crossbeam_channel::bounded(WORK_QUEUE_LIMIT);
         let (recycled_draw_data_tx, recycled_draw_data_rx) = crossbeam_channel::unbounded();
+        let (recycled_batches_tx, recycled_batches_rx) = crossbeam_channel::unbounded();
         let worker = RenderWorker {
             gx,
             device: device.clone(),
@@ -422,6 +734,7 @@ impl Renderer {
             shared: shared.clone(),
             frame_ready_cb: frame_ready_cb.clone(),
             recycled_draw_data_tx,
+            recycled_batches_tx,
             #[cfg(feature = "renderdoc-capture")]
             renderdoc: renderdoc.clone(),
         };
@@ -433,9 +746,15 @@ impl Renderer {
         let sink = ThreadedSink {
             work_tx,
             recycled_draw_data_rx,
+            recycled_batches_rx,
+            #[cfg(feature = "gx-stats")]
+            stats,
             worker_thread: Some(worker_thread),
+            pending_actions: Vec::new(),
             scratch: Vec::new(),
-            scratch_sent_len: 0,
+            immediate_draw_data: None,
+            efb_writeback_pending: false,
+            pending_efb_textures: Vec::new(),
         };
 
         let renderer = Renderer {

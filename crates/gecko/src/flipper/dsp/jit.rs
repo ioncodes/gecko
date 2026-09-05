@@ -425,6 +425,13 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
 
         let entry = self.module.get_finalized_function(func_id) as usize;
 
+        crate::jit::register_jit_code(
+            "dsp",
+            spec.start_pc as u32,
+            entry,
+            self.ctx.compiled_code().unwrap().code_buffer().len(),
+        );
+
         self.register_in_lookup_table(spec.start_pc, entry);
 
         entry

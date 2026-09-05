@@ -37,6 +37,14 @@ pub enum ExecutionMode {
     Interpreter,
 }
 
+#[cfg(feature = "gx-stats")]
+#[derive(Clone, Default)]
+struct GxStatsDumpState {
+    vsync_count: u64,
+    gx: crate::flipper::gx::GxStats,
+    render: crate::host::RenderStats,
+}
+
 pub struct System<const SYSTEM: SystemId> {
     pub vsync_pending: bool,
     pub vi_present_seen_this_frame: bool,
@@ -87,6 +95,9 @@ pub struct System<const SYSTEM: SystemId> {
 
     #[cfg(any(feature = "jit-stats", feature = "profile", feature = "gx-stats"))]
     pub vsync_count: u64,
+
+    #[cfg(feature = "gx-stats")]
+    gx_stats_dump_state: Option<GxStatsDumpState>,
 
     #[cfg(feature = "profile")]
     pub pprof_config: Option<crate::profile::PprofConfig>,
@@ -141,6 +152,9 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
             #[cfg(any(feature = "jit-stats", feature = "profile", feature = "gx-stats"))]
             vsync_count: 0,
+
+            #[cfg(feature = "gx-stats")]
+            gx_stats_dump_state: None,
 
             #[cfg(feature = "profile")]
             pprof_config: None,
@@ -377,7 +391,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     }
 
     #[cfg(feature = "gx-stats")]
-    fn dump_gx_stats_if_due(&self) {
+    fn dump_gx_stats_if_due(&mut self) {
         if !self.heatmap.enabled || self.heatmap.interval_frames == 0 {
             return;
         }
@@ -389,20 +403,32 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         use std::io::Write;
 
         let path = self.heatmap.out_dir.join("gx-stats.txt");
-        let s = &self.gx.stats;
+        let s = self.gx.stats.clone();
         let avg_draw_ns = if s.draw_calls > 0 {
             s.create_draw_call_ns / s.draw_calls
         } else {
             0
         };
 
-        let actions_sent: u64 = 0;
-        let channel_len: usize = 0;
-        let channel_cap: usize = 0;
+        let render = self.render_sink.render_stats();
+        let presents = s.xfb_presents.max(1) as f64;
+        let previous = self.gx_stats_dump_state.clone().unwrap_or_default();
+        let delta = |current: u64, prior: u64| current.saturating_sub(prior);
+        let interval_vsyncs = delta(self.vsync_count, previous.vsync_count);
+        let interval_presents = delta(s.xfb_presents, previous.gx.xfb_presents);
+        let interval_divisor = interval_presents.max(1) as f64;
+        let interval_renderer_draws = delta(render.draws_encoded, previous.render.draws_encoded);
+        let interval_potential_draws = delta(render.potential_merged_draws, previous.render.potential_merged_draws);
+        let interval_reduction_pct = interval_renderer_draws.saturating_sub(interval_potential_draws) as f64
+            / interval_renderer_draws.max(1) as f64
+            * 100.0;
+        let cumulative_reduction_pct = render.draws_encoded.saturating_sub(render.potential_merged_draws) as f64
+            / render.draws_encoded.max(1) as f64
+            * 100.0;
         let result = crate::profile::write_file_atomic(&path, |f| {
             writeln!(
                 f,
-                "vsync_count={}\ndraw_calls={}\nvertices={}\nfifo_bytes={}\ntexture_loads={}\nxfb_presents={}\nbp_writes={}\nxf_writes={}\ncreate_draw_call_ns={}\navg_draw_call_ns={}\nrender_actions_sent={}\nrender_channel_len={}\nrender_channel_cap={}",
+                "vsync_count={}\ndraw_calls={}\nvertices={}\nfifo_bytes={}\ntexture_loads={}\nxfb_presents={}\nbp_writes={}\nxf_writes={}\ncreate_draw_call_ns={}\navg_draw_call_ns={}\nrender_actions_sent={}\nrender_batches_sent={}\nrender_channel_len={}\nrender_channel_cap={}\nrender_channel_high_water={}\nrender_queue_wait_ns={}\nrender_efb_drain_wait_ns={}\nrender_efb_drain_requests={}\nrender_efb_drain_nonempty={}\nrender_efb_writebacks={}\nrender_efb_writeback_cpu_ns={}\nrender_worker_batch_cpu_ns={}\nrender_draws_encoded={}\nrender_draw_passes={}\nrender_pipeline_changes={}\nrender_pipelines_created={}\nrender_pipeline_create_cpu_ns={}\nrender_shader_modules_created={}\nrender_shader_create_cpu_ns={}\nrender_bind_group_sets={}\nrender_bind_groups_created={}\nrender_bind_group_key_changes={}\nrender_frame_uniform_changes={}\nrender_draw_uniform_changes={}\nrender_vertex_stride_changes={}\nrender_potential_merged_draws={}\nrender_viewport_changes={}\nrender_scissor_changes={}\nrender_draw_pass_encode_ns={}\nrender_queue_submits={}\nrender_command_buffers_submitted={}\nrender_queue_submit_cpu_ns={}",
                 self.vsync_count,
                 s.draw_calls,
                 s.vertices,
@@ -413,9 +439,118 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 s.xf_writes,
                 s.create_draw_call_ns,
                 avg_draw_ns,
-                actions_sent,
-                channel_len,
-                channel_cap,
+                render.actions_sent,
+                render.batches_sent,
+                render.channel_len,
+                render.channel_cap,
+                render.channel_high_water,
+                render.queue_wait_ns,
+                render.efb_drain_wait_ns,
+                render.efb_drain_requests,
+                render.efb_drain_nonempty,
+                render.efb_writebacks,
+                render.efb_writeback_cpu_ns,
+                render.worker_batch_cpu_ns,
+                render.draws_encoded,
+                render.draw_render_passes,
+                render.pipeline_changes,
+                render.pipelines_created,
+                render.pipeline_create_cpu_ns,
+                render.shader_modules_created,
+                render.shader_create_cpu_ns,
+                render.bind_group_sets,
+                render.bind_groups_created,
+                render.bind_group_key_changes,
+                render.frame_uniform_changes,
+                render.draw_uniform_changes,
+                render.vertex_stride_changes,
+                render.potential_merged_draws,
+                render.viewport_changes,
+                render.scissor_changes,
+                render.draw_pass_encode_ns,
+                render.queue_submits,
+                render.command_buffers_submitted,
+                render.queue_submit_cpu_ns,
+            )?;
+            writeln!(
+                f,
+                "\n--- last dump interval ---\nvsyncs={}\nxfb_presents={}\ndraw_calls={}\nvertices={}\nrenderer_draws={}\nactions={}\nbatches={}\ndraws_per_present={:.2}\nvertices_per_present={:.2}\ndraw_passes_per_present={:.2}\npipeline_changes_per_present={:.2}\npipelines_created_per_present={:.2}\npipeline_create_cpu_us_per_present={:.2}\nshader_modules_created_per_present={:.2}\nshader_create_cpu_us_per_present={:.2}\nbind_group_sets_per_present={:.2}\nbind_groups_created_per_present={:.2}\nbind_group_key_changes_per_present={:.2}\nframe_uniform_changes_per_present={:.2}\ndraw_uniform_changes_per_present={:.2}\nvertex_stride_changes_per_present={:.2}\npotential_merged_draws_per_present={:.2}\npotential_draw_reduction_pct={:.2}\nviewport_changes_per_present={:.2}\nscissor_changes_per_present={:.2}\ndraw_pass_encode_cpu_us_per_present={:.2}\nworker_cpu_us_per_present={:.2}\nqueue_wait_us_per_present={:.2}\nefb_drain_wait_us_per_present={:.2}\nefb_drain_requests_per_present={:.2}\nefb_drain_nonempty_per_present={:.2}\nefb_writebacks_per_present={:.2}\nefb_writeback_cpu_us_per_present={:.2}\nqueue_submit_cpu_us_per_present={:.2}",
+                interval_vsyncs,
+                interval_presents,
+                delta(s.draw_calls, previous.gx.draw_calls),
+                delta(s.vertices, previous.gx.vertices),
+                interval_renderer_draws,
+                delta(render.actions_sent, previous.render.actions_sent),
+                delta(render.batches_sent, previous.render.batches_sent),
+                delta(render.draws_encoded, previous.render.draws_encoded) as f64 / interval_divisor,
+                delta(s.vertices, previous.gx.vertices) as f64 / interval_divisor,
+                delta(render.draw_render_passes, previous.render.draw_render_passes) as f64 / interval_divisor,
+                delta(render.pipeline_changes, previous.render.pipeline_changes) as f64 / interval_divisor,
+                delta(render.pipelines_created, previous.render.pipelines_created) as f64 / interval_divisor,
+                delta(render.pipeline_create_cpu_ns, previous.render.pipeline_create_cpu_ns,) as f64
+                    / interval_divisor
+                    / 1_000.0,
+                delta(render.shader_modules_created, previous.render.shader_modules_created,) as f64 / interval_divisor,
+                delta(render.shader_create_cpu_ns, previous.render.shader_create_cpu_ns) as f64
+                    / interval_divisor
+                    / 1_000.0,
+                delta(render.bind_group_sets, previous.render.bind_group_sets) as f64 / interval_divisor,
+                delta(render.bind_groups_created, previous.render.bind_groups_created) as f64 / interval_divisor,
+                delta(render.bind_group_key_changes, previous.render.bind_group_key_changes,) as f64 / interval_divisor,
+                delta(render.frame_uniform_changes, previous.render.frame_uniform_changes,) as f64 / interval_divisor,
+                delta(render.draw_uniform_changes, previous.render.draw_uniform_changes,) as f64 / interval_divisor,
+                delta(render.vertex_stride_changes, previous.render.vertex_stride_changes,) as f64 / interval_divisor,
+                interval_potential_draws as f64 / interval_divisor,
+                interval_reduction_pct,
+                delta(render.viewport_changes, previous.render.viewport_changes) as f64 / interval_divisor,
+                delta(render.scissor_changes, previous.render.scissor_changes) as f64 / interval_divisor,
+                delta(render.draw_pass_encode_ns, previous.render.draw_pass_encode_ns) as f64
+                    / interval_divisor
+                    / 1_000.0,
+                delta(render.worker_batch_cpu_ns, previous.render.worker_batch_cpu_ns) as f64
+                    / interval_divisor
+                    / 1_000.0,
+                delta(render.queue_wait_ns, previous.render.queue_wait_ns) as f64 / interval_divisor / 1_000.0,
+                delta(render.efb_drain_wait_ns, previous.render.efb_drain_wait_ns) as f64 / interval_divisor / 1_000.0,
+                delta(render.efb_drain_requests, previous.render.efb_drain_requests) as f64 / interval_divisor,
+                delta(render.efb_drain_nonempty, previous.render.efb_drain_nonempty) as f64 / interval_divisor,
+                delta(render.efb_writebacks, previous.render.efb_writebacks) as f64 / interval_divisor,
+                delta(render.efb_writeback_cpu_ns, previous.render.efb_writeback_cpu_ns) as f64
+                    / interval_divisor
+                    / 1_000.0,
+                delta(render.queue_submit_cpu_ns, previous.render.queue_submit_cpu_ns) as f64
+                    / interval_divisor
+                    / 1_000.0,
+            )?;
+            writeln!(
+                f,
+                "\n--- renderer averages per XFB present ---\ndraws={:.2}\ndraw_passes={:.2}\npipeline_changes={:.2}\npipelines_created={:.2}\npipeline_create_cpu_us={:.2}\nshader_modules_created={:.2}\nshader_create_cpu_us={:.2}\nbind_group_sets={:.2}\nbind_groups_created={:.2}\nbind_group_key_changes={:.2}\nframe_uniform_changes={:.2}\ndraw_uniform_changes={:.2}\nvertex_stride_changes={:.2}\npotential_merged_draws={:.2}\npotential_draw_reduction_pct={:.2}\nviewport_changes={:.2}\nscissor_changes={:.2}\ndraw_pass_encode_cpu_us={:.2}\nworker_cpu_us={:.2}\nqueue_wait_us={:.2}\nefb_drain_wait_us={:.2}\nefb_drain_requests={:.2}\nefb_drain_nonempty={:.2}\nefb_writebacks={:.2}\nefb_writeback_cpu_us={:.2}\nqueue_submit_cpu_us={:.2}",
+                render.draws_encoded as f64 / presents,
+                render.draw_render_passes as f64 / presents,
+                render.pipeline_changes as f64 / presents,
+                render.pipelines_created as f64 / presents,
+                render.pipeline_create_cpu_ns as f64 / presents / 1_000.0,
+                render.shader_modules_created as f64 / presents,
+                render.shader_create_cpu_ns as f64 / presents / 1_000.0,
+                render.bind_group_sets as f64 / presents,
+                render.bind_groups_created as f64 / presents,
+                render.bind_group_key_changes as f64 / presents,
+                render.frame_uniform_changes as f64 / presents,
+                render.draw_uniform_changes as f64 / presents,
+                render.vertex_stride_changes as f64 / presents,
+                render.potential_merged_draws as f64 / presents,
+                cumulative_reduction_pct,
+                render.viewport_changes as f64 / presents,
+                render.scissor_changes as f64 / presents,
+                render.draw_pass_encode_ns as f64 / presents / 1_000.0,
+                render.worker_batch_cpu_ns as f64 / presents / 1_000.0,
+                render.queue_wait_ns as f64 / presents / 1_000.0,
+                render.efb_drain_wait_ns as f64 / presents / 1_000.0,
+                render.efb_drain_requests as f64 / presents,
+                render.efb_drain_nonempty as f64 / presents,
+                render.efb_writebacks as f64 / presents,
+                render.efb_writeback_cpu_ns as f64 / presents / 1_000.0,
+                render.queue_submit_cpu_ns as f64 / presents / 1_000.0,
             )?;
             writeln!(f, "\n--- draws by primitive ---")?;
 
@@ -440,7 +575,13 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         });
 
         if let Err(err) = result {
-            tracing::warn!(?err, "gx-stats sidecar write failed");
+            tracing::warn!(?err, "gx-stats write failed");
+        } else {
+            self.gx_stats_dump_state = Some(GxStatsDumpState {
+                vsync_count: self.vsync_count,
+                gx: s,
+                render,
+            });
         }
     }
 
@@ -468,11 +609,11 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         }
 
         #[cfg(feature = "jit")]
-        self.dump_idle_skip_sidecar();
+        self.dump_idle_skip();
     }
 
     #[cfg(all(feature = "jit-stats", feature = "jit"))]
-    fn dump_idle_skip_sidecar(&self) {
+    fn dump_idle_skip(&self) {
         use std::io::Write;
         use std::sync::atomic::Ordering;
 
@@ -561,7 +702,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             Ok(())
         });
         if let Err(err) = result {
-            tracing::warn!(?err, "idle-skip sidecar write failed");
+            tracing::warn!(?err, "idle-skip write failed");
         }
     }
 
@@ -571,16 +712,11 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             .scheduler
             .event_fire_counts
             .iter()
-            .map(|(&addr, &count)| (Self::resolve_handler_name(addr), count))
+            .map(|(&handler, &count)| (format!("{handler:?}"), count))
             .collect();
         entries.sort_by(|a, b| b.1.cmp(&a.1));
         entries.truncate(n);
         entries
-    }
-
-    #[cfg(all(feature = "jit-stats", feature = "jit"))]
-    fn resolve_handler_name(addr: usize) -> String {
-        crate::profile::resolve_symbol(addr).unwrap_or_else(|| format!("<unresolved {:#018x}>", addr))
     }
 
     #[cfg(feature = "profile")]
@@ -727,8 +863,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[inline(always)]
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn drain_events(&mut self) {
-        while let Some(f) = self.scheduler.poll() {
-            f(self);
+        while let Some(handler) = self.scheduler.poll() {
+            handler.resolve::<SYSTEM>()(self);
         }
     }
 

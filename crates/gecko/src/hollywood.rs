@@ -4,6 +4,7 @@ pub mod ipc;
 pub mod irq;
 pub mod regs;
 
+#[derive(Clone, Copy)]
 pub struct Hollywood {
     pub compat: compat::Compat,
     pub gpio: gpio::Gpio,

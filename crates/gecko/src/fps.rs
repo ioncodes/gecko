@@ -93,5 +93,5 @@ pub fn fps_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     sys.fps_counter.vsync_count = 0;
     sys.fps_counter.last_tick = now;
     sys.scheduler
-        .schedule_in(cpu_clock(SYSTEM), self::fps_handler::<SYSTEM>);
+        .schedule_in(cpu_clock(SYSTEM), crate::scheduler::Handler::Fps);
 }

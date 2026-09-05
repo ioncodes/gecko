@@ -52,6 +52,17 @@ impl IosDevice for SysConf {
         0
     }
 
+    fn save_state(&mut self, w: &mut crate::savestate::StateWriter) {
+        w.bytes(&self.blob);
+        w.u64(self.pos);
+    }
+
+    fn load_state(&mut self, r: &mut crate::savestate::StateReader<'_>) -> Result<(), crate::savestate::StateError> {
+        r.bytes_into(&mut self.blob)?;
+        self.pos = r.u64()?;
+        Ok(())
+    }
+
     fn read(&mut self, ctx: &mut super::DeviceContext<'_>, out_ptr: u32, out_len: u32) -> i32 {
         let start = self.pos as usize;
         let n = (out_len as usize).min(self.blob.len().saturating_sub(start));

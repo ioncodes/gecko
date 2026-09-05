@@ -720,3 +720,81 @@ mod tests {
         assert_eq!(wiimote.report_mode, ReportMode::CoreAccel);
     }
 }
+
+impl WiimoteState {
+    pub(super) fn save_state(&self, w: &mut crate::savestate::StateWriter) {
+        w.u16(self.buttons);
+        w.u8(self.report_mode as u8);
+        w.bool(self.continuous);
+        w.u8(self.leds);
+        w.bool(self.ir_enabled_pin1);
+        w.bool(self.ir_enabled_pin2);
+        w.bytes(&self.eeprom);
+        w.bool(self.nunchuk_attached);
+        w.u8(self.nunchuk_buttons);
+        w.u8(self.nunchuk_stick_x);
+        w.u8(self.nunchuk_stick_y);
+        w.pod(&self.nunchuk_calibration);
+        w.pod(&self.nunchuk_key_buf);
+        w.u16(self.nunchuk_key_valid);
+        w.pod(&self.nunchuk_cipher);
+
+        match self.ir_pointer {
+            Some((x, y)) => {
+                w.bool(true);
+                w.u16(x);
+                w.u16(y);
+            }
+            None => w.bool(false),
+        }
+
+        w.pod(&self.accel);
+
+        match self.accel_override {
+            Some(accel) => {
+                w.bool(true);
+                w.pod(&accel);
+            }
+            None => w.bool(false),
+        }
+
+        w.bool(self.shake_active);
+        w.pod(&self.shake_phase);
+        w.bool(self.rumble);
+        w.bool(self.dirty);
+    }
+
+    pub(super) fn load_state(
+        &mut self,
+        r: &mut crate::savestate::StateReader<'_>,
+    ) -> Result<(), crate::savestate::StateError> {
+        self.buttons = r.u16()?;
+        self.report_mode = ReportMode::from_u8(r.u8()?).unwrap_or(ReportMode::Core);
+        self.continuous = r.bool()?;
+        self.leds = r.u8()?;
+        self.ir_enabled_pin1 = r.bool()?;
+        self.ir_enabled_pin2 = r.bool()?;
+        r.bytes_into(&mut self.eeprom)?;
+        self.nunchuk_attached = r.bool()?;
+        self.nunchuk_buttons = r.u8()?;
+        self.nunchuk_stick_x = r.u8()?;
+        self.nunchuk_stick_y = r.u8()?;
+        self.nunchuk_calibration = r.pod()?;
+        self.nunchuk_key_buf = r.pod()?;
+        self.nunchuk_key_valid = r.u16()?;
+        self.nunchuk_cipher = r.pod()?;
+
+        self.ir_pointer = if r.bool()? { Some((r.u16()?, r.u16()?)) } else { None };
+
+        self.accel = r.pod()?;
+
+        self.accel_override = if r.bool()? { Some(r.pod()?) } else { None };
+
+        self.shake_active = r.bool()?;
+        self.shake_phase = r.pod()?;
+        self.rumble = r.bool()?;
+        self.dirty = r.bool()?;
+
+        Ok(())
+    }
+}

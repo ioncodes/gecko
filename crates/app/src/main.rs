@@ -2,6 +2,7 @@ mod app;
 mod cache;
 mod config;
 mod game;
+mod keybinds;
 mod library;
 mod player;
 mod theme;

@@ -483,6 +483,8 @@ struct App {
     state: SharedState,
     #[cfg(feature = "debug")]
     debug_state: debug_ui::DebugState,
+    #[cfg(feature = "debug")]
+    freecam_input_blocked: bool,
 }
 
 impl ApplicationHandler for App {
@@ -530,6 +532,12 @@ impl ApplicationHandler for App {
                     if let HostInput::Gc(pad) = &mut self.input {
                         update_pad(pad, key, pressed);
                     }
+
+                    #[cfg(feature = "debug")]
+                    if self.debug_state.freecam.enabled {
+                        return;
+                    }
+
                     self.emulator.apply_host_input(&self.input);
                 }
             }
@@ -544,6 +552,18 @@ impl ApplicationHandler for App {
                             &window,
                         );
                     }
+
+                    #[cfg(feature = "debug")]
+                    if self.debug_state.freecam.enabled != self.freecam_input_blocked {
+                        self.freecam_input_blocked = self.debug_state.freecam.enabled;
+
+                        if self.freecam_input_blocked {
+                            self.emulator.apply_host_input(&HostInput::gc_connected());
+                        } else {
+                            self.emulator.apply_host_input(&self.input);
+                        }
+                    }
+
                     window.request_redraw();
                 }
             }
@@ -592,6 +612,8 @@ pub fn start_emulator(rom_data: &[u8], filename: String, dsp_irom: Option<Vec<u8
         state: Rc::new(RefCell::new(None)),
         #[cfg(feature = "debug")]
         debug_state: debug_ui::DebugState::default(),
+        #[cfg(feature = "debug")]
+        freecam_input_blocked: false,
     };
 
     event_loop.spawn_app(app);

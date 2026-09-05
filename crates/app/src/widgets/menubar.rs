@@ -325,6 +325,12 @@ fn settings_menu(
             Message::MenuInputSettings,
             None,
         )),
+        Item::new(self::menu_item(
+            palette,
+            "Keyboard Bindings",
+            Message::MenuKeyboardSettings,
+            None,
+        )),
     ])
     .max_width(240.0)
     .offset(4.0)

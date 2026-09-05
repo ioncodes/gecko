@@ -127,17 +127,19 @@ pub fn start_transfer<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     const DI_TRANSFER_DELAY_US: u64 = 20; // Based off of vxpm and hazel (~10k cycles at GC clock)
     sys.scheduler.schedule_in(
         crate::scheduler::microseconds_to_cycles(SYSTEM, DI_TRANSFER_DELAY_US),
-        |sys| {
-            sys.di.control.set_tstart(false);
-            // DMA length tracks the progress of the transfer, so when it hits 0, the
-            // transfer is complete. On failure, this would denote how many bytes were
-            // not transferred, but we close our eyes and just hope nothing depends on
-            // that!
-            sys.di.dma_length = regs::DiDmaLengthRegister::from_raw(0);
-            sys.di.status.set_transfer_complete(true);
-            self::refresh_interrupts(sys);
-        },
+        crate::scheduler::Handler::DiTransferDone,
     );
+}
+
+pub fn transfer_done_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
+    sys.di.control.set_tstart(false);
+    // DMA length tracks the progress of the transfer, so when it hits 0, the
+    // transfer is complete. On failure, this would denote how many bytes were
+    // not transferred, but we close our eyes and just hope nothing depends on
+    // that!
+    sys.di.dma_length = regs::DiDmaLengthRegister::from_raw(0);
+    sys.di.status.set_transfer_complete(true);
+    self::refresh_interrupts(sys);
 }
 
 #[inline(always)]
@@ -211,5 +213,37 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         tracing::debug!("DVD drive cover closed");
         self.di.cover = self.di.cover.with_cover_status(false).with_cover_interrupt(false);
         self::refresh_interrupts(self);
+    }
+}
+
+impl DvdInterface {
+    pub fn save_state(&self, w: &mut crate::savestate::StateWriter) {
+        w.pod(&self.status);
+        w.pod(&self.cover);
+        w.pod(&self.dma_address);
+        w.pod(&self.dma_length);
+        w.pod(&self.control);
+        w.pod(&self.config);
+        w.u32(self.cmdbuf0);
+        w.u32(self.cmdbuf1);
+        w.u32(self.cmdbuf2);
+        w.u32(self.immbuf);
+    }
+
+    pub fn load_state(
+        &mut self,
+        r: &mut crate::savestate::StateReader<'_>,
+    ) -> Result<(), crate::savestate::StateError> {
+        self.status = r.pod()?;
+        self.cover = r.pod()?;
+        self.dma_address = r.pod()?;
+        self.dma_length = r.pod()?;
+        self.control = r.pod()?;
+        self.config = r.pod()?;
+        self.cmdbuf0 = r.u32()?;
+        self.cmdbuf1 = r.u32()?;
+        self.cmdbuf2 = r.u32()?;
+        self.immbuf = r.u32()?;
+        Ok(())
     }
 }

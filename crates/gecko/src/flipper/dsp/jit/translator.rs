@@ -14,6 +14,88 @@ pub struct ExternFuncs {
     pub write_reg_full: FuncId,
 }
 
+fn szat_liveness(spec: &BlockSpec, loop_end_table: &[u8; 0x10000]) -> Vec<bool> {
+    use disasm::dsp::GcDspInstruction as I;
+    let mut live = true;
+    let mut needed = vec![true; spec.instrs.len()];
+    let is_flag_independent_register = |reg: u8| reg != 19 && !(12..=15).contains(&reg);
+
+    for (idx, entry) in spec.instrs.iter().enumerate().rev() {
+        if spec.unrolled_loop_start.is_none_or(|start| idx < start) && loop_end_table[entry.pc as usize] != 0 {
+            live = true;
+        }
+
+        let bytes = [
+            (entry.raw >> 8) as u8,
+            entry.raw as u8,
+            (entry.raw >> 24) as u8,
+            (entry.raw >> 16) as u8,
+        ];
+        let Some((insn, _)) = I::decode(&bytes) else {
+            live = true;
+
+            continue;
+        };
+
+        match insn {
+            I::Add { .. }
+            | I::Addax { .. }
+            | I::Addr { .. }
+            | I::Addp { .. }
+            | I::Sub { .. }
+            | I::Subax { .. }
+            | I::Subr { .. }
+            | I::Subp { .. }
+            | I::Neg { .. }
+            | I::Movp { .. }
+            | I::Movpz { .. }
+            | I::Tst { .. }
+            | I::Clr { .. }
+            | I::Lsl16 { .. }
+            | I::Asr16 { .. }
+            | I::Lsr16 { .. }
+            | I::Mulac { .. }
+            | I::Mulmv { .. }
+            | I::Mulmvz { .. }
+            | I::Mulxac { .. }
+            | I::Mulxmv { .. }
+            | I::Mulxmvz { .. }
+            | I::Mulcac { .. }
+            | I::Mulcmv { .. }
+            | I::Mulcmvz { .. } => {
+                needed[idx] = live;
+                live = false;
+            }
+            I::Nop
+            | I::Dar { .. }
+            | I::Iar { .. }
+            | I::Addarn { .. }
+            | I::Subarn { .. }
+            | I::Mul { .. }
+            | I::Mulx { .. }
+            | I::Mulc { .. }
+            | I::Nx0 { .. }
+            | I::Nx1 { .. }
+            | I::M0 { .. }
+            | I::M2 { .. }
+            | I::Set15 { .. }
+            | I::Clr15 { .. }
+            | I::Set16 { .. }
+            | I::Set40 { .. } => {}
+            I::Lri { rd, .. } | I::Lr { rd, .. } if is_flag_independent_register(rd) => {}
+            I::Sr { rs, .. } if is_flag_independent_register(rs) => {}
+            I::Lrr { d, .. } | I::Lrrd { d, .. } | I::Lrri { d, .. } | I::Lrrn { d, .. }
+                if is_flag_independent_register(d) => {}
+            I::Srr { s, .. } | I::Srrd { s, .. } | I::Srri { s, .. } | I::Srrn { s, .. }
+                if is_flag_independent_register(s) => {}
+            I::Mrr { dst, src } if is_flag_independent_register(dst) && is_flag_independent_register(src) => {}
+            _ => live = true,
+        }
+    }
+
+    needed
+}
+
 pub fn translate(
     ctx: &mut Context,
     builder_ctx: &mut FunctionBuilderContext,
@@ -55,16 +137,35 @@ pub fn translate(
     }
 
     let block_sig_ref = builder.import_signature(block_signature(pointer_type));
+    let mut reg_cache = t::DspRegCache::new(&mut builder, ctx_ptr);
+    let szat_needed = szat_liveness(spec, loop_end_table);
 
     for (idx, entry) in spec.instrs.iter().enumerate() {
         let natural_nia = entry.pc.wrapping_add(entry.size as u16);
-        let nia_v = builder.ins().iconst(types::I16, natural_nia as i64);
-        builder.ins().store(MemFlagsData::trusted(), nia_v, ctx_ptr, nia_offset);
+        let is_last = idx + 1 == spec.instrs.len();
+        let dynamic_nia = is_last && spec.terminator != TermKind::LengthLimit;
+        let marked_loop_end =
+            spec.unrolled_loop_start.is_none_or(|start| idx < start) && loop_end_table[entry.pc as usize] != 0;
+
+        if is_last || marked_loop_end {
+            let nia_v = builder.ins().iconst(types::I16, natural_nia as i64);
+            builder.ins().store(MemFlagsData::trusted(), nia_v, ctx_ptr, nia_offset);
+        }
 
         let primary = (entry.raw & 0xFFFF) as u16;
         let has_ext = ((primary >> 12) & 0xF) >= 3;
-        if has_ext {
-            emit_cache_ext_ac_inline(&mut builder, ctx_ptr);
+        let ext_byte = has_ext.then_some({
+            if ((primary >> 12) & 0xF) == 3 {
+                primary & 0x7F
+            } else {
+                primary & 0xFF
+            }
+        });
+        let ext_ac_source =
+            ext_byte.and_then(|ext| emit_ext_ac_source_value(&mut builder, ctx_ptr, &reg_cache, ext as u8));
+        if let Some((source, value)) = ext_ac_source {
+            let cache_off = super::abi::dsp_ext_ac_cache_base_offset() as i32 + source as i32 * 2;
+            builder.ins().store(MemFlagsData::trusted(), value, ctx_ptr, cache_off);
         }
 
         let mut tctx = t::TranslatorCtx {
@@ -72,36 +173,35 @@ pub fn translate(
             module,
             extern_funcs: *extern_funcs,
             sys_ptr: ctx_ptr,
+            reg_cache: &mut reg_cache,
             pc: entry.pc,
             size: entry.size,
+            szat_needed: szat_needed[idx],
         };
         jit_lut::dispatch(&mut tctx, Instruction(entry.raw));
 
         if has_ext {
-            let ext_byte = if ((primary >> 12) & 0xF) == 3 {
-                primary & 0x7F
-            } else {
-                primary & 0xFF
-            };
-
             let mut tctx2 = t::TranslatorCtx {
                 builder: &mut builder,
                 module,
                 extern_funcs: *extern_funcs,
                 sys_ptr: ctx_ptr,
+                reg_cache: &mut reg_cache,
                 pc: entry.pc,
                 size: entry.size,
+                szat_needed: szat_needed[idx],
             };
-            jit_lut::dispatch_gc_dsp_ext(&mut tctx2, crate::flipper::dsp::instruction::GcDspExt(ext_byte as u8));
+            jit_lut::dispatch_gc_dsp_ext(
+                &mut tctx2,
+                crate::flipper::dsp::instruction::GcDspExt(ext_byte.unwrap() as u8),
+            );
         }
 
-        let is_last = idx + 1 == spec.instrs.len();
-        let dynamic_nia = is_last && spec.terminator != TermKind::LengthLimit;
-        let marked_loop_end = loop_end_table[entry.pc as usize] != 0;
-
         if !dynamic_nia && !marked_loop_end {
-            let pc_v = builder.ins().iconst(types::I16, natural_nia as i64);
-            builder.ins().store(MemFlagsData::trusted(), pc_v, ctx_ptr, pc_offset);
+            if is_last {
+                let pc_v = builder.ins().iconst(types::I16, natural_nia as i64);
+                builder.ins().store(MemFlagsData::trusted(), pc_v, ctx_ptr, pc_offset);
+            }
             continue;
         }
 
@@ -232,6 +332,7 @@ pub fn translate(
             block_sig_ref,
             block_lookup_table_addr,
             idx as i64 + 1,
+            &reg_cache,
         );
 
         builder.switch_to_block(continue_block);
@@ -244,6 +345,7 @@ pub fn translate(
         block_sig_ref,
         block_lookup_table_addr,
         spec.instrs.len() as i64,
+        &reg_cache,
     );
 
     builder.finalize();
@@ -255,6 +357,7 @@ fn emit_block_tail_chain(
     block_sig_ref: cranelift_codegen::ir::SigRef,
     block_lookup_table_addr: i64,
     block_instr_count: i64,
+    reg_cache: &super::translate::DspRegCache,
 ) {
     use cranelift_codegen::ir::MemFlagsData;
     use cranelift_codegen::ir::condcodes::IntCC;
@@ -263,6 +366,7 @@ fn emit_block_tail_chain(
     let chain_budget_offset = super::abi::dsp_chain_budget_offset() as i32;
     let instr_count_offset = super::abi::dsp_instr_count_offset() as i32;
 
+    reg_cache.flush(builder, ctx_ptr);
     let instr_count = builder
         .ins()
         .load(types::I32, MemFlagsData::trusted(), ctx_ptr, instr_count_offset);
@@ -319,72 +423,49 @@ fn emit_block_tail_chain(
         .return_call_indirect(block_sig_ref, slot_entry, &[ctx_ptr]);
 }
 
-fn emit_cache_ext_ac_inline(builder: &mut FunctionBuilder, ctx_ptr: Value) {
-    use cranelift_codegen::ir::MemFlagsData;
+fn emit_ext_ac_source_value(
+    builder: &mut FunctionBuilder,
+    ctx_ptr: Value,
+    reg_cache: &super::translate::DspRegCache,
+    ext: u8,
+) -> Option<(u8, Value)> {
     use cranelift_codegen::ir::condcodes::IntCC;
 
-    let ac0_low_off = super::abi::dsp_ac0_low_offset() as i32;
-    let ac1_low_off = super::abi::dsp_ac1_low_offset() as i32;
-    let ac0_mid_off = super::abi::dsp_ac0_mid_offset() as i32;
-    let ac1_mid_off = super::abi::dsp_ac1_mid_offset() as i32;
-    let ac0_hi_off = super::abi::dsp_ac0_high_offset() as i32;
-    let ac1_hi_off = super::abi::dsp_ac1_high_offset() as i32;
-    let status_off = super::abi::dsp_status_offset() as i32;
-    let cache_base = super::abi::dsp_ext_ac_cache_base_offset() as i32;
+    let source = match ext {
+        0x10..=0x1F => ext & 0x3,
+        0x20..=0x3F => (ext >> 3) & 0x3,
+        0x80..=0xBF => 4 + (ext & 0x1),
+        _ => return None,
+    };
 
-    let ac0_low = builder
-        .ins()
-        .load(types::I16, MemFlagsData::trusted(), ctx_ptr, ac0_low_off);
-    let ac1_low = builder
-        .ins()
-        .load(types::I16, MemFlagsData::trusted(), ctx_ptr, ac1_low_off);
-    let ac0_mid = builder
-        .ins()
-        .load(types::I16, MemFlagsData::trusted(), ctx_ptr, ac0_mid_off);
-    let ac1_mid = builder
-        .ins()
-        .load(types::I16, MemFlagsData::trusted(), ctx_ptr, ac1_mid_off);
-    let ac0_hi = builder
-        .ins()
-        .load(types::I16, MemFlagsData::trusted(), ctx_ptr, ac0_hi_off);
-    let ac1_hi = builder
-        .ins()
-        .load(types::I16, MemFlagsData::trusted(), ctx_ptr, ac1_hi_off);
+    let ac = (source & 1) as usize;
+    let mid_off = [super::abi::dsp_ac0_mid_offset(), super::abi::dsp_ac1_mid_offset()][ac] as i32;
+    let value = match source {
+        0 | 1 => {
+            let low_off = [super::abi::dsp_ac0_low_offset(), super::abi::dsp_ac1_low_offset()][ac] as i32;
 
-    builder
-        .ins()
-        .store(MemFlagsData::trusted(), ac0_low, ctx_ptr, cache_base);
-    builder
-        .ins()
-        .store(MemFlagsData::trusted(), ac1_low, ctx_ptr, cache_base + 2);
-    builder
-        .ins()
-        .store(MemFlagsData::trusted(), ac0_mid, ctx_ptr, cache_base + 8);
-    builder
-        .ins()
-        .store(MemFlagsData::trusted(), ac1_mid, ctx_ptr, cache_base + 10);
+            reg_cache.load(builder, ctx_ptr, low_off)
+        }
+        2 | 3 => {
+            let high_off = [super::abi::dsp_ac0_high_offset(), super::abi::dsp_ac1_high_offset()][ac] as i32;
+            let mid = reg_cache.load(builder, ctx_ptr, mid_off);
+            let high = reg_cache.load(builder, ctx_ptr, high_off);
+            let status = reg_cache.load(builder, ctx_ptr, super::abi::dsp_status_offset() as i32);
+            let sxm_shifted = builder.ins().ushr_imm(status, 14);
+            let sxm = builder.ins().band_imm(sxm_shifted, 1);
+            let sxm_set = builder.ins().icmp_imm(IntCC::NotEqual, sxm, 0);
+            let saturated = emit_saturate_ac_mid(builder, high, mid);
 
-    let status = builder
-        .ins()
-        .load(types::I16, MemFlagsData::trusted(), ctx_ptr, status_off);
-    let sxm_shifted = builder.ins().ushr_imm(status, 14);
-    let sxm = builder.ins().band_imm(sxm_shifted, 1);
-    let sxm_set = builder.ins().icmp_imm(IntCC::NotEqual, sxm, 0);
+            builder.ins().select(sxm_set, saturated, mid)
+        }
+        4 | 5 => reg_cache.load(builder, ctx_ptr, mid_off),
+        _ => unreachable!(),
+    };
 
-    let sat0 = emit_saturate_ac_mid(builder, ac0_hi, ac0_mid);
-    let sat1 = emit_saturate_ac_mid(builder, ac1_hi, ac1_mid);
-
-    let sel0 = builder.ins().select(sxm_set, sat0, ac0_mid);
-    let sel1 = builder.ins().select(sxm_set, sat1, ac1_mid);
-    builder
-        .ins()
-        .store(MemFlagsData::trusted(), sel0, ctx_ptr, cache_base + 4);
-    builder
-        .ins()
-        .store(MemFlagsData::trusted(), sel1, ctx_ptr, cache_base + 6);
+    Some((source, value))
 }
 
-fn emit_saturate_ac_mid(builder: &mut FunctionBuilder, high: Value, mid: Value) -> Value {
+pub(super) fn emit_saturate_ac_mid(builder: &mut FunctionBuilder, high: Value, mid: Value) -> Value {
     use cranelift_codegen::ir::condcodes::IntCC;
 
     let sign_ext = builder.ins().sshr_imm(mid, 15);
