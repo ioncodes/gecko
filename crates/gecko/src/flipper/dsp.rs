@@ -28,6 +28,15 @@ use crate::system::{System, SystemId};
 #[cfg(feature = "jit")]
 pub const DSP_JIT_CHAIN_BUDGET: u32 = 64;
 
+#[derive(Clone, Copy)]
+enum WaitCondition {
+    None,
+    CpuMailbox,
+    DspMailbox,
+    InterruptZero { addr: u16 },
+    InterruptComparison { lhs: u16, rhs: u16 },
+}
+
 pub struct Dsp {
     pub registers: core::Registers,
 
@@ -71,7 +80,7 @@ pub struct Dsp {
     #[cfg(feature = "jit")]
     pub instr_count: u32,
 
-    pub wait_table: Box<[u8; 0x10000]>,
+    wait_table: Box<[WaitCondition]>,
 
     pub scheduler_suspended: bool,
 }
@@ -119,51 +128,98 @@ impl Dsp {
             chain_budget: 0,
             #[cfg(feature = "jit")]
             instr_count: 0,
-            wait_table: unsafe { Box::<[u8; 0x10000]>::new_zeroed().assume_init() },
+            wait_table: vec![WaitCondition::None; 0x10000].into_boxed_slice(),
             scheduler_suspended: false,
         }
     }
 
     #[inline(always)]
     pub fn is_waiting_for_cpu_mail(&self) -> bool {
-        self.wait_table[self.registers.pc as usize] & 1 != 0
+        matches!(self.wait_table[self.registers.pc as usize], WaitCondition::CpuMailbox)
     }
 
     #[inline(always)]
     pub fn is_waiting_for_dsp_mail(&self) -> bool {
-        self.wait_table[self.registers.pc as usize] & 2 != 0
+        matches!(self.wait_table[self.registers.pc as usize], WaitCondition::DspMailbox)
     }
 
     #[inline(always)]
-    pub fn parked_in_mailbox_wait(&self) -> bool {
-        let cpu_mail_quiet = !self.mailbox_to_dsp_hi.busy();
-        let dsp_mail_full = self.mailbox_to_cpu_hi.busy();
-        (cpu_mail_quiet && self.is_waiting_for_cpu_mail()) || (dsp_mail_full && self.is_waiting_for_dsp_mail())
+    pub fn parked_in_idle_wait(&self) -> bool {
+        if self.csr.pi_interrupt() && self.registers.status.external_interrupt_enable() {
+            return false;
+        }
+
+        match self.wait_table[self.registers.pc as usize] {
+            WaitCondition::None => false,
+            WaitCondition::CpuMailbox => !self.mailbox_to_dsp_hi.busy(),
+            WaitCondition::DspMailbox => self.mailbox_to_cpu_hi.busy(),
+            _ if !self.registers.status.external_interrupt_enable() => false,
+            WaitCondition::InterruptZero { addr } => {
+                self.registers.loop_addr.is_empty() && read_word(&self.dram[..], addr) == 0
+            }
+            WaitCondition::InterruptComparison { lhs, rhs } => {
+                if !self.registers.loop_addr.is_empty()
+                    && self.registers.loop_addr.top().wrapping_sub(self.registers.pc) <= 9
+                {
+                    return false;
+                }
+
+                let lhs = read_word(&self.dram[..], lhs);
+                let rhs = read_word(&self.dram[..], rhs);
+
+                if self.registers.sign_extended() {
+                    (lhs as i16) <= (rhs as i16)
+                } else {
+                    lhs <= rhs
+                }
+            }
+        }
     }
 
     pub fn rebuild_wait_table(&mut self) {
-        const SDK_OFFSETS: [i16; 3] = [0, -1, -3];
+        const MAILBOX_OFFSETS: [i16; 5] = [0, -1, -2, -3, -4];
         const IPL_OFFSETS: [i16; 5] = [0, -1, -2, -3, -5];
 
         for pc in 0u32..0x10000 {
             let pc = pc as u16;
 
-            let cpu = SDK_OFFSETS.iter().any(|&o| self.matches_cpu_mail_wait_at(pc, o))
+            let cpu = MAILBOX_OFFSETS
+                .iter()
+                .any(|&o| self.matches_mail_wait_at(pc, o, 0xFFFE, false))
                 || IPL_OFFSETS.iter().any(|&o| self.matches_ipl_cpu_mail_wait_at(pc, o));
-            let dsp = SDK_OFFSETS.iter().any(|&o| self.matches_dsp_mail_wait_at(pc, o));
+            let dsp = MAILBOX_OFFSETS
+                .iter()
+                .any(|&o| self.matches_mail_wait_at(pc, o, 0xFFFC, true));
 
-            self.wait_table[pc as usize] = (cpu as u8) | ((dsp as u8) << 1);
+            self.wait_table[pc as usize] = if cpu {
+                WaitCondition::CpuMailbox
+            } else if dsp {
+                WaitCondition::DspMailbox
+            } else {
+                self.interrupt_wait_at(pc)
+            };
         }
     }
 
-    fn matches_cpu_mail_wait_at(&self, pc: u16, offset: i16) -> bool {
+    fn matches_mail_wait_at(&self, pc: u16, offset: i16, addr: u16, full: bool) -> bool {
         let start = pc.wrapping_add_signed(offset);
-        let words = self.read_imem_window::<5>(start);
-        let pattern_a = [0x26FE, 0x02C0, 0x8000, 0x029C, start];
-        let pattern_b = [0x27FE, 0x03C0, 0x8000, 0x029C, start];
-        let pattern_c = [0x26FE, 0x02A0, 0x8000, 0x029D, start];
-        let pattern_d = [0x27FE, 0x03A0, 0x8000, 0x029D, start];
-        words == pattern_a || words == pattern_b || words == pattern_c || words == pattern_d
+        let words = self.read_imem_window::<6>(start);
+        let (acc, test_index) = match words[0] {
+            word if word & 0xFEFF == 0x2600 | (addr & 0xFF) => (word & 0x0100, 1),
+            0x00DE | 0x00DF if words[1] == addr => ((words[0] & 1) << 8, 2),
+            _ => return false,
+        };
+
+        if offset != 0 && -offset != test_index as i16 && -offset != test_index as i16 + 2 {
+            return false;
+        }
+
+        let test = words[test_index];
+        let branch = words[test_index + 2];
+        let bit_test = (test == 0x02C0 | acc && branch == 0x029C | full as u16)
+            || (test == 0x02A0 | acc && branch == 0x029C | !full as u16);
+
+        bit_test && words[test_index + 1] == 0x8000 && words[test_index + 3] == start
     }
 
     fn matches_ipl_cpu_mail_wait_at(&self, pc: u16, offset: i16) -> bool {
@@ -172,14 +228,46 @@ impl Dsp {
         words == [0x8100, 0x8900, 0x26FE, 0x02C0, 0x8000, 0x029C, start]
     }
 
-    fn matches_dsp_mail_wait_at(&self, pc: u16, offset: i16) -> bool {
-        let start = pc.wrapping_add_signed(offset);
-        let words = self.read_imem_window::<5>(start);
-        let pattern_a = [0x26FC, 0x02C0, 0x8000, 0x029D, start];
-        let pattern_b = [0x27FC, 0x03C0, 0x8000, 0x029D, start];
-        let pattern_c = [0x26FC, 0x02A0, 0x8000, 0x029C, start];
-        let pattern_d = [0x27FC, 0x03A0, 0x8000, 0x029C, start];
-        words == pattern_a || words == pattern_b || words == pattern_c || words == pattern_d
+    fn interrupt_wait_at(&self, pc: u16) -> WaitCondition {
+        let words = self.read_imem_window::<9>(pc);
+
+        if let [0x8100, 0x8900, 0x00DF, rhs, 0x00DE, lhs, 0x8200, 0x0293, target] = words
+            && lhs < 0x1000
+            && rhs < 0x1000
+            && target == pc
+        {
+            return WaitCondition::InterruptComparison { lhs, rhs };
+        }
+
+        let start = if words[0] == 0x029F { words[1] } else { pc };
+        let [
+            0x00C0,
+            pointer_addr,
+            0x0088,
+            0x002F,
+            0x00DA,
+            addr,
+            0x8600,
+            0x0295,
+            target,
+        ] = self.read_imem_window::<9>(start)
+        else {
+            return WaitCondition::None;
+        };
+
+        if pointer_addr >= 0x1000 || addr >= 0x1000 {
+            return WaitCondition::None;
+        }
+
+        let [0x0088, 0xFFFF, 0x029F, back] = self.read_imem_window::<4>(target) else {
+            return WaitCondition::None;
+        };
+
+        if back != start && self.read_imem_window::<2>(back) != [0x029F, start] {
+            return WaitCondition::None;
+        }
+
+        WaitCondition::InterruptZero { addr }
     }
 
     fn read_imem_window<const N: usize>(&self, start: u16) -> [u16; N] {
@@ -423,7 +511,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
         let mut budget = crate::scheduler::DSP_BATCH_SIZE as u64;
         while budget > 0 {
-            if self.dsp.parked_in_mailbox_wait() {
+            if self.dsp.parked_in_idle_wait() {
                 break;
             }
 
@@ -501,7 +589,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 break;
             }
 
-            if self.dsp.parked_in_mailbox_wait() {
+            if self.dsp.parked_in_idle_wait() {
                 break;
             }
 
@@ -550,7 +638,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 break;
             }
 
-            if self.dsp.parked_in_mailbox_wait() {
+            if self.dsp.parked_in_idle_wait() {
                 break;
             }
         }

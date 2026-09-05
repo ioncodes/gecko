@@ -315,10 +315,7 @@ pub fn dsp_batch_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
         return;
     }
 
-    let in_idle_wait = sys.dsp.parked_in_mailbox_wait();
-    let pending_interrupt = sys.dsp.csr.pi_interrupt() && sys.dsp.registers.status.external_interrupt_enable();
-
-    if in_idle_wait && !pending_interrupt {
+    if sys.dsp.parked_in_idle_wait() {
         sys.dsp.scheduler_suspended = true;
         #[cfg(feature = "jit-stats")]
         crate::flipper::dsp::DSP_SUSPEND_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
