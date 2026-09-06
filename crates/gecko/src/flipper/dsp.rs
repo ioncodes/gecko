@@ -83,9 +83,34 @@ pub struct Dsp {
     wait_table: Box<[WaitCondition]>,
 
     pub scheduler_suspended: bool,
+    pub pending_exceptions: u8,
 }
 
 impl Dsp {
+    fn check_exceptions(&mut self) {
+        let external = self.csr.pi_interrupt() && self.registers.status.external_interrupt_enable();
+        let exception = if external {
+            self.csr.set_pi_interrupt(false);
+            7
+        } else if self.pending_exceptions != 0 && self.registers.status.interrupt_enable() {
+            let exception = 7 - self.pending_exceptions.leading_zeros() as u16;
+            self.pending_exceptions &= !(1 << exception);
+            exception
+        } else {
+            return;
+        };
+        self.registers.call_stack.push(self.registers.pc);
+        self.registers.data_stack.push(self.registers.status.raw());
+
+        if external {
+            self.registers.status.set_external_interrupt_enable(false);
+        } else {
+            self.registers.status.set_interrupt_enable(false);
+        }
+
+        self.registers.pc = exception * 2;
+    }
+
     pub fn new() -> Self {
         let aram = unsafe { Box::<[u8; 16 * 1024 * 1024]>::new_zeroed().assume_init() };
         let iram = unsafe { Box::<[u8; 0x2000]>::new_zeroed().assume_init() };
@@ -130,6 +155,7 @@ impl Dsp {
             instr_count: 0,
             wait_table: vec![WaitCondition::None; 0x10000].into_boxed_slice(),
             scheduler_suspended: false,
+            pending_exceptions: 0,
         }
     }
 
@@ -145,6 +171,10 @@ impl Dsp {
 
     #[inline(always)]
     pub fn parked_in_idle_wait(&self) -> bool {
+        if self.pending_exceptions != 0 && self.registers.status.interrupt_enable() {
+            return false;
+        }
+
         if self.csr.pi_interrupt() && self.registers.status.external_interrupt_enable() {
             return false;
         }
@@ -395,13 +425,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             return false;
         }
 
-        if self.dsp.csr.pi_interrupt() && self.dsp.registers.status.external_interrupt_enable() {
-            self.dsp.csr = self.dsp.csr.with_pi_interrupt(false);
-            self.dsp.registers.call_stack.push(self.dsp.registers.pc);
-            self.dsp.registers.data_stack.push(self.dsp.registers.status.raw());
-            self.dsp.registers.status = self.dsp.registers.status.with_external_interrupt_enable(false);
-            self.dsp.registers.pc = 0x000E;
-        }
+        self.dsp.check_exceptions();
 
         let pc = self.dsp.registers.pc as usize;
         let w0 = self.dsp.read_imem(pc as u16);
@@ -463,13 +487,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     fn dsp_jit_step(&mut self, iram: &[u8], irom: &[u8]) -> u64 {
         let ctx_ptr = self as *mut crate::system::System<SYSTEM> as *mut ::core::ffi::c_void;
 
-        if self.dsp.csr.pi_interrupt() && self.dsp.registers.status.external_interrupt_enable() {
-            self.dsp.csr = self.dsp.csr.with_pi_interrupt(false);
-            self.dsp.registers.call_stack.push(self.dsp.registers.pc);
-            self.dsp.registers.data_stack.push(self.dsp.registers.status.raw());
-            self.dsp.registers.status = self.dsp.registers.status.with_external_interrupt_enable(false);
-            self.dsp.registers.pc = 0x000E;
-        }
+        self.dsp.check_exceptions();
 
         let start_pc = self.dsp.registers.pc;
         self.dsp.chain_budget = DSP_JIT_CHAIN_BUDGET;

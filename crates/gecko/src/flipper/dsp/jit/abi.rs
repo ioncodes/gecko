@@ -99,6 +99,7 @@ pub const fn dsp_loop_addr_ptr_offset_max() -> usize {
 make_dsp_field_offset!(dsp_csr_offset, csr);
 make_dsp_field_offset!(dsp_chain_budget_offset, chain_budget);
 make_dsp_field_offset!(dsp_instr_count_offset, instr_count);
+make_dsp_field_offset!(dsp_pending_exceptions_offset, pending_exceptions);
 make_dsp_field_offset!(dsp_dram_ptr_offset, dram);
 make_dsp_field_offset!(dsp_coef_ptr_offset, coef);
 make_dsp_field_offset!(dsp_iram_ptr_offset, iram);

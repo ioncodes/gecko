@@ -2,7 +2,7 @@ use crate::system::{System, SystemId, WII};
 use std::path::PathBuf;
 
 pub const STATE_MAGIC: [u8; 4] = *b"GKST";
-pub const STATE_VERSION: u32 = 1;
+pub const STATE_VERSION: u32 = 2;
 
 const COMPRESSION_LEVEL: i32 = 1;
 
@@ -220,7 +220,7 @@ pub fn unpack(system: SystemId, data: &[u8]) -> Result<Vec<u8>, StateError> {
     }
 
     let version = u32::from_le_bytes(data[4..8].try_into().unwrap());
-    if version != STATE_VERSION {
+    if !(1..=STATE_VERSION).contains(&version) {
         return Err(StateError::UnsupportedVersion(version));
     }
 
@@ -274,12 +274,16 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             w.pod(&self.hollywood);
         }
 
+        // Version 2 appends the DSP exception latch to preserve version 1 layouts
+        w.u8(self.dsp.pending_exceptions);
+
         self::pack(SYSTEM, &w.into_inner())
     }
 
     pub fn load_state(&mut self, data: &[u8]) -> Result<(), StateError> {
         self.mmio.clear_deferred_efb_writebacks();
         let payload = self::unpack(SYSTEM, data)?;
+        let version = u32::from_le_bytes(data[4..8].try_into().unwrap());
         let mut r = StateReader::new(&payload);
 
         self.vsync_pending = r.bool()?;
@@ -307,6 +311,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             self.starlet.load_state(&mut r)?;
             self.hollywood = r.pod()?;
         }
+
+        self.dsp.pending_exceptions = if version >= 2 { r.u8()? } else { 0 };
 
         if r.remaining() != 0 {
             return Err(StateError::Corrupt("trailing data"));

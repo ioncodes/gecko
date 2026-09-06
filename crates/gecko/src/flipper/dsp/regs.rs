@@ -105,6 +105,7 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for ControlStatus {
             let addr = self.reset_vector().address();
             tracing::debug!(reset_vector = ?self.reset_vector(), pc = format!("{addr:04X}"), "DSP reset, executing from reset vector");
             sys.dsp.registers.pc = addr;
+            sys.dsp.pending_exceptions = 0;
         }
         csr = csr.with_reset(false);
 

@@ -41,6 +41,18 @@ pub fn is_terminator_word(primary: u16) -> bool {
 }
 
 fn classify(primary: u16) -> Option<TermKind> {
+    use crate::flipper::dsp::instruction::Instruction;
+
+    // Accelerator reads can raise an exception. Finish the instruction (including
+    // its extension and hardware loop) before checking it at the block boundary.
+    if matches!(primary, 0x00C0..=0x00DF | 0x1800..=0x19FF | 0x2000..=0x27FF
+        | 0x0093 | 0x1200..=0x1207 | 0x1300..=0x1307)
+        || (primary & 0xFC00 == 0x1C00 && (primary >> 5) & 31 == 19)
+        || Instruction(primary as u32).ext_opcode().is_some_and(|ext| ext >= 0x40)
+    {
+        return Some(TermKind::LengthLimit);
+    }
+
     match primary {
         0x0021 => Some(TermKind::Halt),
 

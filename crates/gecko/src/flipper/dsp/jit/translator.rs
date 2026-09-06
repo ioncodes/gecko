@@ -404,6 +404,26 @@ fn emit_block_tail_chain(
     let pc_and_entry = builder.ins().band(pc_match, entry_nonzero);
     let ok = builder.ins().band(pc_and_entry, budget_nonzero);
 
+    // Return to the dispatcher before the next instruction when an internal
+    // exception is ready
+    let pending = builder.ins().load(
+        types::I8,
+        MemFlagsData::trusted(),
+        ctx_ptr,
+        super::abi::dsp_pending_exceptions_offset() as i32,
+    );
+    let status = builder.ins().load(
+        types::I16,
+        MemFlagsData::trusted(),
+        ctx_ptr,
+        super::abi::dsp_status_offset() as i32,
+    );
+    let enabled = builder.ins().band_imm(status, 1 << 9);
+    let masked = builder.ins().icmp_imm(IntCC::Equal, enabled, 0);
+    let no_pending = builder.ins().icmp_imm(IntCC::Equal, pending, 0);
+    let no_exception = builder.ins().bor(masked, no_pending);
+    let ok = builder.ins().band(ok, no_exception);
+
     let chain_block = builder.create_block();
     let return_block = builder.create_block();
     builder.ins().brif(ok, chain_block, &[], return_block, &[]);

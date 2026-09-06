@@ -180,7 +180,7 @@ pub fn read_decoded_sample<const SYSTEM: SystemId>(dsp: &mut Dsp, ram: RamView<'
     if dsp.accelerator.current_addr == dsp.accelerator.end_addr.wrapping_add(step_size).wrapping_sub(1) {
         dsp.accelerator.current_addr = dsp.accelerator.start_addr;
         dsp.accelerator.reads_stopped = true;
-        // TODO: raise DSP exception?
+        dsp.pending_exceptions |= 1 << 5;
     }
 
     dsp.accelerator.set_current_addr(dsp.accelerator.current_addr);
