@@ -464,18 +464,13 @@ impl GraphicsProcessor {
         } else if vf.clr0_attr == AttributeType::Direct {
             let start = cur.position() as usize;
             cur.set_position(cur.position() + vf.clr0_data_size as u64);
-            decode_color(
-                &data[start..start + vf.clr0_data_size],
-                vf.vat_a.clr0_fmt(),
-                vf.vat_a.clr0_cnt(),
-            )
+            decode_color(&data[start..start + vf.clr0_data_size], vf.vat_a.clr0_fmt())
         } else {
             let clr0_index = read_index(cur, vf.clr0_attr);
             let clr0_addr = vf.clr0_base + clr0_index * vf.clr0_stride;
             decode_color(
                 fetch(ram, clr0_addr, vf.clr0_data_size, &mut scratch),
                 vf.vat_a.clr0_fmt(),
-                vf.vat_a.clr0_cnt(),
             )
         };
 
@@ -485,18 +480,13 @@ impl GraphicsProcessor {
         } else if vf.clr1_attr == AttributeType::Direct {
             let start = cur.position() as usize;
             cur.set_position(cur.position() + vf.clr1_data_size as u64);
-            decode_color(
-                &data[start..start + vf.clr1_data_size],
-                vf.vat_a.clr1_fmt(),
-                vf.vat_a.clr1_cnt(),
-            )
+            decode_color(&data[start..start + vf.clr1_data_size], vf.vat_a.clr1_fmt())
         } else {
             let clr1_index = read_index(cur, vf.clr1_attr);
             let clr1_addr = vf.clr1_base + clr1_index * vf.clr1_stride;
             decode_color(
                 fetch(ram, clr1_addr, vf.clr1_data_size, &mut scratch),
                 vf.vat_a.clr1_fmt(),
-                vf.vat_a.clr1_cnt(),
             )
         };
 
@@ -804,8 +794,7 @@ fn decode_components<const N: usize>(data: &[u8], num: usize, fmt: ComponentForm
     result
 }
 
-fn decode_color(data: &[u8], fmt: regs::ColorFormat, cnt: regs::ColorCount) -> [f32; 4] {
-    let has_alpha = cnt == regs::ColorCount::Rgba;
+fn decode_color(data: &[u8], fmt: regs::ColorFormat) -> [f32; 4] {
     match fmt {
         regs::ColorFormat::Rgb565 => {
             let raw = u16::from_be_bytes([data[0], data[1]]);
@@ -831,7 +820,7 @@ fn decode_color(data: &[u8], fmt: regs::ColorFormat, cnt: regs::ColorCount) -> [
             let r = ((raw >> 12) & 0xF) as f32 / 15.0;
             let g = ((raw >> 8) & 0xF) as f32 / 15.0;
             let b = ((raw >> 4) & 0xF) as f32 / 15.0;
-            let a = if has_alpha { (raw & 0xF) as f32 / 15.0 } else { 1.0 };
+            let a = (raw & 0xF) as f32 / 15.0;
             [r, g, b, a]
         }
         regs::ColorFormat::Rgba6 => {
@@ -839,14 +828,14 @@ fn decode_color(data: &[u8], fmt: regs::ColorFormat, cnt: regs::ColorCount) -> [
             let r = ((raw >> 18) & 0x3F) as f32 / 63.0;
             let g = ((raw >> 12) & 0x3F) as f32 / 63.0;
             let b = ((raw >> 6) & 0x3F) as f32 / 63.0;
-            let a = if has_alpha { (raw & 0x3F) as f32 / 63.0 } else { 1.0 };
+            let a = (raw & 0x3F) as f32 / 63.0;
             [r, g, b, a]
         }
         regs::ColorFormat::Rgba8 => {
             let r = data[0] as f32 / 255.0;
             let g = data[1] as f32 / 255.0;
             let b = data[2] as f32 / 255.0;
-            let a = if has_alpha { data[3] as f32 / 255.0 } else { 1.0 };
+            let a = data[3] as f32 / 255.0;
             [r, g, b, a]
         }
     }

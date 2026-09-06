@@ -4,7 +4,7 @@ use cranelift_frontend::FunctionBuilder;
 use super::VtxKey;
 use super::builder::{MEMFLAGS, MEMFLAGS_RO, MEMFLAGS_RO_MOVABLE, array_offset, offset, xf_byte_off};
 use crate::flipper::gx::constants::*;
-use crate::flipper::gx::regs::{AttributeType, ColorCount, ColorFormat, ComponentFormat, NrmCount, PosCount, TexCount};
+use crate::flipper::gx::regs::{AttributeType, ColorFormat, ComponentFormat, NrmCount, PosCount, TexCount};
 
 pub struct AttrCtx<'a, 'f> {
     pub bd: &'a mut FunctionBuilder<'f>,
@@ -32,10 +32,10 @@ pub fn emit_vertex(ctx: &mut AttrCtx) {
 
     let nrm_xyz = decode_normal(ctx, vcd_lo.normal(), vat_a);
 
-    let color0 = decode_color(ctx, vcd_lo.color0(), vat_a.clr0_fmt(), vat_a.clr0_cnt(), 2);
+    let color0 = decode_color(ctx, vcd_lo.color0(), vat_a.clr0_fmt(), 2);
     ctx.bd.ins().store(MEMFLAGS, color0, ctx.out_ptr, offset::COLOR0);
 
-    let color1 = decode_color(ctx, vcd_lo.color1(), vat_a.clr1_fmt(), vat_a.clr1_cnt(), 3);
+    let color1 = decode_color(ctx, vcd_lo.color1(), vat_a.clr1_fmt(), 3);
     ctx.bd.ins().store(MEMFLAGS, color1, ctx.out_ptr, offset::COLOR1);
 
     let tex_attrs = [
@@ -463,26 +463,18 @@ fn unpack_fields(ctx: &mut AttrCtx, lanes: ir::Value, mul: [u32; 4], shift: i64,
     ctx.bd.ins().band(v, and)
 }
 
-fn decode_color(
-    ctx: &mut AttrCtx,
-    attr: AttributeType,
-    fmt: ColorFormat,
-    cnt: ColorCount,
-    array_idx: usize,
-) -> ir::Value {
+fn decode_color(ctx: &mut AttrCtx, attr: AttributeType, fmt: ColorFormat, array_idx: usize) -> ir::Value {
     if matches!(attr, AttributeType::None) {
         return self::splat_f32x4(ctx, 1.0);
     }
 
-    let direct = fmt.data_size(cnt);
+    let direct = fmt.data_size();
     let ptr = attr_ptr_and_advance(ctx, attr, array_idx, direct, 0);
 
-    self::decode_color_bytes(ctx, ptr, fmt, cnt)
+    self::decode_color_bytes(ctx, ptr, fmt)
 }
 
-fn decode_color_bytes(ctx: &mut AttrCtx, ptr: ir::Value, fmt: ColorFormat, cnt: ColorCount) -> ir::Value {
-    let has_alpha = matches!(cnt, ColorCount::Rgba);
-
+fn decode_color_bytes(ctx: &mut AttrCtx, ptr: ir::Value, fmt: ColorFormat) -> ir::Value {
     let (lanes, div, force_alpha_one) = match fmt {
         ColorFormat::Rgb565 => {
             let l = self::shuffle_to_i32x4(ctx, ptr, &SWZ_COLOR_U16);
@@ -493,12 +485,12 @@ fn decode_color_bytes(ctx: &mut AttrCtx, ptr: ir::Value, fmt: ColorFormat, cnt: 
         ColorFormat::Rgba4 => {
             let l = self::shuffle_to_i32x4(ctx, ptr, &SWZ_COLOR_U16);
             let l = self::unpack_fields(ctx, l, [1, 16, 256, 4096], 12, [0xF, 0xF, 0xF, 0xF]);
-            (l, self::splat_f32x4(ctx, 15.0), !has_alpha)
+            (l, self::splat_f32x4(ctx, 15.0), false)
         }
         ColorFormat::Rgba6 => {
             let l = self::shuffle_to_i32x4(ctx, ptr, &SWZ_COLOR_U24);
             let l = self::unpack_fields(ctx, l, [1, 64, 4096, 262144], 18, [0x3F, 0x3F, 0x3F, 0x3F]);
-            (l, self::splat_f32x4(ctx, 63.0), !has_alpha)
+            (l, self::splat_f32x4(ctx, 63.0), false)
         }
         ColorFormat::Rgb8 | ColorFormat::Rgbx8 => {
             let l = self::shuffle_to_i32x4(ctx, ptr, &SWZ_COLOR_BYTES);
@@ -506,7 +498,7 @@ fn decode_color_bytes(ctx: &mut AttrCtx, ptr: ir::Value, fmt: ColorFormat, cnt: 
         }
         ColorFormat::Rgba8 => {
             let l = self::shuffle_to_i32x4(ctx, ptr, &SWZ_COLOR_BYTES);
-            (l, self::splat_f32x4(ctx, 255.0), !has_alpha)
+            (l, self::splat_f32x4(ctx, 255.0), false)
         }
     };
 

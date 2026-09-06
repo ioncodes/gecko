@@ -256,15 +256,11 @@ pub enum ColorFormat {
 }
 
 impl ColorFormat {
-    pub fn data_size(&self, count: ColorCount) -> usize {
-        match (self, count) {
-            (ColorFormat::Rgb565, _) => 2,
-            (ColorFormat::Rgb8, _) => 3,
-            (ColorFormat::Rgbx8, _) => 4,
-            (ColorFormat::Rgba4, _) => 2,
-            (ColorFormat::Rgba6, _) => 3,
-            (ColorFormat::Rgba8, ColorCount::Rgb) => 3,
-            (ColorFormat::Rgba8, ColorCount::Rgba) => 4,
+    pub fn data_size(&self) -> usize {
+        match self {
+            ColorFormat::Rgb565 | ColorFormat::Rgba4 => 2,
+            ColorFormat::Rgb8 | ColorFormat::Rgba6 => 3,
+            ColorFormat::Rgbx8 | ColorFormat::Rgba8 => 4,
         }
     }
 }
@@ -367,11 +363,11 @@ impl VatA {
     }
 
     pub fn clr0_data_size(&self) -> usize {
-        self.clr0_fmt().data_size(self.clr0_cnt())
+        self.clr0_fmt().data_size()
     }
 
     pub fn clr1_data_size(&self) -> usize {
-        self.clr1_fmt().data_size(self.clr1_cnt())
+        self.clr1_fmt().data_size()
     }
 
     pub fn tex0_data_size(&self) -> usize {
