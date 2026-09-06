@@ -175,7 +175,8 @@ impl<'a> StateReader<'a> {
 
     #[inline(always)]
     pub fn bytes(&mut self) -> Result<&'a [u8], StateError> {
-        let len = self.u64()? as usize;
+        let len = usize::try_from(self.u64()?).map_err(|_| StateError::Corrupt("buffer size exceeds address space"))?;
+
         self.take(len)
     }
 
@@ -227,12 +228,15 @@ pub fn unpack(system: SystemId, data: &[u8]) -> Result<Vec<u8>, StateError> {
         return Err(StateError::WrongSystem);
     }
 
-    let uncompressed_len = u64::from_le_bytes(data[9..17].try_into().unwrap()) as usize;
-    if uncompressed_len > (1usize << 32) {
+    let uncompressed_len = u64::from_le_bytes(data[9..17].try_into().unwrap());
+    if uncompressed_len > (1u64 << 32) {
         return Err(StateError::Corrupt("implausible payload size"));
     }
 
+    let uncompressed_len =
+        usize::try_from(uncompressed_len).map_err(|_| StateError::Corrupt("payload size exceeds address space"))?;
     let payload = zstd::bulk::decompress(&data[HEADER_LEN..], uncompressed_len)?;
+
     Ok(payload)
 }
 
