@@ -42,7 +42,7 @@ pub struct CpControl {
     pub gp_fifo_read_enable: bool,
 
     #[bits(1)]
-    pub cp_interrupt_enable: bool,
+    pub bp_enable: bool,
 
     #[bits(2)]
     pub fifo_overflow_interrupt_enable: bool,

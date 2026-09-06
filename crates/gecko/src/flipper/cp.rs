@@ -271,7 +271,9 @@ pub fn pump_fifo<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
 
     while !sys.cp.interrupt_active() && sys.cp.control.gp_fifo_read_enable() && sys.cp.fifo_rw_distance() >= GP_BURST {
         let read_ptr = sys.cp.fifo_read_ptr();
-        if sys.cp.control.bp_interrupt_enable() && read_ptr == sys.cp.fifo_bp() {
+        // Breakpoint comparison remains enabled when the CPU masks its IRQ.
+        // Reading past it can consume the next frame's PE token too early.
+        if sys.cp.control.bp_enable() && read_ptr == sys.cp.fifo_bp() {
             sys.cp.status = sys.cp.status.with_bp_interrupt(true);
             refresh_interrupts(sys);
             break;
@@ -304,7 +306,7 @@ pub fn pump_fifo<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     }
 
     if consumed > 0
-        && sys.cp.control.bp_interrupt_enable()
+        && sys.cp.control.bp_enable()
         && !sys.cp.status.bp_interrupt()
         && sys.cp.fifo_rw_distance() == 0
         && sys.cp.fifo_read_ptr() == sys.cp.fifo_bp()
