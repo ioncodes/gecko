@@ -77,21 +77,21 @@ fn run_one(device: &wgpu::Device, queue: &wgpu::Queue, surface_format: wgpu::Tex
     let out_dir = format!("screenshotdb/{}", code);
     std::fs::create_dir_all(&out_dir).expect("Failed to create screenshotdb directory");
 
-    let log_file = std::fs::File::create(format!("{}/log.txt", out_dir)).expect("Failed to create log file");
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-    tracing_subscriber::fmt()
-        .without_time()
-        .with_ansi(false)
-        .with_env_filter(env_filter)
-        .with_writer(Mutex::new(log_file))
-        .init();
+    // let log_file = std::fs::File::create(format!("{}/log.txt", out_dir)).expect("Failed to create log file");
+    // let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+    //     .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+    // tracing_subscriber::fmt()
+    //     .without_time()
+    //     .with_ansi(false)
+    //     .with_env_filter(env_filter)
+    //     .with_writer(Mutex::new(log_file))
+    //     .init();
 
-    let prev_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        tracing::error!("{info}");
-        prev_hook(info);
-    }));
+    // let prev_hook = std::panic::take_hook();
+    // std::panic::set_hook(Box::new(move |info| {
+    //     tracing::error!("{info}");
+    //     prev_hook(info);
+    // }));
 
     let (gx, sink) = InlineSink::new(device.clone(), queue.clone(), surface_format);
 
