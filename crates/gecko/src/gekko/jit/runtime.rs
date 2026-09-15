@@ -204,6 +204,10 @@ fn write_spr<const SYSTEM: SystemId>(sys: *mut System<SYSTEM>, num: u32, val: u3
         }
         284 => sys.scheduler.set_timebase_lower(val),
         285 => sys.scheduler.set_timebase_upper(val),
+        921 => {
+            sys.gekko.spr.wpar = val & !1;
+            sys.cp.gather_pos = 0;
+        }
         923 => {
             sys.gekko.spr.dmal = crate::gekko::spr::DmaLower::from_raw(val);
             if sys.gekko.spr.dmal.trigger() {

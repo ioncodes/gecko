@@ -237,7 +237,6 @@ pub fn spr_field_offset<const SYSTEM: SystemId>(spr_num: u16) -> Option<usize> {
         918 => offset_of!(Spr, gqr6),
         919 => offset_of!(Spr, gqr7),
         920 => offset_of!(Spr, hid2),
-        921 => offset_of!(Spr, wpar),
         936 => offset_of!(Spr, ummcr0),
         937 => offset_of!(Spr, upmc1),
         938 => offset_of!(Spr, upmc2),

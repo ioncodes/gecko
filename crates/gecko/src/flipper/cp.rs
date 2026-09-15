@@ -217,28 +217,28 @@ pub fn gather_pipe_bursted<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     let linked = sys.cp.control.gp_link_enable();
 
     while sys.cp.gather_pos >= GP_BURST {
+        let wptr = sys.pi.fifo_wptr;
+
+        let mut burst = [0u8; GP_BURST as usize];
+        burst.copy_from_slice(&sys.cp.gather_pipe[..GP_BURST as usize]);
+
+        match sys.mmio.ram_view_mut().slice_mut(wptr as usize, GP_BURST as usize) {
+            Some(dst) => dst.copy_from_slice(&burst),
+            None => tracing::warn!(
+                wptr = format!("{wptr:#010X}"),
+                "gather_pipe_bursted: PI fifo_wptr unmapped"
+            ),
+        }
+
+        let advanced = wptr.wrapping_add(GP_BURST);
+        let next_wptr = if sys.pi.fifo_end != 0 && advanced >= sys.pi.fifo_end {
+            sys.pi.fifo_base
+        } else {
+            advanced
+        };
+
+        sys.pi.fifo_wptr = next_wptr;
         if linked {
-            let wptr = sys.pi.fifo_wptr;
-
-            let mut burst = [0u8; GP_BURST as usize];
-            burst.copy_from_slice(&sys.cp.gather_pipe[..GP_BURST as usize]);
-
-            match sys.mmio.ram_view_mut().slice_mut(wptr as usize, GP_BURST as usize) {
-                Some(dst) => dst.copy_from_slice(&burst),
-                None => tracing::warn!(
-                    wptr = format!("{wptr:#010X}"),
-                    "gather_pipe_bursted: PI fifo_wptr unmapped"
-                ),
-            }
-
-            let advanced = wptr.wrapping_add(GP_BURST);
-            let next_wptr = if sys.pi.fifo_end != 0 && advanced >= sys.pi.fifo_end {
-                sys.pi.fifo_base
-            } else {
-                advanced
-            };
-
-            sys.pi.fifo_wptr = next_wptr;
             sys.cp.set_fifo_write_ptr(next_wptr);
             sys.cp
                 .set_fifo_rw_distance(sys.cp.fifo_rw_distance().saturating_add(GP_BURST));

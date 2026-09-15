@@ -43,6 +43,10 @@ pub fn spr<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
                 }
                 284 => ctx.scheduler.set_timebase_lower(val),
                 285 => ctx.scheduler.set_timebase_upper(val),
+                921 => {
+                    ctx.gekko.spr.wpar = val & !1;
+                    ctx.cp.gather_pos = 0;
+                }
                 923 => {
                     ctx.gekko.spr.dmal = crate::gekko::spr::DmaLower::from_raw(val);
                     if ctx.gekko.spr.dmal.trigger() {
