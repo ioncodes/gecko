@@ -130,6 +130,7 @@ struct AppInit {
 impl App {
     /// Render one frame against whichever emulator variant is loaded.
     fn render_frame(&mut self) {
+        self.apply_game_input();
         let Some(state) = self.state.as_mut() else { return };
         let Some(window) = self.window.as_ref() else { return };
 
@@ -150,20 +151,17 @@ impl App {
 
         if self.ui.freecam.enabled != self.freecam_input_blocked {
             self.freecam_input_blocked = self.ui.freecam.enabled;
-
-            if self.freecam_input_blocked {
-                let neutral = self.emulator.neutral_input();
-                self.emulator.apply_host_input(&neutral);
-            } else {
-                self.emulator.apply_host_input(&self.input);
-            }
+            self.apply_game_input();
         }
     }
 
     fn apply_game_input(&mut self) {
-        if !self.ui.freecam.enabled {
-            self.emulator.apply_host_input(&self.input);
-        }
+        let input = if self.ui.freecam.enabled {
+            self.input.cleared()
+        } else {
+            self.input
+        };
+        self.emulator.apply_host_input(&input);
     }
 }
 
@@ -261,6 +259,33 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 let pressed = event.state.is_pressed();
                 if let PhysicalKey::Code(key) = event.physical_key {
+                    if !egui_consumed && pressed && !event.repeat && matches!(key, KeyCode::F8 | KeyCode::F9) {
+                        if let HostInput::Wii {
+                            nunchuk_attached,
+                            sideways,
+                            ..
+                        } = &mut self.input
+                        {
+                            let message = if key == KeyCode::F8 {
+                                *nunchuk_attached = !*nunchuk_attached;
+                                if *nunchuk_attached {
+                                    "Nunchuk attached"
+                                } else {
+                                    "Nunchuk detached"
+                                }
+                            } else {
+                                *sideways = !*sideways;
+                                if *sideways {
+                                    "Wiimote sideways"
+                                } else {
+                                    "Wiimote upright"
+                                }
+                            };
+                            self.ui.input_notice = Some((std::time::Instant::now(), message));
+                            self.apply_game_input();
+                        }
+                        return;
+                    }
                     if pressed && !event.repeat {
                         if let Some(state) = &mut self.state {
                             match key {
@@ -412,6 +437,14 @@ struct Args {
     #[arg(long, default_value = "auto")]
     aspect: String,
 
+    /// Start with the Nunchuk detached (F8 toggles attachment)
+    #[arg(long)]
+    no_nunchuk: bool,
+
+    /// Hold the Wiimote sideways (F9 toggles orientation)
+    #[arg(long)]
+    sideways: bool,
+
     /// Force interpreter dispatch for CPU/DSP/Vertex (default: JIT)
     #[arg(long)]
     interpreter: bool,
@@ -516,7 +549,9 @@ fn main() {
         .as_ref()
         .map(|path| image::loader::load_symbols(std::path::Path::new(path)).expect("failed to load symbols"));
 
-    let input = emulator.neutral_input();
+    let input = emulator
+        .neutral_input()
+        .with_wii_options(!args.no_nunchuk, args.sideways);
     emulator.apply_host_input(&input);
 
     // Debugger always dumps to WAV file
@@ -571,6 +606,8 @@ fn main() {
             Err(err) => eprintln!("failed to load savestate: {err}"),
         }
     }
+
+    emulator.apply_host_input(&input);
 
     let event_loop = EventLoop::<UserEvent>::with_user_event().build().unwrap();
 

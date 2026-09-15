@@ -42,6 +42,7 @@ pub struct DebuggerUi {
     pub save_state_requested: bool,
     pub load_state_requested: bool,
     pub savestate_last_result: String,
+    pub input_notice: Option<(std::time::Instant, &'static str)>,
 }
 
 impl Default for DebuggerUi {
@@ -80,6 +81,7 @@ impl Default for DebuggerUi {
             save_state_requested: false,
             load_state_requested: false,
             savestate_last_result: String::new(),
+            input_notice: None,
         }
     }
 }

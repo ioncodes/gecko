@@ -32,6 +32,7 @@ pub fn modal(
 
     let card = container(content)
         .width(Length::Fixed(width))
+        .max_height(640.0)
         .padding(padding)
         .style(move |_| container::Style {
             background: Some(Background::Color(bg)),
@@ -44,6 +45,7 @@ pub fn modal(
         });
 
     let centered = container(card)
+        .padding(24)
         .width(Length::Fill)
         .height(Length::Fill)
         .center_x(Length::Fill)

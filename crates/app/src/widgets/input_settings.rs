@@ -2,7 +2,7 @@ use gecko::flipper::si::pad;
 use gecko::hollywood::ipc::usb;
 use hostinput::mapping::{GcProfile, WiiProfile};
 use hostinput::{Button, InputConfig};
-use iced::widget::{button, column, container, pick_list, row, text};
+use iced::widget::{button, column, container, pick_list, row, scrollable, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
 
 use crate::app::Message;
@@ -212,6 +212,7 @@ pub fn overlay(
     tab: InputTab,
     capture: Option<BindTarget>,
     pad: Option<&str>,
+    preset: crate::config::WiiPresetId,
 ) -> Element<'static, Message> {
     let gc_profile = config.gc_profile();
     let wii_profile = config.wii_profile();
@@ -235,6 +236,22 @@ pub fn overlay(
     .spacing(6);
 
     let mut body = column![].spacing(4);
+    if tab == InputTab::Wii {
+        let options = column![
+            preset_selector(palette, preset),
+            self::chip(
+                palette,
+                "Nunchuk attached",
+                Message::InputToggleNunchuk,
+                wii_profile.nunchuk_attached,
+            ),
+        ]
+        .spacing(4);
+        body = body.push(container(options).padding(Padding {
+            bottom: 16.0,
+            ..Padding::ZERO
+        }));
+    }
 
     let targets: &[(BindTarget, &str)] = match tab {
         InputTab::Gc => &GC_TARGETS,
@@ -341,10 +358,9 @@ pub fn overlay(
 
         let toggles = row![
             container(text("Options").size(13).color(palette.text_dim)).width(Length::Fixed(130.0)),
-            self::chip(palette, "Sideways", Message::InputToggleSideways, wii_profile.sideways),
             self::chip(
                 palette,
-                "Stick D-Pad",
+                "Right stick D-pad",
                 Message::InputToggleStickDpad,
                 wii_profile.stick_dpad
             ),
@@ -352,15 +368,31 @@ pub fn overlay(
         .spacing(6)
         .align_y(Alignment::Center);
 
+        let left_stick = row![
+            container(text("Left stick").size(13).color(palette.text_dim)).width(Length::Fixed(130.0)),
+            self::chip(
+                palette,
+                if wii_profile.left_stick_dpad {
+                    "D-pad"
+                } else {
+                    "Nunchuk"
+                },
+                Message::InputToggleLeftStick,
+                wii_profile.left_stick_dpad
+            ),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
         body = body
             .push(self::separator(palette))
+            .push(left_stick)
             .push(pointer_row)
             .push(sensitivity_row)
             .push(toggles)
             .push(self::invert_row(
                 palette,
                 config,
-                "Invert Nunchuk",
+                "Invert Left Stick",
                 InvertTarget::NunchukX,
                 InvertTarget::NunchukY,
             ))
@@ -387,6 +419,17 @@ pub fn overlay(
     ]
     .align_y(Alignment::Center);
 
+    let body = scrollable(container(body).padding(Padding {
+        bottom: 12.0,
+        ..Padding::ZERO
+    }))
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .spacing(12);
+    let footer = container(footer).padding(Padding {
+        top: 8.0,
+        ..Padding::ZERO
+    });
     let card_col = column![header, tabs, body, footer].spacing(14);
 
     overlay::modal(palette, 360.0, 20.0, Message::InputClose, card_col.into())
@@ -397,6 +440,7 @@ pub fn keyboard_overlay(
     keyboard: &KeyboardConfig,
     tab: KeyboardTab,
     capture: Option<KeyTarget>,
+    preset: crate::config::WiiPresetId,
 ) -> Element<'static, Message> {
     let status = text("Click a binding, then press a key")
         .size(11)
@@ -435,6 +479,12 @@ pub fn keyboard_overlay(
     };
 
     let mut body = column![].spacing(4);
+    if tab == KeyboardTab::Wii {
+        body = body.push(container(preset_selector(palette, preset)).padding(Padding {
+            bottom: 16.0,
+            ..Padding::ZERO
+        }));
+    }
     for (target, label) in targets {
         body = body.push(self::key_binding_row(palette, label, *target, &keymap, capture));
     }
@@ -446,9 +496,41 @@ pub fn keyboard_overlay(
     ]
     .align_y(Alignment::Center);
 
+    let body = scrollable(container(body).padding(Padding {
+        bottom: 12.0,
+        ..Padding::ZERO
+    }))
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .spacing(12);
+    let footer = container(footer).padding(Padding {
+        top: 8.0,
+        ..Padding::ZERO
+    });
     let card_col = column![header, tabs, body, footer].spacing(14);
 
     overlay::modal(palette, 360.0, 20.0, Message::KeyboardClose, card_col.into())
+}
+
+fn preset_selector(palette: &Palette, selected: crate::config::WiiPresetId) -> Element<'static, Message> {
+    use crate::config::WiiPresetId;
+    row![
+        self::chip(
+            palette,
+            "Upright",
+            Message::WiiPreset(WiiPresetId::Upright),
+            selected == WiiPresetId::Upright
+        ),
+        self::chip(
+            palette,
+            "Sideways",
+            Message::WiiPreset(WiiPresetId::Sideways),
+            selected == WiiPresetId::Sideways
+        ),
+        self::chip(palette, "Reset preset", Message::WiiPresetReset, false),
+    ]
+    .spacing(6)
+    .into()
 }
 
 fn key_binding_row(
@@ -518,7 +600,7 @@ fn bind_row(
             .width(Length::Fill)
             .align_x(Alignment::Center),
     )
-    .width(Length::Fixed(180.0))
+    .width(Length::Fill)
     .padding(Padding::from([4, 10]))
     .on_press(on_press)
     .style(self::control_style(
@@ -532,6 +614,7 @@ fn bind_row(
         container(text(label.to_owned()).size(13).color(palette.text)).width(Length::Fixed(130.0)),
         bind,
     ]
+    .width(Length::Fill)
     .spacing(6)
     .align_y(Alignment::Center)
     .into()

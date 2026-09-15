@@ -834,6 +834,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 self.si.pad_state[0] = *pad;
             }
             HostInput::Wii {
+                nunchuk_attached,
+                sideways,
                 wiimote_buttons,
                 wiimote_shake,
                 nunchuk_buttons,
@@ -842,6 +844,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 ir_pointer,
                 accel,
             } if SYSTEM == WII => {
+                self.starlet.set_wiimote_options(*nunchuk_attached, *sideways);
                 self.starlet.set_wiimote_buttons(*wiimote_buttons);
                 self.starlet.set_wiimote_shake(*wiimote_shake);
                 self.starlet

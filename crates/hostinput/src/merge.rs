@@ -27,12 +27,15 @@ pub fn wii(pad: HostInput, kb: HostInput) -> HostInput {
         nunchuk_stick_y,
         ir_pointer,
         accel,
+        ..
     } = pad
     else {
         return kb;
     };
 
     let HostInput::Wii {
+        nunchuk_attached,
+        sideways,
         wiimote_buttons: kb_buttons,
         wiimote_shake: kb_shake,
         nunchuk_buttons: kb_nunchuk,
@@ -46,6 +49,8 @@ pub fn wii(pad: HostInput, kb: HostInput) -> HostInput {
     };
 
     HostInput::Wii {
+        nunchuk_attached,
+        sideways,
         wiimote_buttons: wiimote_buttons | kb_buttons,
         wiimote_shake: wiimote_shake || kb_shake,
         nunchuk_buttons: nunchuk_buttons | kb_nunchuk,

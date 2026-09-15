@@ -142,6 +142,19 @@ impl RenderState {
         let raw_input = self.egui_winit.take_egui_input(window);
         let full_output = self.egui_ctx.run_ui(raw_input, |ui| {
             let ctx = ui.ctx().clone();
+            if let Some((_, message)) = debugger_ui
+                .input_notice
+                .filter(|(at, _)| at.elapsed() < std::time::Duration::from_secs(3))
+            {
+                egui::Window::new("Wii input")
+                    .title_bar(false)
+                    .resizable(false)
+                    .movable(false)
+                    .anchor(egui::Align2::CENTER_TOP, [0.0, 32.0])
+                    .show(&ctx, |ui| {
+                        ui.label(message);
+                    });
+            }
 
             egui::Panel::top("menu_bar").show_inside(ui, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {

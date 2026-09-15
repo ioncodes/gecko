@@ -161,6 +161,8 @@ Keyboard and player-window hotkeys are configurable the same way under `Settings
 | `Space` | Start emulation from the splash screen (`--wait` flag)             |
 | `F5`    | Save state (overwrites the game's existing state)                  |
 | `F7`    | Load state                                                         |
+| `F8`    | Attach / detach Nunchuk (Wii only)                                 |
+| `F9`    | Switch Wiimote upright / sideways (Wii only)                       |
 | `F10`   | Trigger a RenderDoc capture (requires `renderdoc-capture` feature) |
 | `F11`   | Screenshot the full window                                         |
 | `F12`   | Screenshot the emulated framebuffer only                           |

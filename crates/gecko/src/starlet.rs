@@ -121,6 +121,12 @@ impl Starlet {
         }
     }
 
+    pub fn set_wiimote_options(&mut self, attached: bool, sideways: bool) {
+        if let Some(dev) = self.devices.get_mut(WIIMOTE_DEVICE_PATH) {
+            dev.set_wiimote_options(attached, sideways);
+        }
+    }
+
     pub fn set_wiimote_accel(&mut self, accel: Option<[f32; 3]>) {
         if let Some(dev) = self.devices.get_mut(WIIMOTE_DEVICE_PATH) {
             dev.set_wiimote_accel(accel);

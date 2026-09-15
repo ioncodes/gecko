@@ -33,10 +33,6 @@ pub fn map(port: &PortInput, profile: &WiiProfile, source: PointerSource) -> Hos
         }
     }
 
-    if profile.sideways {
-        buttons = self::rotate_dpad(buttons);
-    }
-
     let mut nunchuk_buttons = 0u8;
     if state.pressed(profile.nunchuk_c) {
         nunchuk_buttons |= usb::NUNCHUK_BTN_C;
@@ -45,7 +41,23 @@ pub fn map(port: &PortInput, profile: &WiiProfile, source: PointerSource) -> Hos
         nunchuk_buttons |= usb::NUNCHUK_BTN_Z;
     }
 
-    let (nx, ny) = mapping::radial(profile.nunchuk_invert.apply(state.left), profile.deadzone);
+    let (mut nx, mut ny) = mapping::radial(profile.nunchuk_invert.apply(state.left), profile.deadzone);
+
+    if profile.left_stick_dpad {
+        if nx < -STICK_DPAD_THRESHOLD {
+            buttons |= usb::BTN_LEFT;
+        }
+        if nx > STICK_DPAD_THRESHOLD {
+            buttons |= usb::BTN_RIGHT;
+        }
+        if ny < -STICK_DPAD_THRESHOLD {
+            buttons |= usb::BTN_DOWN;
+        }
+        if ny > STICK_DPAD_THRESHOLD {
+            buttons |= usb::BTN_UP;
+        }
+        (nx, ny) = (0.0, 0.0);
+    }
 
     let ir_pointer = match source {
         PointerSource::Gyro => port.pointer,
@@ -57,13 +69,11 @@ pub fn map(port: &PortInput, profile: &WiiProfile, source: PointerSource) -> Hos
         _ => None,
     };
 
-    let mut accel = port.caps.accel.then(|| motion::map_accel(state.accel));
-
-    if profile.sideways {
-        accel = accel.map(|a| [-a[2], a[1], a[0]]);
-    }
+    let accel = port.caps.accel.then(|| motion::map_accel(state.accel));
 
     HostInput::Wii {
+        nunchuk_attached: profile.nunchuk_attached,
+        sideways: profile.sideways,
         wiimote_buttons: buttons,
         wiimote_shake: profile.shake.is_some_and(|button| state.pressed(button)) && accel.is_none(),
         nunchuk_buttons,
@@ -72,25 +82,4 @@ pub fn map(port: &PortInput, profile: &WiiProfile, source: PointerSource) -> Hos
         ir_pointer,
         accel,
     }
-}
-
-fn rotate_dpad(buttons: u16) -> u16 {
-    const DPAD: u16 = usb::BTN_UP | usb::BTN_DOWN | usb::BTN_LEFT | usb::BTN_RIGHT;
-
-    let mut out = buttons & !DPAD;
-
-    if buttons & usb::BTN_UP != 0 {
-        out |= usb::BTN_RIGHT;
-    }
-    if buttons & usb::BTN_DOWN != 0 {
-        out |= usb::BTN_LEFT;
-    }
-    if buttons & usb::BTN_LEFT != 0 {
-        out |= usb::BTN_UP;
-    }
-    if buttons & usb::BTN_RIGHT != 0 {
-        out |= usb::BTN_DOWN;
-    }
-
-    out
 }

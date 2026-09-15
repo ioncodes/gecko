@@ -6,7 +6,10 @@ use gecko::{GC, HostInput, InputSink, SystemId, WII};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
+pub type InputUpdates = Arc<Mutex<Option<InputConfig>>>;
+
 pub struct InputManager {
+    updates: Option<InputUpdates>,
     system: SystemId,
     keyboard: Arc<Mutex<HostInput>>,
     gc_profile: GcProfile,
@@ -19,24 +22,37 @@ impl InputManager {
         let gc_profile = config.gc_profile();
         let wii_profile = config.wii_profile();
 
-        let service = config.gamepads.then(|| {
-            let service = sdl::service();
+        let service = config.gamepads.then(sdl::service);
 
-            *service.motion.lock().unwrap() = sdl::MotionSettings {
-                sensitivity: wii_profile.sensitivity,
-                recenter: wii_profile.recenter,
-                invert: (wii_profile.pointer_invert.x, wii_profile.pointer_invert.y),
-            };
-
-            service
-        });
-
-        Self {
+        let manager = Self {
+            updates: None,
             system,
             keyboard,
             gc_profile,
             wii_profile,
             service,
+        };
+        manager.sync_motion_settings();
+        manager
+    }
+
+    pub fn with_updates(mut self, updates: InputUpdates) -> Self {
+        self.updates = Some(updates);
+        self
+    }
+
+    fn refresh(&mut self, config: &InputConfig) {
+        self.wii_profile = config.wii_profile();
+        self.sync_motion_settings();
+    }
+
+    fn sync_motion_settings(&self) {
+        if let Some(service) = self.service {
+            *service.motion.lock().unwrap() = sdl::MotionSettings {
+                sensitivity: self.wii_profile.sensitivity,
+                recenter: self.wii_profile.recenter,
+                invert: (self.wii_profile.pointer_invert.x, self.wii_profile.pointer_invert.y),
+            };
         }
     }
 }
@@ -52,7 +68,15 @@ fn resolve_pointer(profile: PointerSource, caps: &Capabilities) -> PointerSource
 
 impl InputSink for InputManager {
     fn sample(&mut self) -> HostInput {
-        let kb = *self.keyboard.lock().unwrap();
+        let (kb, update) = {
+            let keyboard = self.keyboard.lock().unwrap();
+            let update = self.updates.as_ref().and_then(|updates| updates.lock().unwrap().take());
+            (*keyboard, update)
+        };
+
+        if let Some(config) = update {
+            self.refresh(&config);
+        }
 
         let Some(service) = self.service else {
             return kb;

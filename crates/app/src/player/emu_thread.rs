@@ -9,6 +9,7 @@ pub fn run<const SYSTEM: SystemId>(
     mut emulator: System<SYSTEM>,
     input: Arc<Mutex<HostInput>>,
     input_config: hostinput::InputConfig,
+    input_updates: hostinput::manager::InputUpdates,
     game_id: Option<String>,
     throttle: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
@@ -21,11 +22,9 @@ pub fn run<const SYSTEM: SystemId>(
     let throttle_step = Duration::from_micros(5);
     let pause_step = Duration::from_millis(10);
 
-    emulator.set_input_sink(Box::new(hostinput::InputManager::new(
-        SYSTEM,
-        &input_config,
-        input.clone(),
-    )));
+    emulator.set_input_sink(Box::new(
+        hostinput::InputManager::new(SYSTEM, &input_config, input.clone()).with_updates(input_updates),
+    ));
 
     while !shutdown.load(Ordering::Relaxed) {
         if paused.load(Ordering::Relaxed) {
@@ -40,6 +39,7 @@ pub fn run<const SYSTEM: SystemId>(
             sleeper.sleep(throttle_step);
         }
 
+        emulator.sample_host_input();
         emulator.run_until_vsync();
 
         if save_state.swap(false, Ordering::Relaxed) {
@@ -51,7 +51,10 @@ pub fn run<const SYSTEM: SystemId>(
 
         if load_state.swap(false, Ordering::Relaxed) {
             match emulator.load_state_from_file(&savestate_path) {
-                Ok(()) => tracing::info!(path = %savestate_path.display(), "savestate loaded"),
+                Ok(()) => {
+                    emulator.sample_host_input();
+                    tracing::info!(path = %savestate_path.display(), "savestate loaded");
+                }
                 Err(err) => tracing::error!(%err, "savestate load failed"),
             }
         }

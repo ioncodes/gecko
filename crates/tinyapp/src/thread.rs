@@ -47,6 +47,7 @@ pub fn emu_thread<const SYSTEM: SystemId>(
             sleeper.sleep(throttle_step);
         }
 
+        emulator.sample_host_input();
         emulator.run_until_vsync();
 
         if savestate_requests.save.swap(false, Ordering::Relaxed) {
@@ -58,7 +59,10 @@ pub fn emu_thread<const SYSTEM: SystemId>(
 
         if savestate_requests.load.swap(false, Ordering::Relaxed) {
             match emulator.load_state_from_file(&savestate_path) {
-                Ok(()) => tracing::info!(path = %savestate_path.display(), "savestate loaded"),
+                Ok(()) => {
+                    emulator.sample_host_input();
+                    tracing::info!(path = %savestate_path.display(), "savestate loaded");
+                }
                 Err(err) => tracing::error!(%err, "savestate load failed"),
             }
         }

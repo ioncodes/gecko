@@ -175,6 +175,14 @@ struct Args {
     #[arg(long, default_value = "mouse")]
     pointer: String,
 
+    /// Start with the Nunchuk detached (F8 toggles attachment)
+    #[arg(long)]
+    no_nunchuk: bool,
+
+    /// Hold the Wiimote sideways (F9 toggles orientation)
+    #[arg(long)]
+    sideways: bool,
+
     /// Force interpreter dispatch for CPU/DSP/Vertex (default: JIT)
     #[arg(long)]
     interpreter: bool,
@@ -331,7 +339,7 @@ fn configure<const SYSTEM: SystemId>(emulator: &mut System<SYSTEM>, args: &Args)
         }
     }
 
-    emulator.apply_host_input(&HostInput::neutral_for(SYSTEM));
+    emulator.apply_host_input(&HostInput::neutral_for(SYSTEM).with_wii_options(!args.no_nunchuk, args.sideways));
 
     #[cfg(any(feature = "jit-stats", feature = "gx-stats"))]
     {
@@ -398,7 +406,9 @@ fn run<const SYSTEM: SystemId>(
         let _ = std::fs::write(path, "wall_secs,fps,native_pct,vsyncs\n");
     }
 
-    let input = Arc::new(Mutex::new(HostInput::neutral_for(SYSTEM)));
+    let input = Arc::new(Mutex::new(
+        HostInput::neutral_for(SYSTEM).with_wii_options(!args.no_nunchuk, args.sideways),
+    ));
 
     let event_loop = EventLoop::<UserEvent>::with_user_event().build().unwrap();
     let proxy = event_loop.create_proxy();
@@ -469,6 +479,8 @@ fn run<const SYSTEM: SystemId>(
 
     let mut input_config = hostinput::InputConfig::default();
     input_config.wii.pointer = Some(args.pointer.clone());
+    input_config.wii.nunchuk_attached = Some(!args.no_nunchuk);
+    input_config.wii.sideways = Some(args.sideways);
 
     drop(proxy);
     let emu_savestate_requests = savestate_requests.clone();
@@ -492,6 +504,7 @@ fn run<const SYSTEM: SystemId>(
 
     let mut app = app::App {
         input,
+        wii_notice: None,
         window: None,
         state: None,
         present_mode,

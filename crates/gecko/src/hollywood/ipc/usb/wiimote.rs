@@ -144,6 +144,7 @@ fn encode_wiimote_g(g: f32) -> u8 {
 #[derive(Debug, Clone)]
 pub(super) struct WiimoteState {
     buttons: u16,
+    sideways: bool,
     report_mode: ReportMode,
     continuous: bool,
     leds: u8,
@@ -179,6 +180,7 @@ impl Default for WiimoteState {
 
         Self {
             buttons: 0,
+            sideways: false,
             report_mode: ReportMode::Core,
             continuous: false,
             leds: 0,
@@ -205,6 +207,26 @@ impl Default for WiimoteState {
 }
 
 impl WiimoteState {
+    pub(super) fn set_options(&mut self, attached: bool, sideways: bool) -> bool {
+        self.dirty |= self.sideways != sideways;
+        self.sideways = sideways;
+
+        if self.nunchuk_attached == attached {
+            return false;
+        }
+
+        self.nunchuk_attached = attached;
+        self.nunchuk_buttons = 0;
+        self.nunchuk_stick_x = NUNCHUK_STICK_CENTER;
+        self.nunchuk_stick_y = NUNCHUK_STICK_CENTER;
+        self.nunchuk_key_buf = [0; NUNCHUK_KEY_LEN];
+        self.nunchuk_key_valid = 0;
+        self.nunchuk_cipher = Cipher::IDENTITY;
+        self.dirty = true;
+
+        true
+    }
+
     pub(super) fn set_buttons(&mut self, buttons: u16) -> bool {
         let changed = self.buttons != buttons;
         self.buttons = buttons;
@@ -213,6 +235,10 @@ impl WiimoteState {
     }
 
     pub(super) fn set_nunchuk(&mut self, buttons: u8, stick_x: u8, stick_y: u8) -> bool {
+        if !self.nunchuk_attached {
+            return false;
+        }
+
         let changed =
             self.nunchuk_buttons != buttons || self.nunchuk_stick_x != stick_x || self.nunchuk_stick_y != stick_y;
         self.nunchuk_buttons = buttons;
@@ -275,12 +301,34 @@ impl WiimoteState {
     }
 
     fn button_bytes(&self) -> [u8; 2] {
-        self.buttons.to_be_bytes()
+        let mut buttons = self.buttons;
+        if self.sideways {
+            buttons &= !(BTN_UP | BTN_DOWN | BTN_LEFT | BTN_RIGHT);
+            for (from, to) in [
+                (BTN_UP, BTN_RIGHT),
+                (BTN_DOWN, BTN_LEFT),
+                (BTN_LEFT, BTN_UP),
+                (BTN_RIGHT, BTN_DOWN),
+            ] {
+                if self.buttons & from != 0 {
+                    buttons |= to;
+                }
+            }
+        }
+        buttons.to_be_bytes()
     }
 
     pub(super) fn make_input_report(&self) -> Vec<u8> {
         let [bb0, bb1] = self.button_bytes();
-        let accel = self.accel;
+        let accel = if self.sideways {
+            [
+                (2 * WIIMOTE_ACCEL_ZERO_G - self.accel[2] as i32).clamp(0, 255) as u8,
+                self.accel[1],
+                self.accel[0],
+            ]
+        } else {
+            self.accel
+        };
         let mode = self.report_mode;
 
         let mut r = vec![HID_PREFIX_INPUT, mode as u8, bb0, bb1];
@@ -531,6 +579,10 @@ impl WiimoteState {
     /// have arrived we derive `ft`/`sb` and switch our outgoing extension
     /// bytes and register read responses to encrypted output.
     fn observe_register_write(&mut self, address: u32, payload: &[u8]) {
+        if !self.nunchuk_attached {
+            return;
+        }
+
         let reg = (address & 0xFF) as u8;
         let Some(rel) = reg.checked_sub(NUNCHUK_KEY_REG_BASE) else {
             return;
@@ -577,7 +629,7 @@ impl WiimoteState {
         report
     }
 
-    fn make_status_report(&self) -> Vec<u8> {
+    pub(super) fn make_status_report(&self) -> Vec<u8> {
         let [bb0, bb1] = self.button_bytes();
         let ir_enabled = self.ir_enabled_pin1 && self.ir_enabled_pin2;
         let mut flags = self.leds << 4;

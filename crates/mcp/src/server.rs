@@ -585,6 +585,8 @@ impl McpServer {
     async fn set_wiimote(&self, Parameters(args): Parameters<SetWiimoteArgs>) -> Result<CallToolResult, McpError> {
         require_loaded(&self.shared)?;
         let input = gecko::HostInput::Wii {
+            nunchuk_attached: true,
+            sideways: false,
             wiimote_buttons: args.buttons.unwrap_or(0),
             wiimote_shake: args.shake.unwrap_or(false),
             nunchuk_buttons: args.nunchuk_buttons.unwrap_or(0),

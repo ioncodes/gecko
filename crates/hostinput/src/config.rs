@@ -4,7 +4,7 @@ use gecko::flipper::si::pad;
 use gecko::hollywood::ipc::usb;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InputConfig {
     pub gamepads: bool,
@@ -22,7 +22,7 @@ impl Default for InputConfig {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GcConfig {
     pub a: Option<String>,
@@ -38,7 +38,7 @@ pub struct GcConfig {
     pub deadzone: Option<f32>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WiiConfig {
     pub a: Option<String>,
@@ -55,6 +55,8 @@ pub struct WiiConfig {
     pub pointer: Option<String>,
     pub pointer_sensitivity: Option<f32>,
     pub sideways: Option<bool>,
+    pub nunchuk_attached: Option<bool>,
+    pub left_stick_dpad: Option<bool>,
     pub stick_dpad: Option<bool>,
     pub invert_nunchuk_x: Option<bool>,
     pub invert_nunchuk_y: Option<bool>,
@@ -194,6 +196,8 @@ impl InputConfig {
         if let Some(sensitivity) = self.wii.pointer_sensitivity {
             profile.sensitivity = sensitivity.clamp(0.1, 10.0);
         }
+        profile.nunchuk_attached = self.wii.nunchuk_attached.unwrap_or(true);
+        profile.left_stick_dpad = self.wii.left_stick_dpad.unwrap_or(false);
         if let Some(sideways) = self.wii.sideways {
             profile.sideways = sideways;
         }

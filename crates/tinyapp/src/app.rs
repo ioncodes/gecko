@@ -131,7 +131,7 @@ impl State {
         self.surface.configure(&self.device, &self.surface_config);
     }
 
-    fn render(&mut self, window: &Window, waiting: bool) {
+    fn render(&mut self, window: &Window, waiting: bool, notice: Option<&str>) {
         if !waiting && let Some(intended) = self.intended_present_time {
             let target = intended + self.pacer_offset;
             let now = Instant::now();
@@ -190,6 +190,16 @@ impl State {
         let raw_input = self.egui_winit.take_egui_input(window);
         let full_output = self.egui_ctx.run_ui(raw_input, |ui| {
             let ctx = ui.ctx().clone();
+            if let Some(message) = notice {
+                egui::Window::new("Wii input")
+                    .title_bar(false)
+                    .resizable(false)
+                    .movable(false)
+                    .anchor(egui::Align2::CENTER_TOP, [0.0, 12.0])
+                    .show(&ctx, |ui| {
+                        ui.label(message);
+                    });
+            }
             if waiting {
                 let frame = egui::Frame::window(&ctx.global_style())
                     .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 20, 220));
@@ -328,6 +338,7 @@ impl State {
 
 pub struct App {
     pub input: Arc<Mutex<HostInput>>,
+    pub wii_notice: Option<(Instant, &'static str)>,
     pub window: Option<Arc<Window>>,
     pub state: Option<State>,
     pub present_mode: wgpu::PresentMode,
@@ -416,9 +427,10 @@ impl ApplicationHandler<crate::UserEvent> for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        let mut egui_consumed = false;
         // Forward events to egui first
         if let (Some(state), Some(window)) = (&mut self.state, &self.window) {
-            let _ = state.egui_winit.on_window_event(window, &event);
+            egui_consumed = state.egui_winit.on_window_event(window, &event).consumed;
         }
 
         match event {
@@ -434,6 +446,35 @@ impl ApplicationHandler<crate::UserEvent> for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 let pressed = event.state.is_pressed();
                 if let PhysicalKey::Code(key) = event.physical_key {
+                    if !egui_consumed && pressed && !event.repeat && matches!(key, KeyCode::F8 | KeyCode::F9) {
+                        if let HostInput::Wii {
+                            nunchuk_attached,
+                            sideways,
+                            ..
+                        } = &mut *self.input.lock().unwrap()
+                        {
+                            let message = if key == KeyCode::F8 {
+                                *nunchuk_attached = !*nunchuk_attached;
+                                if *nunchuk_attached {
+                                    "Nunchuk attached"
+                                } else {
+                                    "Nunchuk detached"
+                                }
+                            } else {
+                                *sideways = !*sideways;
+                                if *sideways {
+                                    "Wiimote sideways"
+                                } else {
+                                    "Wiimote upright"
+                                }
+                            };
+                            self.wii_notice = Some((Instant::now(), message));
+                            if let Some(window) = &self.window {
+                                window.request_redraw();
+                            }
+                        }
+                        return;
+                    }
                     if self.waiting() {
                         if pressed && !event.repeat && key == KeyCode::Space {
                             self.start_gate.store(true, Ordering::Release);
@@ -538,7 +579,11 @@ impl ApplicationHandler<crate::UserEvent> for App {
             WindowEvent::RedrawRequested => {
                 let waiting = self.waiting();
                 if let (Some(state), Some(window)) = (&mut self.state, &self.window) {
-                    state.render(window, waiting);
+                    let notice = self
+                        .wii_notice
+                        .filter(|(at, _)| at.elapsed() < Duration::from_secs(3))
+                        .map(|(_, text)| text);
+                    state.render(window, waiting, notice);
                 }
             }
             _ => {}

@@ -22,6 +22,8 @@ impl InputSink for Arc<Mutex<HostInput>> {
 pub enum HostInput {
     Gc(pad::PadStatus),
     Wii {
+        nunchuk_attached: bool,
+        sideways: bool,
         wiimote_buttons: u16,
         wiimote_shake: bool,
         nunchuk_buttons: u8,
@@ -61,6 +63,8 @@ impl HostInput {
 
     pub fn wii_neutral() -> Self {
         Self::Wii {
+            nunchuk_attached: true,
+            sideways: false,
             wiimote_buttons: 0,
             wiimote_shake: false,
             nunchuk_buttons: 0,
@@ -69,6 +73,30 @@ impl HostInput {
             ir_pointer: None,
             accel: None,
         }
+    }
+
+    pub fn cleared(self) -> Self {
+        match self {
+            Self::Wii {
+                nunchuk_attached,
+                sideways,
+                ..
+            } => Self::wii_neutral().with_wii_options(nunchuk_attached, sideways),
+            Self::Gc(_) => Self::gc_connected(),
+        }
+    }
+
+    pub fn with_wii_options(mut self, attached: bool, horizontal: bool) -> Self {
+        if let Self::Wii {
+            nunchuk_attached,
+            sideways,
+            ..
+        } = &mut self
+        {
+            *nunchuk_attached = attached;
+            *sideways = horizontal;
+        }
+        self
     }
 
     pub fn neutral_for(system: SystemId) -> Self {

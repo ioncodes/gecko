@@ -60,7 +60,10 @@ pub enum Message {
     InputTick,
     InputPointer(String),
     InputSensitivity(f32),
-    InputToggleSideways,
+    WiiPreset(crate::config::WiiPresetId),
+    WiiPresetReset,
+    InputToggleNunchuk,
+    InputToggleLeftStick,
     InputToggleStickDpad,
     InputToggleInvert(InvertTarget),
     InputReset,
@@ -241,6 +244,7 @@ impl App {
                 Task::none()
             }
             Message::PlayerWindowOpened(id, game, state) => {
+                state.refresh_wii_input(&self.config);
                 tracing::info!(window = ?id, title = %game.title, "player window opened");
                 self.players.insert(
                     id,
@@ -514,9 +518,29 @@ impl App {
                 self.persist_config();
                 Task::none()
             }
-            Message::InputToggleSideways => {
-                let current = self.config.input.wii.sideways.unwrap_or(false);
-                self.config.input.wii.sideways = Some(!current);
+            Message::WiiPreset(id) => {
+                self.config.select_wii_preset(id);
+                self.input_capture = None;
+                self.key_capture = None;
+                self.persist_config();
+                Task::none()
+            }
+            Message::WiiPresetReset => {
+                self.config.reset_wii_preset();
+                self.input_capture = None;
+                self.key_capture = None;
+                self.persist_config();
+                Task::none()
+            }
+            Message::InputToggleNunchuk => {
+                let current = self.config.input.wii.nunchuk_attached.unwrap_or(true);
+                self.config.input.wii.nunchuk_attached = Some(!current);
+                self.persist_config();
+                Task::none()
+            }
+            Message::InputToggleLeftStick => {
+                let current = self.config.input.wii.left_stick_dpad.unwrap_or(false);
+                self.config.input.wii.left_stick_dpad = Some(!current);
                 self.persist_config();
                 Task::none()
             }
@@ -533,7 +557,12 @@ impl App {
                 Task::none()
             }
             Message::InputReset => {
-                self.config.input = hostinput::InputConfig::default();
+                match self.input_tab {
+                    InputTab::Wii => {
+                        self.config.input.wii = config::WiiPreset::defaults(self.config.active_wii_preset()).controller
+                    }
+                    InputTab::Gc => self.config.input.gc = Default::default(),
+                }
                 self.input_capture = None;
                 self.persist_config();
                 Task::none()
@@ -557,7 +586,13 @@ impl App {
                 Task::none()
             }
             Message::KeyboardReset => {
-                self.config.keyboard = keybinds::KeyboardConfig::default();
+                match self.keyboard_tab {
+                    KeyboardTab::Wii => {
+                        self.config.keyboard.wii = config::WiiPreset::defaults(self.config.active_wii_preset()).keyboard
+                    }
+                    KeyboardTab::Gc => self.config.keyboard.gc = Default::default(),
+                    KeyboardTab::Hotkeys => self.config.keyboard.hotkeys = Default::default(),
+                }
                 self.key_capture = None;
                 self.persist_config();
                 Task::none()
@@ -783,6 +818,7 @@ impl App {
                     self.input_tab,
                     self.input_capture,
                     self.input_pad_name.as_deref(),
+                    self.config.active_wii_preset(),
                 )
             ]
             .into();
@@ -790,7 +826,13 @@ impl App {
         if self.keyboard_open {
             root_element = stack![
                 root_element,
-                input_settings::keyboard_overlay(palette, &self.config.keyboard, self.keyboard_tab, self.key_capture)
+                input_settings::keyboard_overlay(
+                    palette,
+                    &self.config.keyboard,
+                    self.keyboard_tab,
+                    self.key_capture,
+                    self.config.active_wii_preset()
+                )
             ]
             .into();
         }
@@ -867,7 +909,11 @@ impl App {
         roots
     }
 
-    fn persist_config(&self) {
+    fn persist_config(&mut self) {
+        self.config.store_wii_preset();
+        for player in self.players.values() {
+            player.state.refresh_wii_input(&self.config);
+        }
         let path = config::config_path();
         if let Err(err) = config::save(&path, &self.config) {
             tracing::warn!(%err, path = %path.display(), "failed to persist config");

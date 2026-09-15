@@ -47,7 +47,9 @@ pub struct PlayerState {
     aspect: TargetAspect,
     upscale: u32,
     input: Arc<Mutex<HostInput>>,
-    keymap: Keymap,
+    keymap: Mutex<Keymap>,
+    input_updates: hostinput::manager::InputUpdates,
+    wii_config: Mutex<(hostinput::config::WiiConfig, crate::keybinds::WiiKeysConfig)>,
     platform: Platform,
     boot_error: Option<String>,
     first_frame: Arc<AtomicBool>,
@@ -74,7 +76,10 @@ impl PlayerState {
             Platform::Gcn => TargetAspect::Ratio(4.0 / 3.0),
         };
         let neutral = match game.platform {
-            Platform::Wii => HostInput::wii_neutral(),
+            Platform::Wii => HostInput::wii_neutral().with_wii_options(
+                config.input.wii.nunchuk_attached.unwrap_or(true),
+                config.input.wii.sideways.unwrap_or(false),
+            ),
             Platform::Gcn => HostInput::gc_connected(),
         };
 
@@ -106,7 +111,9 @@ impl PlayerState {
             aspect,
             upscale: config.upscale,
             input: Arc::new(Mutex::new(neutral)),
-            keymap: config.keyboard.resolve(),
+            keymap: Mutex::new(config.keyboard.resolve()),
+            input_updates: Arc::new(Mutex::new(None)),
+            wii_config: Mutex::new((config.input.wii.clone(), config.keyboard.wii.clone())),
             platform: game.platform,
             boot_error,
             first_frame: Arc::new(AtomicBool::new(false)),
@@ -153,10 +160,32 @@ impl PlayerState {
             .expect("spawn player thread");
     }
 
+    pub fn refresh_wii_input(&self, config: &Config) {
+        if self.platform != Platform::Wii {
+            return;
+        }
+
+        let mut current = self.wii_config.lock().unwrap();
+        if current.0 == config.input.wii && current.1 == config.keyboard.wii {
+            return;
+        }
+
+        let mut input = self.input.lock().unwrap();
+        *input = input.cleared().with_wii_options(
+            config.input.wii.nunchuk_attached.unwrap_or(true),
+            config.input.wii.sideways.unwrap_or(false),
+        );
+
+        self.keymap.lock().unwrap().wii = config.keyboard.resolve().wii;
+        *self.input_updates.lock().unwrap() = Some(config.input.clone());
+        *current = (config.input.wii.clone(), config.keyboard.wii.clone());
+    }
+
     pub fn handle_keyboard(&self, key: Code, pressed: bool) {
         let mut input_guard = self.input.lock().unwrap();
+        let keymap = self.keymap.lock().unwrap();
         match &mut *input_guard {
-            HostInput::Gc(pad) => input::update_pad(pad, &self.keymap.gc, key, pressed),
+            HostInput::Gc(pad) => input::update_pad(pad, &keymap.gc, key, pressed),
             HostInput::Wii {
                 wiimote_buttons,
                 wiimote_shake,
@@ -165,13 +194,13 @@ impl PlayerState {
                 nunchuk_stick_y,
                 ..
             } => {
-                input::update_wiimote_keys(wiimote_buttons, &self.keymap.wii, key, pressed);
-                input::update_wiimote_motion_keys(wiimote_shake, &self.keymap.wii, key, pressed);
+                input::update_wiimote_keys(wiimote_buttons, &keymap.wii, key, pressed);
+                input::update_wiimote_motion_keys(wiimote_shake, &keymap.wii, key, pressed);
                 input::update_nunchuk_keys(
                     nunchuk_buttons,
                     nunchuk_stick_x,
                     nunchuk_stick_y,
-                    &self.keymap.wii,
+                    &keymap.wii,
                     key,
                     pressed,
                 );
@@ -180,7 +209,7 @@ impl PlayerState {
     }
 
     pub fn hotkey(&self, key: Code) -> Option<Hotkey> {
-        self.keymap.hotkeys.lookup(key)
+        self.keymap.lock().unwrap().hotkeys.lookup(key)
     }
 
     pub fn handle_mouse_button(&self, button: MouseButton, pressed: bool) {
@@ -326,7 +355,7 @@ fn finish_boot<const S: gecko::system::SystemId>(
     game_id: String,
 ) {
     self::configure_emu(&mut emu, &params, sink, state.fps.clone());
-    emu.apply_host_input(&HostInput::neutral_for(S));
+    emu.apply_host_input(&*state.input.lock().unwrap());
 
     let audio = self::install_audio_sink(&mut emu);
     let _ = emu.load_jit_cache(&game_id);
@@ -338,6 +367,7 @@ fn finish_boot<const S: gecko::system::SystemId>(
         emu,
         state.input.clone(),
         params.input_config,
+        state.input_updates.clone(),
         Some(game_id),
         state.throttle.clone(),
         state.paused.clone(),

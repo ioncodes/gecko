@@ -67,6 +67,13 @@ impl IosDevice for Bluetooth {
         Bluetooth::set_wiimote_shake(self, active)
     }
 
+    fn set_wiimote_options(&mut self, attached: bool, sideways: bool) {
+        let attachment_changed = self.wiimote.set_options(attached, sideways);
+        if attachment_changed && self.host_hid_interrupt_cid.is_some() {
+            self.queue_hid_input_report(self.wiimote.make_status_report());
+        }
+    }
+
     fn set_wiimote_accel(&mut self, accel: Option<[f32; 3]>) {
         self.wiimote.set_accel(accel);
     }

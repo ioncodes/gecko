@@ -1,7 +1,7 @@
 use iced::keyboard::key::Code;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct KeyboardConfig {
     pub gc: GcKeysConfig,
@@ -9,7 +9,7 @@ pub struct KeyboardConfig {
     pub hotkeys: HotkeysConfig,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GcKeysConfig {
     pub stick_up: Option<String>,
@@ -30,7 +30,7 @@ pub struct GcKeysConfig {
     pub dpad_right: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WiiKeysConfig {
     pub one: Option<String>,
@@ -51,7 +51,7 @@ pub struct WiiKeysConfig {
     pub nunchuk_c: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HotkeysConfig {
     pub pause: Option<String>,
