@@ -268,12 +268,17 @@ fn main() {
     } else if let Some(ref ipl_path) = args.ipl {
         let ipl_data = std::fs::read(ipl_path).expect("failed to read IPL");
         let mut emulator = GameCube::with_ipl(&ipl_data, args.skip_ipl);
-        if let Some(ref dvd_path) = args.dvd {
+        let game_id = if let Some(ref dvd_path) = args.dvd {
             let dvd_data = std::fs::read(dvd_path).expect("failed to read DVD");
-            emulator.insert_dvd(image::load_dvd(dvd_data));
-        }
+            let dvd = image::load_dvd(dvd_data);
+            let game_id = dvd.header().game_id();
+            emulator.insert_dvd(dvd);
+            Some(game_id)
+        } else {
+            None
+        };
         configure(&mut emulator, &args);
-        run(emulator, present_mode, &args, None);
+        run(emulator, present_mode, &args, game_id);
     } else if let Some(ref dvd_path) = args.dvd {
         let dvd_data = std::fs::read(dvd_path).expect("failed to read DVD");
         let dvd = image::load_dvd(dvd_data);
