@@ -5,7 +5,7 @@
 //   `scale` selects the TevCompareMode (0=R8, 1=GR16, 2=BGR24, 3=RGB8)
 //   `sub`   selects the operator (false=GT, true=EQ)
 //   result = d + ((compare(a, b)) ? c : 0)  per the selected mode
-// `do_clamp` always means: if true, clamp to [0,1]; if false, leave unclamped.
+// `do_clamp` selects [0,1] or the signed TEV range [-1024,1023] / 255.
 fn tev_combine_color(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, d: vec3<f32>,
                      bias: u32, sub: bool, scale: u32, do_clamp: bool) -> vec3<f32> {
     var result: vec3<f32>;
@@ -76,6 +76,8 @@ fn tev_combine_color(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, d: vec3<f32>,
 
     if do_clamp {
         result = clamp(result, vec3(0.0), vec3(1.0));
+    } else {
+        result = clamp(result, vec3(-1024.0 / 255.0), vec3(1023.0 / 255.0));
     }
 
     return result;
@@ -139,6 +141,8 @@ fn tev_combine_alpha(a: f32, b: f32, c: f32, d: f32,
 
     if do_clamp {
         result = clamp(result, 0.0, 1.0);
+    } else {
+        result = clamp(result, -1024.0 / 255.0, 1023.0 / 255.0);
     }
 
     return result;
