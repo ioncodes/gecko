@@ -94,7 +94,6 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for ControlStatus {
             .with_ai_interrupt_mask(self.ai_interrupt_mask())
             .with_ar_interrupt_mask(self.ar_interrupt_mask())
             .with_dsp_interrupt_mask(self.dsp_interrupt_mask())
-            .with_dma_status(self.dma_status())
             .with_reset_vector(self.reset_vector());
 
         // On reset, set PC to the address indicated by the reset vector. After
@@ -373,8 +372,12 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AramDmaControl {
         sys.dsp.aram_dma_control
     }
 
-    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+    fn write(self, sys: &mut System<SYSTEM>, mask: WriteMask) {
         sys.dsp.aram_dma_control = self;
+        if !mask.any(2, 4) {
+            return;
+        }
+        sys.dsp.csr.set_dma_status(true);
 
         const ARAM_DMA_DELAY_US: u64 = 20;
         sys.scheduler.schedule_in(
