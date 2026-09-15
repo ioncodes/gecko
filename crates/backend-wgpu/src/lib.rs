@@ -285,7 +285,7 @@ pub struct GxRenderer {
     // EFB: multisampled (4x) color, actual render target for draws.
     pub(crate) _efb_msaa_texture: wgpu::Texture,
     pub(crate) efb_msaa_view: wgpu::TextureView,
-    // EFB: multisampled (4x) depth.
+    // EFB: multisampled (4x) reversed depth (near = 1, far = 0).
     pub(crate) efb_depth_view: wgpu::TextureView,
     pub(crate) efb_needs_clear: bool,
     pub(crate) sampler_cache: FxHashMap<(WrapMode, WrapMode, MagFilter, MinFilter), wgpu::Sampler>,

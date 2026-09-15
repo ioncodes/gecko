@@ -118,7 +118,7 @@ fn dynamic_tev_indirect(stage: u32) -> u32 {
 fn vs_main(in: VsIn) -> VsOut {
     var out: VsOut;
     out.clip_pos = draw.mvp * vec4<f32>(in.pos_view, 1.0);
-    out.clip_pos.z = out.clip_pos.z + out.clip_pos.w;
+    out.clip_pos.z = -out.clip_pos.z;
     out.color = compute_lighting_c0(
         shader_state(gx_color_ctrl_0, frame.color_ctrl0),
         shader_state(gx_alpha_ctrl_0, frame.alpha_ctrl0),
@@ -340,12 +340,12 @@ fn fs_main_ztex(in: VsOut) -> FsOutZtex {
         default: { z += (texel.r << 16u) | (texel.g << 8u) | texel.b; }
     }
     if shader_state(gx_ztex_op, frame.ztex_op) == 1u {
-        z += u32(round(in.clip_pos.z * 16777215.0));
+        z += u32(round((1.0 - in.clip_pos.z) * 16777215.0));
     }
     z = z & 0x00FFFFFFu;
 
     var out_: FsOutZtex;
     out_.color = r.color;
-    out_.depth = f32(z) / 16777215.0;
+    out_.depth = 1.0 - f32(z) / 16777215.0;
     return out_;
 }

@@ -50,15 +50,15 @@ pub fn map_dst_blend_factor(f: BlendFactor) -> wgpu::BlendFactor {
     }
 }
 
-pub fn map_compare_func(f: CompareFunc) -> wgpu::CompareFunction {
+pub fn map_depth_compare_func(f: CompareFunc) -> wgpu::CompareFunction {
     match f {
         CompareFunc::Never => wgpu::CompareFunction::Never,
-        CompareFunc::Less => wgpu::CompareFunction::Less,
+        CompareFunc::Less => wgpu::CompareFunction::Greater,
         CompareFunc::Equal => wgpu::CompareFunction::Equal,
-        CompareFunc::LessEqual => wgpu::CompareFunction::LessEqual,
-        CompareFunc::Greater => wgpu::CompareFunction::Greater,
+        CompareFunc::LessEqual => wgpu::CompareFunction::GreaterEqual,
+        CompareFunc::Greater => wgpu::CompareFunction::Less,
         CompareFunc::NotEqual => wgpu::CompareFunction::NotEqual,
-        CompareFunc::GreaterEqual => wgpu::CompareFunction::GreaterEqual,
+        CompareFunc::GreaterEqual => wgpu::CompareFunction::LessEqual,
         CompareFunc::Always => wgpu::CompareFunction::Always,
     }
 }

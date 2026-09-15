@@ -344,7 +344,7 @@ fn create_pipeline(
         Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth24Plus,
             depth_write_enabled: Some(key.z_write),
-            depth_compare: Some(helpers::map_compare_func(key.z_func)),
+            depth_compare: Some(helpers::map_depth_compare_func(key.z_func)),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         })

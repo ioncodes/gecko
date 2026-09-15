@@ -14,7 +14,7 @@ var efb_depth: texture_depth_multisampled_2d;
 fn sample_depth(pos: vec2<f32>) -> f32 {
     let dst_size = max(u.dst_size, vec2<f32>(1.0, 1.0));
     let src_pixel = u.src_rect.xy + (pos / dst_size) * u.src_rect.zw;
-    return textureLoad(efb_depth, vec2<i32>(src_pixel), 0);
+    return 1.0 - textureLoad(efb_depth, vec2<i32>(src_pixel), 0);
 }
 
 @fragment

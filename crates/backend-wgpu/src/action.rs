@@ -857,7 +857,7 @@ impl GxRenderer {
                 wgpu::LoadOp::Load
             };
             let depth_load = if needs_initial_clear {
-                wgpu::LoadOp::Clear(1.0)
+                wgpu::LoadOp::Clear(0.0)
             } else {
                 wgpu::LoadOp::Load
             };
@@ -897,7 +897,7 @@ impl GxRenderer {
             #[cfg(feature = "renderdoc-capture")]
             {
                 if needs_initial_clear {
-                    rpass.insert_debug_marker("EFB initial clear: color=black depth=1.0");
+                    rpass.insert_debug_marker("EFB initial clear: color=black reversed_depth=0.0");
                 } else {
                     rpass.insert_debug_marker("EFB load existing color/depth");
                 }
@@ -1008,8 +1008,8 @@ impl GxRenderer {
                 let vp_h = (vp.h * scale).clamp(1.0, max_dim);
 
                 if vp_x.is_finite() && vp_y.is_finite() && vp_w.is_finite() && vp_h.is_finite() {
-                    let mut min_d = vp.min_depth.clamp(0.0, 1.0);
-                    let mut max_d = vp.max_depth.clamp(0.0, 1.0);
+                    let mut min_d = 1.0 - vp.max_depth.clamp(0.0, 1.0);
+                    let mut max_d = 1.0 - vp.min_depth.clamp(0.0, 1.0);
                     if min_d > max_d {
                         std::mem::swap(&mut min_d, &mut max_d);
                     }

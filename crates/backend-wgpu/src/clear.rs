@@ -268,7 +268,7 @@ impl EfbClear {
 
         let uniforms = ClearUniforms {
             color,
-            depth,
+            depth: 1.0 - depth,
             _pad: [0.0; 3],
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
