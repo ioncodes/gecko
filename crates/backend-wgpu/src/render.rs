@@ -10,6 +10,8 @@ pub(crate) struct XfbCopyUniforms {
     dst_size: [f32; 2],
     gamma: f32,
     filter_mode: u32,
+    force_opaque: u32,
+    _pad: [u32; 3],
 }
 
 pub(crate) struct EfbPackPipelines {
@@ -64,7 +66,7 @@ pub(crate) struct EfbDepthPackPipelines {
 
 #[derive(Clone, Copy)]
 enum EfbCopySource {
-    Color { intensity: bool },
+    Color { intensity: bool, alpha_supported: bool },
     Depth,
 }
 
@@ -277,6 +279,8 @@ impl GxRenderer {
                 dst_size: [scaled_w as f32, scaled_dst_h as f32],
                 gamma,
                 filter_mode: 0,
+                force_opaque: 0,
+                _pad: [0; 3],
             };
             queue.write_buffer(&self.xfb_copy_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
@@ -375,7 +379,7 @@ impl GxRenderer {
         copy_format: CopyFormat,
         source: EfbCopySource,
     ) {
-        if let EfbCopySource::Color { intensity } = source {
+        if let EfbCopySource::Color { intensity, .. } = source {
             debug_assert!(
                 self.efb_pack_pipelines.for_color(copy_format, intensity).is_some(),
                 "cache_efb_copy called with depth-only copy format {copy_format:?}",
@@ -405,6 +409,14 @@ impl GxRenderer {
                 EfbCopySource::Color { .. } => u32::from(half),
                 EfbCopySource::Depth => 0,
             },
+            force_opaque: u32::from(matches!(
+                source,
+                EfbCopySource::Color {
+                    alpha_supported: false,
+                    ..
+                }
+            )),
+            _pad: [0; 3],
         };
         let uniform_buffer = match source {
             EfbCopySource::Color { .. } => &self.xfb_copy_uniform_buffer,
@@ -439,7 +451,7 @@ impl GxRenderer {
                 multiview_mask: None,
             });
             let (pipeline, bind_group) = match source {
-                EfbCopySource::Color { intensity } => (
+                EfbCopySource::Color { intensity, .. } => (
                     self.efb_pack_pipelines.for_color(copy_format, intensity).unwrap(),
                     &self.xfb_copy_bind_group,
                 ),
@@ -710,6 +722,7 @@ impl GxRenderer {
         stride: u32,
         depth_copy: bool,
         is_intensity: bool,
+        alpha_supported: bool,
     ) {
         tracing::debug!(
             dest_addr = format!("{dest_addr:#010X}"),
@@ -808,6 +821,8 @@ impl GxRenderer {
                 dst_size: [readback_width as f32, readback_height as f32],
                 gamma: 1.0,
                 filter_mode: if mipmap { 2 } else { 0 },
+                force_opaque: 0,
+                _pad: [0; 3],
             };
             queue.write_buffer(
                 &self.efb_color_readback_uniform_buffer,
@@ -901,6 +916,7 @@ impl GxRenderer {
             copy_format: copy_format_enum,
             stride,
             swap_bgra,
+            force_opaque: !alpha_supported,
         });
 
         self.cache_efb_copy(
@@ -915,6 +931,7 @@ impl GxRenderer {
             copy_format_enum,
             EfbCopySource::Color {
                 intensity: is_intensity,
+                alpha_supported,
             },
         );
     }
@@ -952,6 +969,7 @@ impl GxRenderer {
             copy_format: copy_format_enum,
             stride,
             swap_bgra: false,
+            force_opaque: false,
         });
     }
 
@@ -980,6 +998,8 @@ impl GxRenderer {
             dst_size: [encode_w as f32, encode_h as f32],
             gamma: 1.0,
             filter_mode: 0,
+            force_opaque: 0,
+            _pad: [0; 3],
         };
         queue.write_buffer(&self.efb_depth_resolve_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
         self.efb_depth_resolve_uniform_write_pending = true;
@@ -1222,6 +1242,12 @@ impl GxRenderer {
                 }
             }
             w.staging.unmap();
+
+            if w.force_opaque {
+                for pixel in rgba.chunks_exact_mut(4) {
+                    pixel[3] = 255;
+                }
+            }
 
             let encoded = texture::encode_from_rgba(&rgba, w.width as usize, w.height as usize, w.copy_format);
             let row_bytes = texture::encoded_row_bytes(w.width, w.copy_format);

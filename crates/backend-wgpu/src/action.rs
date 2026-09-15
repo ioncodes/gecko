@@ -667,6 +667,7 @@ impl GxRenderer {
                     *stride,
                     *depth_copy,
                     *is_intensity,
+                    *alpha_supported,
                 );
 
                 if *clear {

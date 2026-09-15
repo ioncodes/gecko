@@ -421,6 +421,7 @@ pub(crate) struct PendingWriteback {
     pub copy_format: gecko::flipper::gx::texture::CopyFormat,
     pub stride: u32,
     pub swap_bgra: bool,
+    pub force_opaque: bool,
 }
 
 impl GxRenderer {
