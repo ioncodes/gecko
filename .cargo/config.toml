@@ -14,3 +14,6 @@ rustflags = [
   # "-C", "target-feature=+relaxed-simd",
   "-C", "target-feature=+tail-call",
 ]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/Gy"]
