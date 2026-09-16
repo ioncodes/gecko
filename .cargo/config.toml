@@ -16,4 +16,4 @@ rustflags = [
 ]
 
 [target.aarch64-pc-windows-msvc]
-rustflags = ["-C", "link-arg=/Gy"]
+linker = "rust-lld"
