@@ -2,7 +2,7 @@ use crate::system::{System, SystemId, WII};
 use std::path::PathBuf;
 
 pub const STATE_MAGIC: [u8; 4] = *b"GKST";
-pub const STATE_VERSION: u32 = 2;
+pub const STATE_VERSION: u32 = 3;
 
 const COMPRESSION_LEVEL: i32 = 1;
 
@@ -276,6 +276,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
         // Version 2 appends the DSP exception latch to preserve version 1 layouts
         w.u8(self.dsp.pending_exceptions);
+        w.pod(&self.gx.zfreeze_plane);
 
         self::pack(SYSTEM, &w.into_inner())
     }
@@ -313,6 +314,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         }
 
         self.dsp.pending_exceptions = if version >= 2 { r.u8()? } else { 0 };
+        self.gx.zfreeze_plane = if version >= 3 { r.pod()? } else { Default::default() };
 
         if r.remaining() != 0 {
             return Err(StateError::Corrupt("trailing data"));

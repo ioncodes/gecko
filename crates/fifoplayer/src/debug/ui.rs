@@ -21,6 +21,7 @@ enum ViewMode {
     Auto,
     Efb,
     Xfb,
+    Depth,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -47,6 +48,8 @@ enum Row {
 }
 
 enum UiAction {
+    SelectDraw(usize),
+    CaptureDepth,
     StepCmd,
     StepDraw,
     StepFrame,
@@ -116,6 +119,8 @@ pub fn run_debug<const SYSTEM: SystemId>(file: dff::DffFile, path: PathBuf, star
         hex_for: None,
         bp_input: String::new(),
         status_msg: String::new(),
+        geometry_subdraw: 0,
+        depth_view: super::depth_view::DepthView::default(),
     };
 
     let event_loop = EventLoop::new().unwrap();
@@ -184,6 +189,8 @@ struct DebugApp<const SYSTEM: SystemId> {
     hex_for: Option<usize>,
     bp_input: String,
     status_msg: String,
+    geometry_subdraw: usize,
+    depth_view: super::depth_view::DepthView,
 }
 
 const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
@@ -268,6 +275,37 @@ impl<const SYSTEM: SystemId> DebugApp<SYSTEM> {
     fn apply_action(&mut self, action: UiAction) {
         let mut stepped = true;
         match action {
+            UiAction::CaptureDepth => {
+                if let Some(draw) = self.selected_geometry() {
+                    self.session.sink.depth_request = Some((draw.location, draw.subdraw));
+                    self.session.rerender();
+                    self.session.sink.depth_request = None;
+                }
+            }
+            UiAction::SelectDraw(row) => {
+                self.select_row(row);
+
+                let eligible = self.session.index.commands.get(row).is_some_and(|cmd| {
+                    matches!(cmd.kind, CmdKind::Draw { .. } | CmdKind::CallDl { .. })
+                        && !self.session.cur.disabled.contains(&cmd.offset)
+                });
+
+                if !eligible {
+                    stepped = false;
+                } else if self.selected_geometry().is_some() {
+                    self.session.pause();
+                    stepped = false;
+                } else {
+                    let frame = self.session.frame_idx;
+                    let ahead = !self.session.finished && row + 1 >= self.session.row;
+
+                    self.session.jump_to(frame, row + 1);
+
+                    if ahead {
+                        self::rerender_if_in_frame(&mut self.session, frame);
+                    }
+                }
+            }
             UiAction::StepCmd => {
                 let f0 = self.session.frame_idx;
                 self.session.step_command();
@@ -307,7 +345,15 @@ impl<const SYSTEM: SystemId> DebugApp<SYSTEM> {
             }
             UiAction::Restart => self.session.restart(),
             UiAction::RestartFrame => self.session.restart_frame(),
-            UiAction::JumpTo(frame, row) => self.session.jump_to(frame, row),
+            UiAction::JumpTo(frame, row) => {
+                self.session.jump_to(frame, row);
+
+                if self.view_mode == ViewMode::Depth {
+                    self.apply_action(UiAction::SelectDraw(row));
+                } else {
+                    self.select_row(row);
+                }
+            }
             UiAction::ToggleDisabled(off) => self.session.toggle_disabled(off),
             UiAction::ToggleRowBp(row) => {
                 stepped = false;
@@ -376,7 +422,7 @@ impl<const SYSTEM: SystemId> DebugApp<SYSTEM> {
         self.frame_panel(ui, actions);
         self.command_panel(ui, actions);
         self.inspector_panel(ui, actions);
-        self.game_panel(ui);
+        self.game_panel(ui, actions);
     }
 
     fn toolbar(&mut self, root: &mut egui::Ui, actions: &mut Vec<UiAction>) {
@@ -443,11 +489,20 @@ impl<const SYSTEM: SystemId> DebugApp<SYSTEM> {
                         ViewMode::Auto => "Auto",
                         ViewMode::Efb => "EFB",
                         ViewMode::Xfb => "XFB",
+                        ViewMode::Depth => "Depth",
                     })
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut self.view_mode, ViewMode::Auto, "Auto");
                         ui.selectable_value(&mut self.view_mode, ViewMode::Efb, "EFB");
                         ui.selectable_value(&mut self.view_mode, ViewMode::Xfb, "XFB");
+
+                        if ui
+                            .selectable_value(&mut self.view_mode, ViewMode::Depth, "Depth")
+                            .changed()
+                            && let Selection::Cmd(row) = self.selection
+                        {
+                            actions.push(UiAction::SelectDraw(row));
+                        }
                     });
 
                 ui.separator();
@@ -713,7 +768,12 @@ impl<const SYSTEM: SystemId> DebugApp<SYSTEM> {
                     }
 
                     if ui.selectable_label(is_selected, text).clicked() {
-                        self.selection = Selection::Cmd(i);
+                        if self.view_mode == ViewMode::Depth {
+                            actions.push(UiAction::SelectDraw(i));
+                        } else {
+                            self.selection = Selection::Cmd(i);
+                            self.geometry_subdraw = 0;
+                        }
                     }
                 });
             }
@@ -725,7 +785,7 @@ impl<const SYSTEM: SystemId> DebugApp<SYSTEM> {
             .resizable(true)
             .default_size(360.0)
             .show_inside(root, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.selectable_value(&mut self.inspector_tab, Tab::Disasm, "Disasm");
                     ui.selectable_value(&mut self.inspector_tab, Tab::Registers, "Registers");
                     ui.selectable_value(&mut self.inspector_tab, Tab::Hex, "Hex");
@@ -739,7 +799,7 @@ impl<const SYSTEM: SystemId> DebugApp<SYSTEM> {
                         Tab::Disasm => self.disasm_tab(ui),
                         Tab::Registers => self.registers_tab(ui),
                         Tab::Hex => self.hex_tab(ui, actions),
-                        Tab::Breakpoints => self.breakpoints_tab(ui),
+                        Tab::Breakpoints => self.breakpoints_tab(ui, actions),
                     });
             });
     }
@@ -758,6 +818,34 @@ impl<const SYSTEM: SystemId> DebugApp<SYSTEM> {
                     .weak(),
             );
         }
+    }
+
+    fn select_row(&mut self, row: usize) {
+        self.selection = Selection::Cmd(row);
+        self.geometry_subdraw = 0;
+    }
+
+    fn selected_draws(&self) -> Option<&[Arc<super::geometry::Geometry>]> {
+        let Selection::Cmd(row) = self.selection else {
+            return None;
+        };
+
+        let cmd = self.session.index.commands.get(row)?;
+
+        self.session
+            .sink
+            .inspection
+            .as_ref()?
+            .draws
+            .get(&cmd.offset)
+            .map(Vec::as_slice)
+    }
+
+    fn selected_geometry(&self) -> Option<Arc<super::geometry::Geometry>> {
+        let draws = self.selected_draws()?;
+        let idx = self.geometry_subdraw.min(draws.len().saturating_sub(1));
+
+        draws.get(idx).cloned()
     }
 
     fn registers_tab(&self, ui: &mut egui::Ui) {
@@ -881,7 +969,7 @@ impl<const SYSTEM: SystemId> DebugApp<SYSTEM> {
         );
     }
 
-    fn breakpoints_tab(&mut self, ui: &mut egui::Ui) {
+    fn breakpoints_tab(&mut self, ui: &mut egui::Ui, actions: &mut Vec<UiAction>) {
         let bp = &mut self.session.breakpoints;
 
         ui.label(egui::RichText::new("Break on command kind").strong());
@@ -893,32 +981,42 @@ impl<const SYSTEM: SystemId> DebugApp<SYSTEM> {
         ui.checkbox(&mut bp.on_xf, "any XF write");
 
         ui.separator();
-        ui.label(egui::RichText::new("Register breakpoints").strong());
-        ui.label(egui::RichText::new("cp <hex> | bp <hex> | xf <hex>").weak());
+        ui.label(egui::RichText::new("Add breakpoint").strong());
+        ui.label(egui::RichText::new("cmd <hex offset> (current frame)\ncp <hex> | bp <hex> | xf <hex>").weak());
 
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.bp_input).desired_width(120.0));
+            let input = ui.add(
+                egui::TextEdit::singleline(&mut self.bp_input)
+                    .hint_text("cmd 0186A3")
+                    .desired_width(170.0),
+            );
 
-            if ui.button(format!("{} Add", icons::PLUS)).clicked() {
-                let input = self.bp_input.trim().to_lowercase();
-                let mut parts = input.split_whitespace();
-                let kind = parts.next().unwrap_or("");
-                let val = parts.next().and_then(|v| u16::from_str_radix(v, 16).ok());
+            let enter = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
-                match (kind, val) {
-                    ("cp", Some(v)) if v <= 0xFF => {
-                        bp.cp_regs.insert(v as u8);
-                        self.bp_input.clear();
+            if ui.button(format!("{} Add", icons::PLUS)).clicked() || enter {
+                let frame = self.session.frame_idx;
+
+                let added = match super::parse_breakpoint(&self.bp_input) {
+                    Ok(super::BreakpointSpec::Cp(v)) => Ok(bp.cp_regs.insert(v)),
+                    Ok(super::BreakpointSpec::Bp(v)) => Ok(bp.bp_regs.insert(v)),
+                    Ok(super::BreakpointSpec::Xf(v)) => Ok(bp.xf_addrs.insert(v)),
+                    Ok(super::BreakpointSpec::Command(offset)) => {
+                        let row = self.session.index.commands.iter().position(|c| c.offset == offset);
+
+                        match row {
+                            Some(row) => {
+                                self.status_msg = format!("Breakpoint: frame {frame} / {offset:06X}");
+                                Ok(bp.rows.insert((frame, row)))
+                            }
+                            None => Err(format!("{offset:06X} is not within boundary in this frame")),
+                        }
                     }
-                    ("bp", Some(v)) if v <= 0xFF => {
-                        bp.bp_regs.insert(v as u8);
-                        self.bp_input.clear();
-                    }
-                    ("xf", Some(v)) => {
-                        bp.xf_addrs.insert(v);
-                        self.bp_input.clear();
-                    }
-                    _ => self.status_msg = "expected: cp|bp|xf <hex>".into(),
+                    Err(err) => Err(err.into()),
+                };
+
+                match added {
+                    Ok(_) => self.bp_input.clear(),
+                    Err(msg) => self.status_msg = msg,
                 }
             }
         });
@@ -939,7 +1037,21 @@ impl<const SYSTEM: SystemId> DebugApp<SYSTEM> {
 
             for (frame, row) in rows {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(format!("frame {frame} cmd {row}")).monospace());
+                    let label = self
+                        .session
+                        .index
+                        .commands
+                        .get(row)
+                        .filter(|_| frame == self.session.frame_idx)
+                        .map(|c| format!("frame {frame} / {:06X}", c.offset))
+                        .unwrap_or_else(|| format!("frame {frame} cmd {row}"));
+
+                    ui.label(egui::RichText::new(label).monospace());
+
+                    if ui.small_button("Go").clicked() {
+                        actions.push(UiAction::JumpTo(frame, row));
+                    }
+
                     if ui.small_button(icons::TRASH).clicked() {
                         remove_row = Some((frame, row));
                     }
@@ -952,11 +1064,38 @@ impl<const SYSTEM: SystemId> DebugApp<SYSTEM> {
         }
     }
 
-    fn game_panel(&mut self, root: &mut egui::Ui) {
+    fn game_panel(&mut self, root: &mut egui::Ui, actions: &mut Vec<UiAction>) {
         egui::CentralPanel::default().show_inside(root, |ui| {
+            if self.view_mode == ViewMode::Depth {
+                let num_draws = self.selected_draws().map_or(0, |draws| draws.len());
+
+                if num_draws > 1 {
+                    ui.horizontal(|ui| {
+                        ui.label("Draw");
+                        ui.add(egui::DragValue::new(&mut self.geometry_subdraw).range(0..=num_draws - 1));
+                        ui.weak(format!("/ {}", num_draws - 1));
+                    });
+                }
+
+                let selected = self.selected_geometry();
+
+                if let Some(capture) = &self.session.sink.inspection {
+                    self.depth_view.show(ui, capture, selected.as_ref());
+                }
+
+                if self.depth_view.show_test
+                    && self.session.run_state == RunState::Paused
+                    && selected.as_ref().is_some_and(|d| d.depth_before.get().is_none())
+                {
+                    actions.push(UiAction::CaptureDepth);
+                }
+
+                return;
+            }
+
             let show_xfb = match self.view_mode {
                 ViewMode::Xfb => true,
-                ViewMode::Efb => false,
+                ViewMode::Efb | ViewMode::Depth => false,
                 ViewMode::Auto => (self.session.row == 0 || self.session.finished) && self.session.presents > 0,
             };
 
@@ -1225,6 +1364,11 @@ impl<const SYSTEM: SystemId> ApplicationHandler for DebugApp<SYSTEM> {
             WindowEvent::RedrawRequested => {
                 if self.session.run_state != RunState::Paused {
                     self.session.run_tick();
+
+                    if self.session.run_state == RunState::Paused && !self.session.finished {
+                        self.select_row(self.session.row);
+                    }
+
                     self.flush_gx();
                     self.scroll_to_current = true;
                 }

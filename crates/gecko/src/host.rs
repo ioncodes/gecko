@@ -182,6 +182,7 @@ pub struct DrawData {
 #[derive(Debug, Clone, Default)]
 pub struct DrawState {
     pub active_texcoords: u8,
+    pub zfreeze: Option<crate::flipper::gx::depth::DepthPlane>,
     // TEV combiner state
     pub tev_color_env: [u32; 16],
     pub tev_alpha_env: [u32; 16],
@@ -286,6 +287,10 @@ pub trait RenderSink: Send {
         0x00FF_FFFF
     }
 
+    fn capture_efb_depth(&mut self) -> Option<Vec<u32>> {
+        None
+    }
+
     fn exec_draw(&mut self, segment: DrawSegment, state: Option<DrawState>) {
         let mut draw = self.take_draw_data();
         draw.segments.clear();
@@ -301,6 +306,8 @@ pub trait RenderSink: Send {
     }
 
     fn vertex_scratch(&mut self) -> &mut Vec<DrawVertex>;
+
+    fn inspect_draws(&mut self, _gx: &crate::flipper::gx::GraphicsProcessor, _segments: &[DrawSegment]) {}
 
     fn has_pending_efb_texture(&self, _addr: u32, _width: u32, _height: u32, _fmt: TextureFormat) -> bool {
         false

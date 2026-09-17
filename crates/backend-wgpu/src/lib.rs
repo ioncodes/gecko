@@ -190,19 +190,20 @@ pub(crate) struct FrameUniforms {
     pub material_color0: glam::Vec4,
     pub material_color1: glam::Vec4,
     // Z-texture state: bias (24-bit), texel format (0=u8/1=u16/2=u24) and
-    // op (0=disabled, 1=add, 2=replace). Consumed by the fs_main_ztex entry
+    // op (0=disabled, 1=add, 2=replace). Consumed by the fs_main_depth entry
     // point, which derives the fragment depth from the last texture lookup.
     pub ztex_bias: u32,
     pub ztex_type: u32,
     pub ztex_op: u32,
     pub _pad2: u32,
+    pub zfreeze_plane: glam::Vec4,
 }
 
 pub(crate) const FRAME_UNIFORMS_SIZE: NonZeroU64 = match NonZeroU64::new(std::mem::size_of::<FrameUniforms>() as u64) {
     Some(v) => v,
     None => panic!("FrameUniforms must be non-zero sized"),
 };
-const _: () = assert!(std::mem::size_of::<FrameUniforms>() == 1552);
+const _: () = assert!(std::mem::size_of::<FrameUniforms>() == 1568);
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]

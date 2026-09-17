@@ -137,6 +137,12 @@ impl GraphicsProcessor {
         verts.reserve(vertex_count);
         self::dispatch_decode(self, mmio, cmd, data, vertex_count, verts);
 
+        let zfreeze = GenMode::from_raw(self.bp_regs[BP_GEN_MODE]).z_freeze();
+
+        if !zfreeze {
+            self.update_depth_plane(entries, &verts[base_vertex as usize..]);
+        }
+
         let state = self.frame_state_dirty.then(|| {
             let tev_color_regs = self.resolve_tev_color_regs();
             let tev_orders = self.resolve_tev_orders();
@@ -176,6 +182,7 @@ impl GraphicsProcessor {
             let ztex2 = TevZtex2::from_raw(self.bp_regs[BP_TEV_ZTEX2]);
 
             DrawState {
+                zfreeze: zfreeze.then_some(self.zfreeze_plane),
                 tev_color_env: std::array::from_fn(|i| self.cur_tev_color_env[i].raw()),
                 tev_alpha_env: std::array::from_fn(|i| self.cur_tev_alpha_env[i].raw()),
                 tev_orders: std::array::from_fn(|i| tev_orders[i].raw()),
@@ -197,11 +204,7 @@ impl GraphicsProcessor {
                 active_texcoords: (self.xf_mem[crate::flipper::gx::constants::XF_NUM_TEXGENS] as u8).min(8),
                 ztex_bias: TevZtex1::from_raw(self.bp_regs[BP_TEV_ZTEX1]).bias(),
                 ztex_type: ztex2.tex_type(),
-                ztex_op: if self.cur_pe_control.early_ztest() {
-                    0
-                } else {
-                    ztex2.op()
-                },
+                ztex_op: self.effective_ztex_op(),
             }
         });
         self.frame_state_dirty = false;
@@ -223,6 +226,8 @@ impl GraphicsProcessor {
             });
             segment_base = segment_base.wrapping_add(entry.vertex_count as u32);
         }
+
+        renderer.inspect_draws(self, &self.draw_segments_scratch);
 
         renderer.exec_draw_batch(&self.draw_segments_scratch, state);
 

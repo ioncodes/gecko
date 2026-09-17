@@ -16,7 +16,7 @@ bytemuck = { version = "1.25.0", features = ["derive"] }
 gecko = { path = "../gecko", default-features = false }
 chapa = "0.1.2"
 wesl = "0.3.2"
-glam = { version = "0.32.1", features = ["bytemuck"] }
+glam = { version = "0.33.7", features = ["bytemuck"] }
 crossbeam-channel = "0.5.15"
 tracing = "0.1.44"
 rustc-hash = "2.1.2"

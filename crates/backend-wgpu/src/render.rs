@@ -1068,33 +1068,56 @@ impl GxRenderer {
             return 0x00FF_FFFF;
         }
 
+        self.read_efb_depth(device, queue, [x, y, 1, 1])
+            .and_then(|v| v.first().copied())
+            .unwrap_or(0x00FF_FFFF)
+    }
+
+    pub(crate) fn capture_efb_depth(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Option<Vec<u32>> {
+        self.read_efb_depth(device, queue, [0, 0, crate::EFB_WIDTH, crate::EFB_HEIGHT])
+    }
+
+    fn read_efb_depth(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, rect: [u32; 4]) -> Option<Vec<u32>> {
+        let [_, _, width, height] = rect;
+
         self.flush_pending_draws(device, queue);
 
-        let (staging, capacity, bytes_per_row) = self.encode_depth_readback(device, queue, [x, y, 1, 1], [1, 1]);
+        let (staging, capacity, stride) = self.encode_depth_readback(device, queue, rect, [width, height]);
         let submission_index = self.submit_pending(queue);
-        let (done_tx, done_rx) = std::sync::mpsc::channel();
-        staging
-            .slice(..bytes_per_row)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                let _ = done_tx.send(result);
-            });
-        let poll_result = device.poll(wgpu::PollType::Wait {
+        let size = stride * height as u64;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        staging.slice(..size).map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+
+        let poll = device.poll(wgpu::PollType::Wait {
             submission_index,
             timeout: Some(std::time::Duration::from_secs(5)),
         });
-        let map_result = done_rx.try_recv();
-        let depth = if poll_result.is_ok() && matches!(map_result, Ok(Ok(()))) {
-            let mapped = staging.slice(..bytes_per_row).get_mapped_range();
 
-            ((mapped[0] as u32) << 16) | ((mapped[1] as u32) << 8) | mapped[2] as u32
+        let result = if poll.is_ok() && matches!(rx.try_recv(), Ok(Ok(()))) {
+            let mapped = staging.slice(..size).get_mapped_range();
+
+            Some(
+                mapped
+                    .chunks_exact(stride as usize)
+                    .flat_map(|row| {
+                        row[..width as usize * 4]
+                            .chunks_exact(4)
+                            .map(|p| ((p[0] as u32) << 16) | ((p[1] as u32) << 8) | p[2] as u32)
+                    })
+                    .collect(),
+            )
         } else {
-            tracing::warn!(?poll_result, ?map_result, "EFB depth peek failed");
-            0x00FF_FFFF
+            tracing::warn!(?poll, "EFB depth snapshot failed");
+            None
         };
+
         staging.unmap();
         self.return_readback_staging(staging, capacity);
 
-        depth
+        result
     }
 
     pub(crate) fn ensure_writeback_target(

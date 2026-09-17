@@ -908,6 +908,8 @@ pub struct GenMode {
     pub cull_mode: CullMode,
     #[bits(16..=18)]
     pub num_ind_stages: u8,
+    #[bits(19)]
+    pub z_freeze: bool,
 }
 
 #[derive(Debug, PartialEq, BitEnum)]

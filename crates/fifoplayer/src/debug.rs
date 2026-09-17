@@ -1,5 +1,7 @@
+mod depth_view;
 pub mod disasm;
 pub mod edits;
+pub mod geometry;
 pub mod slice;
 pub mod ui;
 
@@ -30,6 +32,34 @@ pub struct Breakpoints {
     pub bp_regs: HashSet<u8>,
     pub xf_addrs: HashSet<u16>,
     pub rows: HashSet<(usize, usize)>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum BreakpointSpec {
+    Cp(u8),
+    Bp(u8),
+    Xf(u16),
+    Command(usize),
+}
+
+pub fn parse_breakpoint(input: &str) -> Result<BreakpointSpec, &'static str> {
+    let input = input.to_ascii_lowercase();
+    let parts: Vec<_> = input.split_whitespace().collect();
+
+    let [kind, value] = parts.as_slice() else {
+        return Err("expected: cmd|cp|bp|xf <hex>");
+    };
+
+    let value = usize::from_str_radix(value.strip_prefix("0x").unwrap_or(value), 16)
+        .map_err(|_| "invalid hexadecimal value")?;
+
+    match *kind {
+        "cmd" => Ok(BreakpointSpec::Command(value)),
+        "cp" if value <= 0xff => Ok(BreakpointSpec::Cp(value as u8)),
+        "bp" if value <= 0xff => Ok(BreakpointSpec::Bp(value as u8)),
+        "xf" if value <= 0xffff => Ok(BreakpointSpec::Xf(value as u16)),
+        _ => Err("expected cmd <offset>, cp/bp <00..FF>, or xf <0000..FFFF>"),
+    }
 }
 
 impl Breakpoints {
@@ -87,6 +117,8 @@ pub struct DebugSession<const SYSTEM: SystemId> {
 
 impl<const SYSTEM: SystemId> DebugSession<SYSTEM> {
     pub fn new(file: dff::DffFile, path: PathBuf, start: usize, end: usize, mut sink: PlayerSink) -> Self {
+        sink.inspection = Some(geometry::GeometryCapture::default());
+
         let mut playback = Playback::<SYSTEM>::new();
         playback.load_state(&file, &mut sink);
 
@@ -141,6 +173,8 @@ impl<const SYSTEM: SystemId> DebugSession<SYSTEM> {
     }
 
     fn enter_frame(&mut self, idx: usize) {
+        self.sink.inspection.as_mut().unwrap().draws.clear();
+
         self.frame_idx = idx;
         self.row = 0;
         self.next_update = 0;
@@ -183,6 +217,12 @@ impl<const SYSTEM: SystemId> DebugSession<SYSTEM> {
         self.apply_updates_through(end);
 
         if !self.cur.disabled.contains(&off) {
+            self.sink.inspection.as_mut().unwrap().location = geometry::DrawLocation {
+                frame: self.frame_idx,
+                row: self.row,
+                offset: off,
+            };
+
             let fifo = std::mem::take(&mut self.cur.fifo);
             self.playback.feed(&fifo[off..end], &mut self.sink);
             self.cur.fifo = fifo;
@@ -318,25 +358,20 @@ impl<const SYSTEM: SystemId> DebugSession<SYSTEM> {
         if invalidate {
             self.sink.exec(GxAction::InvalidateCaches);
         }
+
         self.sink.reset_efb();
+        self.sink.inspection = Some(geometry::GeometryCapture::default());
         self.playback.load_state(&self.file, &mut self.sink);
 
-        for f in self.start..frame {
-            let presented = match self.edits.frame(f) {
-                None => self.playback.play_frame(&self.file.frames[f], &mut self.sink),
-                Some(fe) => {
-                    let eff = EffectiveFrame::build(&self.file.frames[f], Some(fe));
-                    let exec = eff.exec_fifo();
-                    self.playback.play_frame_with(&exec, &eff.updates, &mut self.sink)
-                }
-            };
+        self.enter_frame(self.start);
 
-            if presented {
-                self.presents += 1;
+        while self.frame_idx < frame {
+            while !self.at_frame_end() {
+                self.exec_current();
             }
-        }
 
-        self.enter_frame(frame);
+            self.finish_frame();
+        }
 
         let row = row.min(self.index.commands.len());
         for _ in 0..row {

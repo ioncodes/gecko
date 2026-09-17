@@ -60,7 +60,11 @@ fn pack_u32_slice_to_uvec4x4(data: &[u32]) -> [UVec4; 4] {
     ]
 }
 
-fn build_frame_uniform(draw: &DrawState, alpha_cmp: gecko::flipper::gx::regs::AlphaCompare) -> FrameUniforms {
+fn build_frame_uniform(
+    draw: &DrawState,
+    alpha_cmp: gecko::flipper::gx::regs::AlphaCompare,
+    efb_scale: u32,
+) -> FrameUniforms {
     FrameUniforms {
         tev_color_regs: draw.tev_color_regs.map(Vec4::from),
         tev_konst_colors: draw.tev_konst_colors.map(Vec4::from),
@@ -99,11 +103,14 @@ fn build_frame_uniform(draw: &DrawState, alpha_cmp: gecko::flipper::gx::regs::Al
         ztex_type: draw.ztex_type as u32,
         ztex_op: draw.ztex_op as u32,
         _pad2: 0,
+        zfreeze_plane: draw.zfreeze.map_or(Vec4::ZERO, |p| {
+            Vec4::new(p.dx / efb_scale as f32, p.dy / efb_scale as f32, p.c, 1.0)
+        }),
     }
 }
 
 impl GxRenderer {
-    fn current_pipeline_key(&self, ztex: bool) -> PipelineKey {
+    fn current_pipeline_key(&self, per_pixel_depth: bool) -> PipelineKey {
         let blend = self.current_blend_mode;
         let zmode = self.current_zmode;
         PipelineKey {
@@ -119,7 +126,7 @@ impl GxRenderer {
             color_update: blend.color_update(),
             alpha_update: blend.alpha_update(),
             cull_mode: self.current_cull_mode,
-            ztex,
+            per_pixel_depth,
         }
     }
 
@@ -135,7 +142,7 @@ impl GxRenderer {
     /// `previous`, rebasing the indices onto the merged vertex range.
     fn merge_into_previous(&mut self, previous: usize, draw: &DrawSegment) {
         let vertex_bias = self.scratch_draws[previous].vertex_count;
-        let (_, additional_indices) = self::emit_draw_indices(draw, &mut self.scratch_indices, vertex_bias);
+        let additional_indices = self::emit_draw_indices(draw, &mut self.scratch_indices, vertex_bias);
 
         let merged = &mut self.scratch_draws[previous];
         merged.vertex_count += draw.vertex_count;
@@ -406,7 +413,7 @@ impl GxRenderer {
                     } else {
                         ShaderSpecializationKey::from_draw(state, self.current_alpha_compare, shader_key)
                     };
-                    let ztex_enabled = state.ztex_op != 0;
+                    let per_pixel_depth = state.ztex_op != 0 || state.zfreeze.is_some();
                     let active = if self.current_shader_key.is_some() {
                         self.current_active_texture_mask
                     } else {
@@ -414,7 +421,7 @@ impl GxRenderer {
                     };
                     let num_indirect_stages = state.num_indirect_stages;
                     let next_frame_uniform = (state_changed || self.last_frame_uniform_index.is_none())
-                        .then(|| build_frame_uniform(state, self.current_alpha_compare));
+                        .then(|| build_frame_uniform(state, self.current_alpha_compare, self.efb_scale));
                     if !self.shader_cache.contains_key(&shader_key) {
                         #[cfg(feature = "gx-stats")]
                         let shader_started = std::time::Instant::now();
@@ -434,7 +441,7 @@ impl GxRenderer {
                         tracing::info!(?shader_key, "compiled specialized shader variant");
                     }
 
-                    let pipeline_key = self.current_pipeline_key(ztex_enabled);
+                    let pipeline_key = self.current_pipeline_key(per_pixel_depth);
                     let full_key = FullPipelineKey {
                         shader: shader_key,
                         specialization,
@@ -553,7 +560,7 @@ impl GxRenderer {
                         self.merge_into_previous(previous, draw);
                     } else {
                         let first_index = self.scratch_indices.len() as u32;
-                        let (_, index_count) = emit_draw_indices(draw, &mut self.scratch_indices, 0);
+                        let index_count = self::emit_draw_indices(draw, &mut self.scratch_indices, 0);
 
                         let start = self.scratch_draws.len() * draw_stride;
                         self.scratch_uniform_bytes.resize(start + draw_stride, 0);
@@ -1195,77 +1202,21 @@ fn uniform_slots_equal(bytes: &[u8], stride: usize, size: usize, a: u32, b: u32)
 }
 
 fn draw_emits_triangles(draw: &DrawSegment) -> bool {
-    use gecko::flipper::gx::draw::Primitive;
-
-    match draw.primitive {
-        Primitive::Triangles | Primitive::TriangleStrip | Primitive::TriangleFan | Primitive::Quads => {
-            draw.vertex_count >= 3
-        }
-        _ => {
-            tracing::error!(?draw.primitive, "draw_emits_triangles: skipping unsupported primitive");
-            false
-        }
+    if !draw.primitive.emits_triangles() {
+        tracing::error!(?draw.primitive, "draw_emits_triangles: skipping unsupported primitive");
+        return false;
     }
+
+    draw.vertex_count >= 3
 }
 
-fn emit_draw_indices(draw: &DrawSegment, indices_out: &mut Vec<u32>, vertex_bias: u32) -> (u32, u32) {
-    use gecko::flipper::gx::draw::Primitive;
+fn emit_draw_indices(draw: &DrawSegment, indices_out: &mut Vec<u32>, vertex_bias: u32) -> u32 {
+    let count = draw.primitive.triangle_count(draw.vertex_count) * 3;
+    indices_out.reserve(count as usize);
 
-    let n = draw.vertex_count;
-
-    match draw.primitive {
-        Primitive::Triangles => {
-            let emitted = n - n % 3;
-            indices_out.extend((0..emitted).map(|i| vertex_bias + i));
-
-            (n, emitted)
-        }
-        Primitive::Quads => {
-            let chunks = n / 4;
-            for q in 0..chunks {
-                let base = vertex_bias + q * 4;
-                indices_out.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-            }
-
-            let mut index_count = chunks * 6;
-
-            if n % 4 == 3 {
-                let base = vertex_bias + chunks * 4;
-                indices_out.extend_from_slice(&[base, base + 1, base + 2]);
-                index_count += 3;
-            }
-
-            (n, index_count)
-        }
-        Primitive::TriangleStrip => {
-            if n < 3 {
-                return (0, 0);
-            }
-
-            let tris = n - 2;
-            for i in 0..tris {
-                if i & 1 == 0 {
-                    indices_out.extend_from_slice(&[vertex_bias + i, vertex_bias + i + 1, vertex_bias + i + 2]);
-                } else {
-                    indices_out.extend_from_slice(&[vertex_bias + i + 1, vertex_bias + i, vertex_bias + i + 2]);
-                }
-            }
-            (n, tris * 3)
-        }
-        Primitive::TriangleFan => {
-            if n < 3 {
-                return (0, 0);
-            }
-
-            let tris = n - 2;
-            for i in 0..tris {
-                indices_out.extend_from_slice(&[vertex_bias, vertex_bias + i + 1, vertex_bias + i + 2]);
-            }
-            (n, tris * 3)
-        }
-        _ => {
-            tracing::error!(?draw.primitive, "emit_draw_indices: skipping unsupported primitive");
-            (0, 0)
-        }
+    for tri in draw.primitive.triangles(draw.vertex_count) {
+        indices_out.extend(tri.map(|i| vertex_bias + i));
     }
+
+    count
 }

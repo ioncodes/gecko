@@ -1,5 +1,6 @@
 mod bp;
 pub mod constants;
+pub mod depth;
 pub mod draw;
 pub mod fifo;
 #[cfg(feature = "jit")]
@@ -28,6 +29,7 @@ pub struct GraphicsProcessor {
     pub pending_token: u16,
     pub token_dirty: bool,
     pub projection: Matrix4,
+    pub zfreeze_plane: depth::DepthPlane,
     pub bp_regs: Vec<u32>,
     pub bp_mask: u32,
     pub cp_regs: Vec<u32>,
@@ -184,6 +186,7 @@ impl GraphicsProcessor {
             pending_efb_writeback_ranges: Vec::new(),
             recorder: None,
             projection: Matrix4::default(),
+            zfreeze_plane: depth::DepthPlane::default(),
             cur_textures: Default::default(),
             tex_dirty: 0,
             cur_tluts: [draw::TlutRef::default(); 8],

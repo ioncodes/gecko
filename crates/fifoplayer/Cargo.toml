@@ -12,6 +12,7 @@ egui = "0.34.2"
 egui-phosphor = { version = "0.12.0", features = ["fill"] }
 egui-wgpu = "0.34.2"
 egui-winit = { version = "0.34.2", features = ["wayland", "x11"] }
+glam = "0.33.7"
 pollster = "0.4.0"
 tracing = { version = "0.1.44", features = ["release_max_level_off"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

@@ -31,6 +31,44 @@ impl Primitive {
             }
         }
     }
+
+    pub fn emits_triangles(self) -> bool {
+        self.triangle_count(3) != 0
+    }
+
+    pub fn triangle_count(self, vertex_count: u32) -> u32 {
+        let n = vertex_count;
+
+        match self {
+            Primitive::Triangles => n / 3,
+            Primitive::Quads => n / 4 * 2 + (n % 4 == 3) as u32,
+            Primitive::TriangleStrip | Primitive::TriangleFan => n.saturating_sub(2),
+            _ => 0,
+        }
+    }
+
+    pub fn triangle(self, i: u32) -> [u32; 3] {
+        match self {
+            Primitive::Triangles => [3 * i, 3 * i + 1, 3 * i + 2],
+            Primitive::Quads => {
+                let base = i / 2 * 4;
+
+                if i & 1 == 0 {
+                    [base, base + 1, base + 2]
+                } else {
+                    [base, base + 2, base + 3]
+                }
+            }
+            Primitive::TriangleStrip if i & 1 == 0 => [i, i + 1, i + 2],
+            Primitive::TriangleStrip => [i + 1, i, i + 2],
+            Primitive::TriangleFan => [0, i + 1, i + 2],
+            _ => unreachable!("{self:?} has no triangles"),
+        }
+    }
+
+    pub fn triangles(self, vertex_count: u32) -> impl Iterator<Item = [u32; 3]> {
+        (0..self.triangle_count(vertex_count)).map(move |i| self.triangle(i))
+    }
 }
 
 #[derive(Debug)]

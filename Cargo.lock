@@ -533,7 +533,7 @@ dependencies = [
  "chapa",
  "crossbeam-channel",
  "gecko",
- "glam 0.32.1",
+ "glam 0.33.7",
  "hotpath",
  "png",
  "renderdoc",
@@ -1525,7 +1525,7 @@ dependencies = [
  "egui",
  "egui-phosphor",
  "gecko",
- "glam 0.33.2",
+ "glam 0.33.7",
  "image 0.1.0",
 ]
 
@@ -2042,6 +2042,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "gecko",
+ "glam 0.33.7",
  "pollster",
  "tracing",
  "tracing-subscriber",
@@ -2297,7 +2298,7 @@ dependencies = [
  "crossbeam-channel",
  "dff",
  "disasm",
- "glam 0.32.1",
+ "glam 0.33.7",
  "hotpath",
  "hound",
  "image 0.1.0",
@@ -2451,18 +2452,12 @@ checksum = "151665d9be52f9bb40fc7966565d39666f2d1e69233571b71b87791c7e0528b3"
 
 [[package]]
 name = "glam"
-version = "0.32.1"
+version = "0.33.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f70749695b063ecbf6b62949ccccde2e733ec3ecbbd71d467dca4e5c6c97cca0"
+checksum = "e762b9b188634fc508d4ec54b62ea3d352c43fd431d18d05d46f559f217f4725"
 dependencies = [
  "bytemuck",
 ]
-
-[[package]]
-name = "glam"
-version = "0.33.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f22fb22f065b308be0d8724e3706c7fa3fc2a6c7d6899df4cad7860e7a75436"
 
 [[package]]
 name = "glob"

@@ -565,6 +565,10 @@ impl InlineSink {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl RenderSink for InlineSink {
+    fn capture_efb_depth(&mut self) -> Option<Vec<u32>> {
+        self.gx.lock().unwrap().capture_efb_depth(&self.device, &self.queue)
+    }
+
     fn peek_efb_depth(&mut self, x: u32, y: u32) -> u32 {
         let mut gx = self.gx.lock().unwrap();
         let depth = gx.peek_efb_depth(&self.device, &self.queue, x, y);

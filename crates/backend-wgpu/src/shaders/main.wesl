@@ -150,7 +150,7 @@ struct TevState {
     last_color_dest: u32,
     last_alpha_dest: u32,
     // Raw (pre-swap-table) texel of the last TEV stage that sampled a
-    // texture. Feeds the Z-texture value in fs_main_ztex (hardware: the
+    // texture. Feeds the Z-texture value in fs_main_depth (hardware: the
     // PE's RawTexColor latch).
     last_raw_tex: vec4<f32>,
 }
@@ -324,28 +324,41 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return run_tev(in).color;
 }
 
-struct FsOutZtex {
+struct FsOutDepth {
     @location(0) color: vec4<f32>,
     @builtin(frag_depth) depth: f32,
 }
 
 @fragment
-fn fs_main_ztex(in: VsOut) -> FsOutZtex {
+fn fs_main_depth(in: VsOut) -> FsOutDepth {
     let r = run_tev(in);
-    let texel = vec4<u32>(round(r.raw_tex * 255.0));
-    var z: u32 = frame.ztex_bias;
-    switch shader_state(gx_ztex_type, frame.ztex_type) {
-        case 0u: { z += texel.a; }
-        case 1u: { z += (texel.a << 8u) | texel.r; }
-        default: { z += (texel.r << 16u) | (texel.g << 8u) | texel.b; }
-    }
-    if shader_state(gx_ztex_op, frame.ztex_op) == 1u {
-        z += u32(round((1.0 - in.clip_pos.z) * 16777215.0));
-    }
-    z = z & 0x00FFFFFFu;
+    var depth = in.clip_pos.z;
+    var z24 = round((1.0 - depth) * 16777215.0);
 
-    var out_: FsOutZtex;
+    // W enables Z-freeze. XYZ stores the saved plane's A, B, C coeffs.
+    // Evaluate z = A*x + B*y + C at this framebuffer pixel, then clamp to Z24.
+    // Divide by 2^24 and reverse for host depth (near = 1).
+    if frame.zfreeze_plane.w != 0.0 {
+        z24 = clamp(dot(frame.zfreeze_plane.xyz, vec3<f32>(in.clip_pos.xy, 1.0)), 0.0, 16777215.0);
+        depth = 1.0 - z24 / 16777216.0;
+    }
+
+    let op = shader_state(gx_ztex_op, frame.ztex_op);
+    if op != 0u {
+        let texel = vec4<u32>(round(r.raw_tex * 255.0));
+        var z: u32 = frame.ztex_bias;
+        switch shader_state(gx_ztex_type, frame.ztex_type) {
+            case 0u: { z += texel.a; }
+            case 1u: { z += (texel.a << 8u) | texel.r; }
+            default: { z += (texel.r << 16u) | (texel.g << 8u) | texel.b; }
+        }
+        if op == 1u { z += u32(round(z24)); }
+        z = z & 0x00FFFFFFu;
+        depth = 1.0 - f32(z) / 16777215.0;
+    }
+
+    var out_: FsOutDepth;
     out_.color = r.color;
-    out_.depth = 1.0 - f32(z) / 16777215.0;
+    out_.depth = depth;
     return out_;
 }
