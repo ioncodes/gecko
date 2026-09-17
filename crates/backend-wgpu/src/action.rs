@@ -1136,7 +1136,11 @@ impl GxRenderer {
                     if index_count == 0 {
                         rpass.draw(first_vertex + start..first_vertex + start + len, 0..1);
                     } else {
-                        rpass.draw_indexed(first_index + start..first_index + start + len, first_vertex as i32, 0..1);
+                        rpass.draw_indexed(
+                            first_index + start..first_index + start + len,
+                            first_vertex as i32,
+                            0..1,
+                        );
                     }
                 };
                 let count = if index_count == 0 { vertex_count } else { index_count };
