@@ -184,7 +184,7 @@ impl Default for Config {
     }
 }
 
-/// Console-internal storage (SRAM, memory cards) lives next to the binary.
+/// Console-internal storage (SRAM, memory cards) lives in the data directory.
 pub const SRAM_FILE: &str = "internal/sram.bin";
 pub const MEMCARD_A_FILE: &str = "internal/memcard_a.raw";
 
@@ -194,7 +194,7 @@ pub const IPL_FILE: &str = "IPL.bin";
 
 impl Config {
     pub fn system_dir_resolved(&self) -> PathBuf {
-        self.system_dir.clone().unwrap_or_else(|| self::exe_relative("system"))
+        self.system_dir.clone().unwrap_or_else(|| self::data_relative("system"))
     }
 
     pub fn resolve_in_dir(override_path: &Option<PathBuf>, system_dir: &Path, name: &str) -> Option<PathBuf> {
@@ -206,12 +206,12 @@ impl Config {
     }
 }
 
-pub fn exe_relative(rel: impl AsRef<Path>) -> PathBuf {
+pub fn data_relative(rel: impl AsRef<Path>) -> PathBuf {
     gecko::paths::resolve(rel)
 }
 
 pub fn config_path() -> PathBuf {
-    self::exe_relative("config.toml")
+    self::data_relative("config.toml")
 }
 
 pub fn load(path: &Path) -> Config {

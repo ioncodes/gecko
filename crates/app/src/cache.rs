@@ -55,7 +55,7 @@ impl Default for LibraryCache {
 }
 
 pub fn cache_path() -> PathBuf {
-    config::exe_relative(Path::new(CACHE_DIR).join(CACHE_FILE))
+    config::data_relative(Path::new(CACHE_DIR).join(CACHE_FILE))
 }
 
 pub fn load(path: &Path) -> LibraryCache {

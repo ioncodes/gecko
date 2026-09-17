@@ -13,10 +13,7 @@ pub fn base() -> &'static Path {
             return PathBuf::from(custom);
         }
 
-        std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(Path::to_path_buf))
-            .unwrap_or_else(|| PathBuf::from("."))
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     })
 }
 
