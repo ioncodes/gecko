@@ -38,6 +38,8 @@ pub struct GraphicsProcessor {
     pub dl_scratch: Vec<u8>,
     draw_batch_data: Vec<u8>,
     draw_batch_entries: Vec<vertex::DrawBatchEntry>,
+    skip_filter_data: Vec<u8>,
+    skip_filter_entries: Vec<vertex::DrawBatchEntry>,
     draw_segments_scratch: Vec<crate::host::DrawSegment>,
     pub(crate) pending_efb_writeback_ranges: Vec<(u32, usize)>,
 
@@ -182,6 +184,8 @@ impl GraphicsProcessor {
             dl_scratch: Vec::with_capacity(4096),
             draw_batch_data: Vec::with_capacity(4096),
             draw_batch_entries: Vec::with_capacity(32),
+            skip_filter_data: Vec::new(),
+            skip_filter_entries: Vec::new(),
             draw_segments_scratch: Vec::with_capacity(32),
             pending_efb_writeback_ranges: Vec::new(),
             recorder: None,
@@ -696,6 +700,8 @@ impl GraphicsProcessor {
         self.dl_scratch.clear();
         self.draw_batch_data.clear();
         self.draw_batch_entries.clear();
+        self.skip_filter_data.clear();
+        self.skip_filter_entries.clear();
         self.draw_segments_scratch.clear();
         self.texture_hashes.clear();
         #[cfg(feature = "jit")]

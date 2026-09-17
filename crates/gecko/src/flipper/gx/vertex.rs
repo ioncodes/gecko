@@ -18,6 +18,57 @@ pub(super) struct DrawBatchEntry {
     pub vertex_count: usize,
 }
 
+fn filter_skipped_vertices(
+    data: &[u8],
+    entries: &[DrawBatchEntry],
+    vcd: VcdLo,
+    stride: usize,
+    out_data: &mut Vec<u8>,
+    out_entries: &mut Vec<DrawBatchEntry>,
+) -> bool {
+    let position = vcd.position();
+    if !matches!(position, AttributeType::Index8 | AttributeType::Index16) {
+        return false;
+    }
+
+    let first = vcd.mtx_idx_count();
+    let last = first + position.size() - 1;
+    let skipped = |vertex: &[u8]| vertex[first] == 0xff && vertex[last] == 0xff;
+    if !data.chunks_exact(stride).any(skipped) {
+        return false;
+    }
+
+    #[cfg(feature = "jit")]
+    let padding = jit::VEC_OVERREAD_BYTES;
+    #[cfg(not(feature = "jit"))]
+    let padding = 0;
+
+    out_data.clear();
+    out_data.reserve(data.len() + padding);
+    out_entries.clear();
+
+    let mut start = 0;
+    for entry in entries {
+        let end = start + entry.vertex_count * stride;
+        let mut vertex_count = 0;
+
+        for vertex in data[start..end].chunks_exact(stride) {
+            if !skipped(vertex) {
+                out_data.extend_from_slice(vertex);
+                vertex_count += 1;
+            }
+        }
+
+        out_entries.push(DrawBatchEntry {
+            cmd: entry.cmd,
+            vertex_count,
+        });
+        start = end;
+    }
+
+    true
+}
+
 /// Parsed vertex format descriptor from CP/VAT registers.
 struct VertexFormat {
     vat_a: VatA,
@@ -128,14 +179,32 @@ impl GraphicsProcessor {
             }
         }
 
+        let mut skip_data = std::mem::take(&mut self.skip_filter_data);
+        let mut skip_entries = std::mem::take(&mut self.skip_filter_entries);
+        let vcd = VcdLo::from_raw(self.cp_regs[VCD_LO_REG]);
+        let (data, entries) =
+            if self::filter_skipped_vertices(data, entries, vcd, vertex_stride, &mut skip_data, &mut skip_entries) {
+                (skip_data.as_slice(), skip_entries.as_slice())
+            } else {
+                (data, entries)
+            };
+
+        let decoded_count = data.len() / vertex_stride;
+        if decoded_count == 0 {
+            self.skip_filter_data = skip_data;
+            self.skip_filter_entries = skip_entries;
+
+            return;
+        }
+
         // Decode directly into the renderer's vertex scratch. No
         // intermediate `draw_vertices_scratch`, no append memcpy. The
         // interpreter pushes into `verts`, and the Cranelift JIT writes
         // through `verts.as_mut_ptr().add(base)` then sets the new length.
         let verts = renderer.vertex_scratch();
         let base_vertex = verts.len() as u32;
-        verts.reserve(vertex_count);
-        self::dispatch_decode(self, mmio, cmd, data, vertex_count, verts);
+        verts.reserve(decoded_count);
+        self::dispatch_decode(self, mmio, cmd, data, decoded_count, verts);
 
         let zfreeze = GenMode::from_raw(self.bp_regs[BP_GEN_MODE]).z_freeze();
 
@@ -226,6 +295,9 @@ impl GraphicsProcessor {
             });
             segment_base = segment_base.wrapping_add(entry.vertex_count as u32);
         }
+
+        self.skip_filter_data = skip_data;
+        self.skip_filter_entries = skip_entries;
 
         renderer.inspect_draws(self, &self.draw_segments_scratch);
 
