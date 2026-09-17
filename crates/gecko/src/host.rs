@@ -181,6 +181,7 @@ pub struct DrawData {
 
 #[derive(Debug, Clone, Default)]
 pub struct DrawState {
+    pub dst_alpha: Option<u8>,
     pub active_texcoords: u8,
     pub zfreeze: Option<crate::flipper::gx::depth::DepthPlane>,
     // TEV combiner state

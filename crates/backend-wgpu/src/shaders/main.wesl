@@ -329,8 +329,7 @@ struct FsOutDepth {
     @builtin(frag_depth) depth: f32,
 }
 
-@fragment
-fn fs_main_depth(in: VsOut) -> FsOutDepth {
+fn shade_depth(in: VsOut) -> FsOutDepth {
     let r = run_tev(in);
     var depth = in.clip_pos.z;
     var z24 = round((1.0 - depth) * 16777215.0);
@@ -361,4 +360,26 @@ fn fs_main_depth(in: VsOut) -> FsOutDepth {
     out_.color = r.color;
     out_.depth = depth;
     return out_;
+}
+
+@fragment
+fn fs_main_depth(in: VsOut) -> FsOutDepth {
+    return shade_depth(in);
+}
+
+fn stored_alpha() -> f32 {
+    return f32(frame.dst_alpha >> 2u) / 63.0;
+}
+
+@fragment
+fn fs_main_alpha(in: VsOut) -> @location(0) vec4<f32> {
+    let r = run_tev(in);
+    return vec4<f32>(r.color.rgb, stored_alpha());
+}
+
+@fragment
+fn fs_main_depth_alpha(in: VsOut) -> FsOutDepth {
+    var r = shade_depth(in);
+    r.color.a = stored_alpha();
+    return r;
 }

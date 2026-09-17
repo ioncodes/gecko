@@ -102,7 +102,7 @@ fn build_frame_uniform(
         ztex_bias: draw.ztex_bias,
         ztex_type: draw.ztex_type as u32,
         ztex_op: draw.ztex_op as u32,
-        _pad2: 0,
+        dst_alpha: draw.dst_alpha.unwrap_or(0) as u32,
         zfreeze_plane: draw.zfreeze.map_or(Vec4::ZERO, |p| {
             Vec4::new(p.dx / efb_scale as f32, p.dy / efb_scale as f32, p.c, 1.0)
         }),
@@ -127,7 +127,40 @@ impl GxRenderer {
             alpha_update: blend.alpha_update(),
             cull_mode: self.current_cull_mode,
             per_pixel_depth,
+            dst_alpha: blend.alpha_update() && self.current_draw_state.dst_alpha.is_some(),
+            alpha_pass: false,
         }
+    }
+
+    fn ensure_pipeline(&mut self, device: &wgpu::Device, key: FullPipelineKey) {
+        if self.pipeline_cache.contains_key(&key) {
+            return;
+        }
+
+        let uber_key = UberPipelineKey::from(key);
+
+        if !self.uber_pipeline_cache.contains_key(&uber_key) {
+            #[cfg(feature = "gx-stats")]
+            let pipeline_started = std::time::Instant::now();
+            let module = &self.shader_cache[&key.shader];
+            let pipeline = crate::pipeline::create_uber_pipeline(
+                device,
+                &self.pipeline_layout,
+                self.surface_format,
+                module,
+                &uber_key,
+            );
+            self.uber_pipeline_cache.insert(uber_key, pipeline);
+            #[cfg(feature = "gx-stats")]
+            {
+                self.stats.pipelines_created.fetch_add(1, Ordering::Relaxed);
+                self.stats
+                    .pipeline_create_cpu_ns
+                    .fetch_add(pipeline_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            }
+        }
+
+        self.request_specialized_pipeline(key);
     }
 
     /// Build a bind-group cache key from the current tracked textures.
@@ -448,31 +481,8 @@ impl GxRenderer {
                         fixed: pipeline_key,
                     };
 
-                    if !self.pipeline_cache.contains_key(&full_key) {
-                        let uber_key = UberPipelineKey::from(full_key);
-
-                        if !self.uber_pipeline_cache.contains_key(&uber_key) {
-                            #[cfg(feature = "gx-stats")]
-                            let pipeline_started = std::time::Instant::now();
-                            let module = &self.shader_cache[&shader_key];
-                            let pipeline = crate::pipeline::create_uber_pipeline(
-                                device,
-                                &self.pipeline_layout,
-                                self.surface_format,
-                                module,
-                                &uber_key,
-                            );
-                            self.uber_pipeline_cache.insert(uber_key, pipeline);
-                            #[cfg(feature = "gx-stats")]
-                            {
-                                self.stats.pipelines_created.fetch_add(1, Ordering::Relaxed);
-                                self.stats
-                                    .pipeline_create_cpu_ns
-                                    .fetch_add(pipeline_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
-                            }
-                        }
-
-                        self.request_specialized_pipeline(full_key);
+                    for key in std::iter::once(full_key).chain(full_key.alpha_pass_key()) {
+                        self.ensure_pipeline(device, key);
                     }
 
                     let first_vertex = draw.base_vertex;
@@ -767,6 +777,8 @@ impl GxRenderer {
         let frame_stride = self.frame_stride;
 
         let num_draws = self.draw_bg_keys.len();
+        #[cfg(feature = "gx-stats")]
+        let mut draws_encoded = num_draws as u64;
         for i in 0..num_draws {
             let bg_key = &self.draw_bg_keys[i];
             if self.bind_group_cache.contains_key(bg_key) {
@@ -967,10 +979,7 @@ impl GxRenderer {
                     rpass.push_debug_group(&draw_label);
                 }
                 let full_key = &self.draw_pipeline_keys[index];
-                let pipeline = self
-                    .pipeline_cache
-                    .get(full_key)
-                    .unwrap_or_else(|| &self.uber_pipeline_cache[&UberPipelineKey::from(*full_key)]);
+                let pipeline = self.resolve_pipeline(full_key);
                 let pipeline_ptr = pipeline as *const wgpu::RenderPipeline;
                 if pipeline_ptr != last_pipeline_ptr {
                     rpass.set_pipeline(pipeline);
@@ -1123,10 +1132,35 @@ impl GxRenderer {
                     rpass.insert_debug_marker(&raster_marker);
                 }
 
-                if index_count == 0 {
-                    rpass.draw(first_vertex..first_vertex + vertex_count, 0..1);
+                let draw_range = |rpass: &mut wgpu::RenderPass<'_>, start: u32, len: u32| {
+                    if index_count == 0 {
+                        rpass.draw(first_vertex + start..first_vertex + start + len, 0..1);
+                    } else {
+                        rpass.draw_indexed(first_index + start..first_index + start + len, first_vertex as i32, 0..1);
+                    }
+                };
+                let count = if index_count == 0 { vertex_count } else { index_count };
+
+                if let Some(alpha_key) = full_key.alpha_pass_key() {
+                    let alpha_pipeline = self.resolve_pipeline(&alpha_key);
+                    let triangles = count / 3;
+                    for triangle in 0..triangles {
+                        if triangle > 0 {
+                            rpass.set_pipeline(pipeline);
+                        }
+                        draw_range(&mut rpass, triangle * 3, 3);
+                        rpass.set_pipeline(alpha_pipeline);
+                        draw_range(&mut rpass, triangle * 3, 3);
+                    }
+                    last_pipeline_ptr = alpha_pipeline as *const wgpu::RenderPipeline;
+                    #[cfg(feature = "gx-stats")]
+                    {
+                        let extra = (2 * u64::from(triangles)).saturating_sub(1);
+                        pipeline_changes += extra;
+                        draws_encoded += extra;
+                    }
                 } else {
-                    rpass.draw_indexed(first_index..first_index + index_count, first_vertex as i32, 0..1);
+                    draw_range(&mut rpass, 0, count);
                 }
 
                 #[cfg(feature = "renderdoc-capture")]
@@ -1142,7 +1176,7 @@ impl GxRenderer {
 
         #[cfg(feature = "gx-stats")]
         {
-            self.stats.draws_encoded.fetch_add(num_draws as u64, Ordering::Relaxed);
+            self.stats.draws_encoded.fetch_add(draws_encoded, Ordering::Relaxed);
             self.stats.draw_render_passes.fetch_add(1, Ordering::Relaxed);
             self.stats
                 .pipeline_changes

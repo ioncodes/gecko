@@ -121,6 +121,7 @@ pub const TLUT_MEM_ENTRIES: usize = 1024 * TLUT_ENTRIES_PER_UNIT;
 // BP PE (Pixel Engine) registers
 pub const BP_PE_ZMODE: usize = 0x40;
 pub const BP_PE_CMODE0: usize = 0x41; // blend mode
+pub const BP_PE_CMODE1: usize = 0x42; // destination alpha
 pub const BP_PE_ZCOMPARE: usize = 0x43;
 pub const BP_PE_ALPHA_COMPARE: usize = 0xF3;
 pub const BP_TEV_ZTEX1: usize = 0xF4; // Z-texture bias (24-bit)

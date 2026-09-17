@@ -102,6 +102,15 @@ pub struct BlendMode {
     pub logic_op: LogicOp,
 }
 
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DstAlpha {
+    #[bits(0..=7)]
+    pub alpha: u8,
+    #[bits(8)]
+    pub enable: bool,
+}
+
 #[derive(Debug, PartialEq, BitEnum, Hash, Eq)]
 pub enum PixelFormat {
     Rgb8Z24 = 0,

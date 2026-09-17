@@ -40,7 +40,7 @@ struct FrameUniforms {
     ztex_bias: u32,
     ztex_type: u32,
     ztex_op: u32,
-    _pad2: u32,
+    dst_alpha: u32,
     zfreeze_plane: vec4<f32>,
 };
 

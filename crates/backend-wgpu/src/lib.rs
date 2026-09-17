@@ -195,7 +195,7 @@ pub(crate) struct FrameUniforms {
     pub ztex_bias: u32,
     pub ztex_type: u32,
     pub ztex_op: u32,
-    pub _pad2: u32,
+    pub dst_alpha: u32,
     pub zfreeze_plane: glam::Vec4,
 }
 
@@ -1313,6 +1313,12 @@ impl GxRenderer {
 
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn request_specialized_pipeline(&mut self, _key: FullPipelineKey) {}
+
+    pub(crate) fn resolve_pipeline(&self, key: &FullPipelineKey) -> &wgpu::RenderPipeline {
+        self.pipeline_cache
+            .get(key)
+            .unwrap_or_else(|| &self.uber_pipeline_cache[&UberPipelineKey::from(*key)])
+    }
 
     pub(crate) fn invalidate_pipeline_caches(&mut self) {
         self.pipeline_cache.clear();

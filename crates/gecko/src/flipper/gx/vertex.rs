@@ -250,7 +250,10 @@ impl GraphicsProcessor {
 
             let ztex2 = TevZtex2::from_raw(self.bp_regs[BP_TEV_ZTEX2]);
 
+            let dst_alpha = DstAlpha::from_raw(self.bp_regs[BP_PE_CMODE1]);
             DrawState {
+                dst_alpha: (dst_alpha.enable() && self.cur_pe_control.pixel_format().has_alpha())
+                    .then_some(dst_alpha.alpha()),
                 zfreeze: zfreeze.then_some(self.zfreeze_plane),
                 tev_color_env: std::array::from_fn(|i| self.cur_tev_color_env[i].raw()),
                 tev_alpha_env: std::array::from_fn(|i| self.cur_tev_alpha_env[i].raw()),

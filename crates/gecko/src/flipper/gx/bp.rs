@@ -108,6 +108,7 @@ impl GraphicsProcessor {
                 self.cur_blend_mode = BlendMode::from_raw(val);
                 renderer.exec(GxAction::SetBlendMode(self.cur_blend_mode));
             }
+            BP_PE_CMODE1 => self.frame_state_dirty = true,
             BP_PE_ZCOMPARE => {
                 self.cur_pe_control = PeControl::from_raw(val);
                 // early_ztest feeds DrawData::ztex_op

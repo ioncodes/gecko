@@ -64,10 +64,55 @@ pub(crate) struct PipelineKey {
     /// Z-texturing or Z-freeze active: selects the `fs_main_depth` entry
     /// point, which writes `frag_depth` (disabling early-Z only where needed).
     pub per_pixel_depth: bool,
+    pub dst_alpha: bool,
+    pub alpha_pass: bool,
 }
 
 impl PipelineKey {
-    const BYTES: usize = 13;
+    const BYTES: usize = 15;
+
+    fn color_blend(&self) -> Option<wgpu::BlendState> {
+        if self.blend_enable {
+            // In subtract mode the hardware ignores the configured src/dst
+            // factors and computes `dst = dst - src` with ONE/ONE.
+            let (src_factor, dst_factor, operation) = if self.subtract {
+                (
+                    wgpu::BlendFactor::One,
+                    wgpu::BlendFactor::One,
+                    wgpu::BlendOperation::ReverseSubtract,
+                )
+            } else {
+                (
+                    helpers::map_src_blend_factor(self.src_factor),
+                    helpers::map_dst_blend_factor(self.dst_factor),
+                    wgpu::BlendOperation::Add,
+                )
+            };
+            Some(make_blend_state(src_factor, dst_factor, operation))
+        } else if self.logic_op_enable {
+            let (be, sub, sf, df) = logic_op_approximation(self.logic_op);
+            be.then(|| {
+                let operation = if sub {
+                    wgpu::BlendOperation::ReverseSubtract
+                } else {
+                    wgpu::BlendOperation::Add
+                };
+                make_blend_state(sf, df, operation)
+            })
+        } else {
+            None
+        }
+    }
+
+    fn splits_dst_alpha(&self) -> bool {
+        use wgpu::BlendFactor::{OneMinusSrcAlpha, SrcAlpha, SrcAlphaSaturated};
+        self.dst_alpha
+            && self.color_blend().is_some_and(|b| {
+                [b.color.src_factor, b.color.dst_factor]
+                    .iter()
+                    .any(|f| matches!(f, SrcAlpha | OneMinusSrcAlpha | SrcAlphaSaturated))
+            })
+    }
 
     fn to_bytes(self) -> [u8; Self::BYTES] {
         [
@@ -84,6 +129,8 @@ impl PipelineKey {
             self.alpha_update as u8,
             self.cull_mode.raw(),
             self.per_pixel_depth as u8,
+            self.dst_alpha as u8,
+            self.alpha_pass as u8,
         ]
     }
 
@@ -102,6 +149,8 @@ impl PipelineKey {
             alpha_update: b[10] != 0,
             cull_mode: CullMode::from_raw(b[11]),
             per_pixel_depth: b[12] != 0,
+            dst_alpha: b[13] != 0,
+            alpha_pass: b[14] != 0,
         }
     }
 }
@@ -130,12 +179,22 @@ impl From<FullPipelineKey> for UberPipelineKey {
 
 pub(crate) const FULL_PIPELINE_KEY_BYTES: usize = SHADER_KEY_BYTES + SPECIALIZATION_KEY_BYTES + PipelineKey::BYTES;
 const PIPELINE_CACHE_MAGIC: [u8; 4] = *b"GPKC";
-const PIPELINE_CACHE_VERSION: u32 = crate::shader_specialization::CACHE_VERSION;
+const PIPELINE_CACHE_VERSION: u32 = 10;
 pub(crate) fn pipeline_cache_path() -> std::path::PathBuf {
     gecko::paths::cache("pipeline_keys.bin")
 }
 
 impl FullPipelineKey {
+    pub(crate) fn alpha_pass_key(&self) -> Option<Self> {
+        self.fixed.splits_dst_alpha().then_some(Self {
+            fixed: PipelineKey {
+                alpha_pass: true,
+                ..self.fixed
+            },
+            ..*self
+        })
+    }
+
     fn to_bytes(self) -> [u8; FULL_PIPELINE_KEY_BYTES] {
         let mut out = [0u8; FULL_PIPELINE_KEY_BYTES];
         out[..SHADER_KEY_BYTES].copy_from_slice(&self.shader.to_bytes());
@@ -309,41 +368,23 @@ fn create_pipeline(
         attributes: &attrs,
     };
 
-    let blend = if key.blend_enable {
-        // In subtract mode the hardware ignores the configured src/dst
-        // factors and computes `dst = dst - src` with ONE/ONE.
-        let (src_factor, dst_factor, operation) = if key.subtract {
-            (
-                wgpu::BlendFactor::One,
-                wgpu::BlendFactor::One,
-                wgpu::BlendOperation::ReverseSubtract,
-            )
-        } else {
-            (
-                helpers::map_src_blend_factor(key.src_factor),
-                helpers::map_dst_blend_factor(key.dst_factor),
-                wgpu::BlendOperation::Add,
-            )
-        };
-        Some(make_blend_state(src_factor, dst_factor, operation))
-    } else if key.logic_op_enable {
-        let (be, sub, sf, df) = logic_op_approximation(key.logic_op);
-        be.then(|| {
-            let operation = if sub {
-                wgpu::BlendOperation::ReverseSubtract
-            } else {
-                wgpu::BlendOperation::Add
-            };
-            make_blend_state(sf, df, operation)
+    let color_pass = key.splits_dst_alpha() && !key.alpha_pass;
+    let stored_alpha = key.dst_alpha && !color_pass;
+    let blend = if key.alpha_pass {
+        None
+    } else if stored_alpha {
+        key.color_blend().map(|blend| wgpu::BlendState {
+            alpha: wgpu::BlendComponent::REPLACE,
+            ..blend
         })
     } else {
-        None
+        key.color_blend()
     };
 
     let depth_stencil = if key.z_enable {
         Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth24Plus,
-            depth_write_enabled: Some(key.z_write),
+            depth_write_enabled: Some(key.z_write && !color_pass),
             depth_compare: Some(helpers::map_depth_compare_func(key.z_func)),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
@@ -359,10 +400,10 @@ fn create_pipeline(
     };
 
     let mut write_mask = wgpu::ColorWrites::empty();
-    if key.color_update {
+    if key.color_update && !key.alpha_pass {
         write_mask |= wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN | wgpu::ColorWrites::BLUE;
     }
-    if key.alpha_update {
+    if key.alpha_update && !color_pass {
         write_mask |= wgpu::ColorWrites::ALPHA;
     }
 
@@ -380,10 +421,11 @@ fn create_pipeline(
         },
         fragment: Some(wgpu::FragmentState {
             module: shader,
-            entry_point: Some(if key.per_pixel_depth {
-                "fs_main_depth"
-            } else {
-                "fs_main"
+            entry_point: Some(match (key.per_pixel_depth, stored_alpha) {
+                (false, false) => "fs_main",
+                (true, false) => "fs_main_depth",
+                (false, true) => "fs_main_alpha",
+                (true, true) => "fs_main_depth_alpha",
             }),
             targets: &[Some(wgpu::ColorTargetState {
                 format: surface_format,
