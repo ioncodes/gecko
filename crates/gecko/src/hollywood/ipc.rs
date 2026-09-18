@@ -1,6 +1,7 @@
 pub mod di;
 pub mod es;
 pub mod fs;
+pub mod net;
 pub mod sdio;
 pub mod stm;
 pub mod sysconf;

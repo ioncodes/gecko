@@ -8,6 +8,9 @@ const SETTING_TXT_PATH: &str = "title/00000001/00000002/data/setting.txt";
 const SETTING_SEED: u32 = 0x73B5_DBFA;
 const SERIAL_NUMBER: &str = "696969420";
 
+pub const WC24_CONFIG_PATH: &str = "shared2/wc24/nwc24msg.cfg";
+const WC24_DIR: &str = "shared2/wc24";
+
 pub fn ensure_skeleton(root: &Path) {
     for dir in BASE_DIRS {
         let path = root.join(dir);
@@ -64,6 +67,138 @@ pub fn ensure_title_dirs(root: &Path, title_id: u64) {
             tracing::warn!(path = %path.display(), %err, "NAND: create title dir failed");
         }
     }
+}
+
+// https://github.com/kiwi515/ogws/tree/master/include/revolution/NWC24/internal
+pub fn ensure_wc24_files(root: &Path) {
+    let cfg = root.join(WC24_CONFIG_PATH);
+    let cbk = cfg.with_extension("cbk");
+
+    if !cfg.exists() || !cbk.exists() {
+        let msg = std::fs::read(&cfg)
+            .or_else(|_| std::fs::read(&cbk))
+            .unwrap_or_else(|_| self::wc24_msg_cfg());
+        for path in [&cfg, &cbk] {
+            if !path.exists() {
+                self::write_new(path, &msg);
+            }
+        }
+    }
+
+    let dir = root.join(WC24_DIR);
+    let files: [(&str, fn() -> Vec<u8>); 7] = [
+        ("nwc24fl.bin", || {
+            // NWC24iFLHeader: magic "WcFl", version, capacity
+            self::be_words(0x8060, &[0x5763466C, 2, 100])
+        }),
+        ("nwc24fls.bin", || {
+            // NWC24iSecretFLHeader: magic "WcFs", version, undocumented +0x08 default
+            self::be_words(0x3200, &[0x57634673, 2, 0x150])
+        }),
+        ("nwc24dl.bin", self::wc24_dl),
+        ("mbox/wc24send.ctl", || self::wc24_ctl(0x4000, 127, 0x200000)),
+        ("mbox/wc24recv.ctl", || self::wc24_ctl(0x8000, 255, 0x700000)),
+        ("mbox/wc24send.mbx", || self::wc24_mbx(0x200000)),
+        ("mbox/wc24recv.mbx", || self::wc24_mbx(0x700000)),
+    ];
+
+    for (name, build) in files {
+        let path = dir.join(name);
+        if !path.exists() {
+            self::write_new(&path, &build());
+        }
+    }
+}
+
+fn put_u32(data: &mut [u8], offset: usize, value: u32) {
+    data[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+}
+
+fn be_words(size: usize, words: &[u32]) -> Vec<u8> {
+    let mut data = vec![0; size];
+    for (i, &word) in words.iter().enumerate() {
+        self::put_u32(&mut data, i * 4, word);
+    }
+    data
+}
+
+fn wc24_msg_cfg() -> Vec<u8> {
+    // https://github.com/kiwi515/ogws/blob/master/include/revolution/NWC24/internal/NWC24iConfig.h
+    // https://wiibrew.org/wiki//shared2/wc24/nwc24msg.cfg
+    let header = [
+        0x57634366, // +0x00: "WcCf" magic
+        8,          // +0x04: format version
+        0,          // +0x08: dummy user ID, high word
+        0x69696,    // +0x0C: dummy user ID, low word
+        1,          // +0x10: ID creation counter
+        1,          // +0x14: creation stage
+    ];
+    let mut data = self::be_words(0x400, &header); // 1 KiB config, including checksum
+    // https://github.com/kiwi515/ogws/blob/master/src/revolution/NWC24/NWC24Config.c
+    let checksum = header.iter().fold(0u32, |sum, &v| sum.wrapping_add(v));
+    self::put_u32(&mut data, 0x3FC, checksum);
+    data
+}
+
+fn wc24_dl() -> Vec<u8> {
+    // https://github.com/kiwi515/ogws/blob/master/include/revolution/NWC24/internal/NWC24iDownload.h
+    // https://wiibrew.org/wiki//shared2/wc24/nwc24dl.bin
+    let header = [
+        0x5763446C, // +0x00: "WcDl" magic
+        1,          // +0x04: format version
+        0,          // +0x08: unknown/reserved
+        0,          // +0x0C: unknown/reserved
+        0x00200008, // +0x10: u16 max subtasks (32), u16 private tasks (8)
+        120 << 16,  // +0x14: u16 task capacity (120), then two zero bytes
+    ];
+    let mut data = self::be_words(0xF800, &header);
+    for i in 0..120u32 {
+        self::put_u32(&mut data, 0x800 + i as usize * 0x200, (i << 16) | 0xFF00);
+    }
+    data
+}
+
+fn wc24_ctl(size: usize, max_entries: u32, mbx_size: u32) -> Vec<u8> {
+    // https://github.com/kiwi515/ogws/blob/master/include/revolution/NWC24/internal/NWC24iMBoxCtrl.h
+    let mut data = self::be_words(
+        size,
+        &[
+            0x57635466,  // +0x00: "WcTf" magic
+            4,           // +0x04: format version
+            0,           // +0x08: current message count
+            max_entries, // +0x0C: message capacity
+            0,           // +0x10: total stored message bytes
+            size as u32, // +0x14: control file size in bytes
+            1,           // +0x18: next message ID
+            128,         // +0x1C: first free entry, immediately after the 0x80-byte header
+            0,           // +0x20: oldest message ID (none)
+            mbx_size,    // +0x24: initial mailbox free-space budget
+        ],
+    );
+    // Thx Dolphin
+    data[0x58..0x7F].fill(b'0');
+    for offset in (0x80..size - 0x80).step_by(0x80) {
+        self::put_u32(&mut data, offset + 12, (offset + 0x80) as u32);
+    }
+    data
+}
+
+fn wc24_mbx(size: usize) -> Vec<u8> {
+    // https://wiibrew.org/wiki/VFF
+    let mut data = self::be_words(
+        size,
+        &[
+            0x56464620,  // +0x00: "VFF " magic
+            0xFEFF0100,  // +0x04: ??
+            size as u32, // +0x08: total volume size in bytes
+            0x00200000,  // +0x0C: u16 header size (32 bytes), then zero padding
+        ],
+    );
+    let fat_size = (size / 512 * 2 + 511) & !511;
+    for offset in [32, 32 + fat_size] {
+        self::put_u32(&mut data, offset, 0xF0FFFFFF);
+    }
+    data
 }
 
 pub fn write_new(path: &Path, data: &[u8]) {

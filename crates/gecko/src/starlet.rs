@@ -186,6 +186,7 @@ impl System<{ crate::WII }> {
 
         let fs_root = self.starlet.host_fs_root.clone();
         ipc::fs::nand::ensure_skeleton(&fs_root);
+        ipc::fs::nand::ensure_wc24_files(&fs_root);
 
         self.starlet.register("/dev/stm/immediate", Box::new(stm::Immediate));
         self.starlet.register("/dev/stm/eventhook", Box::new(stm::EventHook));
@@ -196,6 +197,9 @@ impl System<{ crate::WII }> {
         self.starlet
             .register("/dev/di", Box::new(ipc::di::DiskInterface::new()));
         self.starlet.register("/dev/es", Box::new(ipc::es::ETicketServices));
+        for path in ["/dev/net/kd/request", "/dev/net/kd/time"] {
+            self.starlet.register(path, Box::new(ipc::net::Wc24::new(&fs_root)));
+        }
         self.starlet
             .register(WIIMOTE_DEVICE_PATH, Box::new(ipc::usb::Bluetooth::new()));
         self.starlet.register("/dev/sdio/slot0", Box::new(ipc::sdio::SdCard));

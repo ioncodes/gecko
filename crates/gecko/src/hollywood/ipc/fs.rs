@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 pub const IOCTL_GET_STATS: u32 = 0x2;
 pub const IOCTL_CREATE_DIR: u32 = 0x3;
 pub const IOCTL_READ_DIR: u32 = 0x4;
+pub const IOCTL_SET_ATTR: u32 = 0x5;
 pub const IOCTL_GET_ATTR: u32 = 0x6;
 pub const IOCTL_DELETE: u32 = 0x7;
 pub const IOCTL_RENAME: u32 = 0x8;
@@ -61,6 +62,7 @@ impl IosDevice for FileSystem {
         match cmd {
             IOCTL_GET_STATS => self.get_stats(ctx, out_ptr, out_len),
             IOCTL_CREATE_DIR => self.create_dir(ctx, in_ptr, in_len),
+            IOCTL_SET_ATTR => self.set_attr(ctx, in_ptr, in_len),
             IOCTL_GET_ATTR => self.get_attr(ctx, in_ptr, in_len, out_ptr, out_len),
             IOCTL_DELETE => self.delete(ctx, in_ptr, in_len),
             IOCTL_RENAME => self.rename(ctx, in_ptr, in_len),
@@ -96,6 +98,35 @@ impl IosDevice for FileSystem {
 }
 
 impl FileSystem {
+    fn set_attr(&self, ctx: &mut DeviceContext<'_>, in_ptr: u32, in_len: u32) -> i32 {
+        if (in_len as usize) < FS_CREATE_INPUT_LEN {
+            return FS_EINVAL;
+        }
+
+        let Some(path) = self::read_guest_path(ctx, in_ptr + FS_ATTR_PATH_OFFSET, FS_MAX_PATH) else {
+            return FS_EINVAL;
+        };
+
+        for offset in [
+            FS_ATTR_OWNER_PERM_OFFSET,
+            FS_ATTR_GROUP_PERM_OFFSET,
+            FS_ATTR_OTHER_PERM_OFFSET,
+        ] {
+            if ctx.mmio.phys_read_u8(in_ptr + offset) > 3 {
+                return FS_EINVAL;
+            }
+        }
+
+        let host_path = host::nand_to_host(&self.host_root, &path);
+        if !host_path.exists() {
+            return FS_ENOENT;
+        }
+
+        tracing::debug!(%path, "FS_SetAttr");
+
+        0
+    }
+
     fn read_dir(&self, ctx: &mut DeviceContext<'_>, in_count: u32, io_count: u32, vec_ptr: u32) -> i32 {
         let with_names = match (in_count, io_count) {
             (1, 1) => false,
