@@ -116,16 +116,18 @@ pub fn load_dvd(data: Vec<u8>) -> Box<dyn Dvd> {
     }
 }
 
+pub fn is_disc_entry(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.ends_with(".iso") || name.ends_with(".rvz")
+}
+
 fn extract_from_zip(data: Vec<u8>) -> Vec<u8> {
     use std::io::Read;
 
     let cursor = std::io::Cursor::new(data);
     let mut archive = zip::ZipArchive::new(cursor).expect("failed to open ZIP archive");
     let index = (0..archive.len())
-        .find(|&i| {
-            let name = archive.by_index(i).unwrap().name().to_ascii_lowercase();
-            name.ends_with(".iso") || name.ends_with(".rvz")
-        })
+        .find(|&i| self::is_disc_entry(archive.by_index(i).unwrap().name()))
         .expect("no disc image found in ZIP");
     let mut entry = archive.by_index(index).unwrap();
 

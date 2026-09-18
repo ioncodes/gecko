@@ -1,7 +1,7 @@
 use crate::dvd::{Apploader, DVD_APPLOADER_OFFSET, DVD_APPLOADER_SIZE, DVD_HEADER_OFFSET, DVD_HEADER_SIZE, Header};
 use zerocopy::FromBytes;
 
-const RVZ_MAGIC: [u8; 4] = [b'R', b'V', b'Z', 0x01];
+pub const RVZ_MAGIC: [u8; 4] = [b'R', b'V', b'Z', 0x01];
 
 const H1_SIZE: usize = 0x48;
 const H1_ISO_FILE_SIZE: usize = 0x24;
@@ -18,6 +18,9 @@ const H2_RAW_DATA_OFFSET: usize = 0xB8;
 const H2_RAW_DATA_SIZE: usize = 0xC0;
 const H2_NUM_GROUPS: usize = 0xC4;
 const H2_GROUPS_OFFSET: usize = 0xC8;
+
+pub const DISC_HEADER_OFFSET: usize = H1_SIZE + H2_DISC_HEADER;
+pub const DISC_HEADER_SIZE: usize = 0x80;
 const H2_GROUPS_SIZE: usize = 0xD0;
 
 const RAW_DATA_ENTRY_SIZE: usize = 0x18;
@@ -103,8 +106,8 @@ impl Rvz {
         };
         let chunk_size = self::be32(&data, h2 + H2_CHUNK_SIZE);
 
-        let mut disc_header = [0u8; 0x80];
-        disc_header.copy_from_slice(&data[h2 + H2_DISC_HEADER..h2 + H2_DISC_HEADER + 0x80]);
+        let mut disc_header = [0u8; DISC_HEADER_SIZE];
+        disc_header.copy_from_slice(&data[h2 + H2_DISC_HEADER..h2 + H2_DISC_HEADER + DISC_HEADER_SIZE]);
 
         let num_raw_data = self::be32(&data, h2 + H2_NUM_RAW_DATA);
         let raw_data_off = self::be64(&data, h2 + H2_RAW_DATA_OFFSET);
@@ -200,7 +203,7 @@ impl Rvz {
                     DVD_HEADER_OFFSET as u64,
                     &mut header_bytes,
                 );
-                self::unshift_wii_header_offsets(&mut header_bytes);
+                crate::dvd::unshift_wii_header_offsets(&mut header_bytes);
                 let header = Header::read_from_bytes(&header_bytes).expect("invalid DVD header");
 
                 let mut apploader_bytes = [0u8; DVD_APPLOADER_SIZE];
@@ -628,13 +631,6 @@ fn decompress_partition_chunk(
             "partition rvz_packed_size mismatch"
         );
         self::rvz_unpack(user_segment, this_chunk_user_size, chunk_disc_offset_enc)
-    }
-}
-
-fn unshift_wii_header_offsets(bytes: &mut [u8; DVD_HEADER_SIZE]) {
-    for off in [0x420, 0x424, 0x428, 0x42C, 0x430, 0x434] {
-        let v = u32::from_be_bytes(bytes[off..off + 4].try_into().unwrap());
-        bytes[off..off + 4].copy_from_slice(&v.wrapping_shl(2).to_be_bytes());
     }
 }
 

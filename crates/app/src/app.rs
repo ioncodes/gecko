@@ -309,9 +309,12 @@ impl App {
                 self.insert_game_sorted(*game);
                 Task::none()
             }
+            Message::ScanProgress(ScanProgress::Checkpoint(cache)) => {
+                self.cache = *cache;
+                Task::none()
+            }
             Message::ScanProgress(ScanProgress::Finished(cache)) => {
                 self.cache = *cache;
-                self.persist_cache();
                 self.scanning = false;
                 tracing::info!(total = self.games.len(), "scan finished");
                 Task::none()
@@ -379,7 +382,7 @@ impl App {
 
                 Task::perform(
                     async move {
-                        tokio::task::spawn_blocking(move || library::load_one(&path, format).map(Box::new))
+                        tokio::task::spawn_blocking(move || library::load_header(&path, format).map(Box::new))
                             .await
                             .unwrap_or_else(|err| Err(err.to_string()))
                     },
@@ -927,14 +930,15 @@ impl App {
         }
     }
 
-    fn persist_cache(&self) {
-        let path = cache::cache_path();
-        if let Err(err) = cache::save(&path, &self.cache) {
-            tracing::warn!(%err, path = %path.display(), "failed to persist library cache");
-        }
-    }
-
     fn insert_game_sorted(&mut self, game: Game) {
+        if let Some(index) = self.games.iter().position(|existing| existing.path == game.path) {
+            if self.games[index].title_lc == game.title_lc {
+                self.games[index] = game;
+                return;
+            }
+            self.games.remove(index);
+        }
+
         let pos = self
             .games
             .binary_search_by(|g| g.title_lc.cmp(&game.title_lc))

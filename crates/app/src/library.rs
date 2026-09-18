@@ -1,17 +1,20 @@
-use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use futures::channel::mpsc;
-use futures::stream::Stream;
+use futures::stream::{self, Stream, StreamExt};
 use walkdir::WalkDir;
 
 use crate::cache::{CacheEntry, FileFingerprint, LibraryCache};
 use crate::game::{Format, Game, Platform};
 
+const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(5);
+
 #[derive(Debug, Clone)]
 pub enum ScanProgress {
     Started { cached: Vec<Game>, pending: usize },
     Loaded(Box<Game>),
+    Checkpoint(Box<LibraryCache>),
     Finished(Box<LibraryCache>),
     Error(String),
 }
@@ -25,7 +28,7 @@ pub fn scan_library_stream(
     rx
 }
 
-async fn run_scan(roots: Vec<PathBuf>, prior: LibraryCache, tx: mpsc::UnboundedSender<ScanProgress>) {
+async fn run_scan(roots: Vec<PathBuf>, mut prior: LibraryCache, tx: mpsc::UnboundedSender<ScanProgress>) {
     let enumerated = match tokio::task::spawn_blocking(move || self::enumerate_many(&roots)).await {
         Ok(Ok(v)) => v,
         Ok(Err(err)) => {
@@ -39,64 +42,119 @@ async fn run_scan(roots: Vec<PathBuf>, prior: LibraryCache, tx: mpsc::UnboundedS
     };
 
     let mut cache = LibraryCache::default();
-    let mut cached_games: Vec<Game> = Vec::new();
-    let mut todo: Vec<(PathBuf, Format, FileFingerprint)> = Vec::new();
+    let mut cached_games = Vec::new();
+    let mut headers = Vec::new();
+    let mut banners = Vec::new();
 
-    for (path, format, fp) in enumerated {
-        match prior.entries.get(&path) {
-            Some(entry) if entry.fingerprint == fp => {
-                let game = entry.game.clone();
-                cache.entries.insert(
-                    path.clone(),
-                    CacheEntry {
-                        fingerprint: fp,
-                        game: game.clone(),
-                    },
-                );
-                cached_games.push(game);
+    for (path, format, fingerprint) in enumerated {
+        match prior.entries.remove(&path) {
+            Some(entry) if entry.fingerprint == fingerprint => {
+                if !entry.banner_scanned {
+                    banners.push((path.clone(), format, fingerprint));
+                }
+                cached_games.push(entry.game.clone());
+                cache.entries.insert(path, entry);
             }
-            _ => todo.push((path, format, fp)),
+            _ => headers.push((path, format, fingerprint)),
         }
     }
 
-    let _ = tx.unbounded_send(ScanProgress::Started {
+    let started = ScanProgress::Started {
         cached: cached_games,
-        pending: todo.len(),
-    });
+        pending: headers.len() + banners.len(),
+    };
+    if tx.unbounded_send(started).is_err() {
+        return;
+    }
 
-    for (path, format, fp) in todo {
-        let path_for_task = path.clone();
-        let join = tokio::task::spawn_blocking(move || {
-            tracing::info!(path = %path_for_task.display(), "scanning");
-            self::load_one(&path_for_task, format).map(|game| (path_for_task, fp, game))
+    let mut reads = stream::iter(headers)
+        .map(|(path, format, fingerprint)| {
+            tokio::task::spawn_blocking(move || {
+                let game = self::load_header(&path, format);
+                (path, format, fingerprint, game)
+            })
         })
-        .await;
+        .buffer_unordered(4);
 
-        let (path, fp, game) = match join {
-            Ok(Ok(triple)) => triple,
-            Ok(Err(err)) => {
+    while let Some(result) = reads.next().await {
+        let (path, format, fingerprint, game) = match result {
+            Ok((path, format, fingerprint, Ok(game))) => (path, format, fingerprint, game),
+            Ok((path, _, _, Err(err))) => {
                 tracing::warn!(path = %path.display(), %err, "skip file");
                 continue;
             }
             Err(err) => {
-                tracing::warn!(?err, path = %path.display(), "scanner task panicked");
+                tracing::warn!(?err, "header reader panicked");
                 continue;
             }
         };
 
-        cache.entries.insert(
-            path,
-            CacheEntry {
-                fingerprint: fp,
-                game: game.clone(),
-            },
-        );
+        let entry = CacheEntry {
+            fingerprint,
+            game: game.clone(),
+            banner_scanned: false,
+        };
+        cache.entries.insert(path.clone(), entry);
+        banners.push((path, format, fingerprint));
+
         if tx.unbounded_send(ScanProgress::Loaded(Box::new(game))).is_err() {
             return;
         }
     }
 
+    if !self::checkpoint(&cache, &tx).await {
+        return;
+    }
+
+    let mut last_checkpoint = Instant::now();
+    for (path, format, fingerprint) in banners {
+        if tx.is_closed() {
+            return;
+        }
+
+        let path_for_task = path.clone();
+        match tokio::task::spawn_blocking(move || self::load_one(&path_for_task, format)).await {
+            Ok(Ok(game)) => {
+                let entry = CacheEntry {
+                    fingerprint,
+                    game: game.clone(),
+                    banner_scanned: true,
+                };
+                cache.entries.insert(path, entry);
+
+                if tx.unbounded_send(ScanProgress::Loaded(Box::new(game))).is_err() {
+                    return;
+                }
+            }
+            Ok(Err(err)) => tracing::warn!(path = %path.display(), %err, "banner read failed; retaining header"),
+            Err(err) => tracing::warn!(path = %path.display(), ?err, "banner reader panicked; retaining header"),
+        }
+
+        if last_checkpoint.elapsed() >= CHECKPOINT_INTERVAL {
+            if !self::checkpoint(&cache, &tx).await {
+                return;
+            }
+            last_checkpoint = Instant::now();
+        }
+    }
+
+    self::save_cache(&cache).await;
     let _ = tx.unbounded_send(ScanProgress::Finished(Box::new(cache)));
+}
+
+async fn checkpoint(cache: &LibraryCache, tx: &mpsc::UnboundedSender<ScanProgress>) -> bool {
+    self::save_cache(cache).await;
+    tx.unbounded_send(ScanProgress::Checkpoint(Box::new(cache.clone())))
+        .is_ok()
+}
+
+async fn save_cache(cache: &LibraryCache) {
+    let snapshot = cache.clone();
+    match tokio::task::spawn_blocking(move || crate::cache::save(&crate::cache::cache_path(), &snapshot)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => tracing::warn!(%err, "failed to persist library cache"),
+        Err(err) => tracing::warn!(%err, "library cache writer panicked"),
+    }
 }
 
 fn enumerate_many(roots: &[PathBuf]) -> Result<Vec<(PathBuf, Format, FileFingerprint)>, String> {
@@ -136,13 +194,14 @@ fn enumerate_many(roots: &[PathBuf]) -> Result<Vec<(PathBuf, Format, FileFingerp
     Ok(out)
 }
 
+pub fn load_header(path: &Path, format: Format) -> Result<Game, String> {
+    let header = crate::library_disc::read_header(path).map_err(|e| e.to_string())?;
+    Ok(Game::from_metadata(path, &header, None, format))
+}
+
 pub fn load_one(path: &Path, format: Format) -> Result<Game, String> {
-    let data = std::fs::read(path).map_err(|e| e.to_string())?;
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        let dvd = image::load_dvd(data);
-        Game::from_dvd(path, dvd.as_ref(), format)
-    }));
-    result.map_err(|_| "image::load_dvd panicked".to_owned())
+    let (header, banner) = crate::library_disc::read_metadata(path).map_err(|e| e.to_string())?;
+    Ok(Game::from_metadata(path, &header, banner, format))
 }
 
 pub fn load_dol(path: &Path, platform: Platform) -> Result<Game, String> {

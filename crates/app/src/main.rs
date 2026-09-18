@@ -1,9 +1,11 @@
 mod app;
+mod banner;
 mod cache;
 mod config;
 mod game;
 mod keybinds;
 mod library;
+mod library_disc;
 mod player;
 mod theme;
 mod update;

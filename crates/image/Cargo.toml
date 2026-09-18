@@ -12,7 +12,7 @@ banner = []
 [dependencies]
 idb-rs = { git = "https://github.com/ioncodes/idb-rs.git", optional = true }
 object = { version = "0.36.7", default-features = false, features = ["elf", "read"], optional = true }
-zerocopy = { version = "0.8.48", features = ["derive"] }
+zerocopy = { version = "0.8.57", features = ["derive"] }
 zstd = { version = "0.13.3", optional = true }
-zip = { version = "8.5.1", default-features = false, features = ["deflate"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 tracing = "0.1.44"

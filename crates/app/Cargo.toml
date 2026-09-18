@@ -9,6 +9,10 @@ path = "src/main.rs"
 
 [dependencies]
 image = { path = "../image" }
+nod = { version = "1.4.4", default-features = false, features = ["compress-zstd"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+indexed_deflate = "0.1.0"
+zerocopy = "0.8.57"
 gecko = { path = "../gecko", features = ["fps-counter"] }
 hostinput = { path = "../hostinput" }
 backend-wgpu = { path = "../backend-wgpu" }

@@ -77,6 +77,13 @@ impl Header {
     }
 }
 
+pub fn unshift_wii_header_offsets(bytes: &mut [u8; DVD_HEADER_SIZE]) {
+    for off in [0x420, 0x424, 0x428, 0x42C, 0x430, 0x434] {
+        let v = u32::from_be_bytes(bytes[off..off + 4].try_into().unwrap());
+        bytes[off..off + 4].copy_from_slice(&v.wrapping_shl(2).to_be_bytes());
+    }
+}
+
 #[repr(C, packed)]
 #[derive(FromBytes, IntoBytes, Immutable, KnownLayout, Debug)]
 pub struct HeaderInfo {

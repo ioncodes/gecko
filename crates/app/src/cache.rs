@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::config;
 use crate::game::Game;
 
-const CACHE_VERSION: u32 = 1;
+const CACHE_VERSION: u32 = 3;
 const CACHE_DIR: &str = "cache";
 const CACHE_FILE: &str = "library.bin";
 
@@ -37,6 +37,7 @@ impl FileFingerprint {
 pub struct CacheEntry {
     pub fingerprint: FileFingerprint,
     pub game: Game,
+    pub banner_scanned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
