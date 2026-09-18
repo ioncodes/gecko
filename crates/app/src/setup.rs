@@ -162,9 +162,9 @@ impl Setup {
         }
 
         let title = match self.step {
-            Step::System => "Add your system files",
-            Step::Folders => "Where are your games?",
-            Step::Finish => "Ready to finish",
+            Step::System => "Add system files",
+            Step::Folders => "Add game folders",
+            Step::Finish => "Review setup",
         };
         let mut content = column![text(title).size(17).font(self::semibold()).color(palette.text)].spacing(12);
 
@@ -205,22 +205,32 @@ impl Setup {
                     content = content.push(self::summary_row(label, path, palette));
                 }
             }
-            if self.sources.gcn.is_none() && self.sources.wii.is_none() {
-                content = content.push(self::note(
-                    "Game folders can be added later from the File menu.",
+            if self.sources.nand.is_some() {
+                content = content.push(self::summary_row(
+                    "Import Wii NAND to",
+                    &gecko::paths::fs_root(),
                     palette,
                 ));
             }
 
-            content = content.push(if self.sources.nand.is_some() {
-                self::summary_row("Import Wii NAND to", &gecko::paths::fs_root(), palette)
-            } else {
-                self::note("Wii storage will be kept or created on first boot.", palette)
-            });
-            content = content.push(self::note("System files with these names will be replaced.", palette));
-            if self.sources.ipl.is_none() {
-                content = content.push(self::note("You can add a GameCube IPL later in Guided Setup.", palette));
+            let mut notes = column![].spacing(8);
+            if self.sources.gcn.is_none() && self.sources.wii.is_none() {
+                notes = notes.push(self::note("Add game folders later from the File menu.", palette));
             }
+            if self.sources.nand.is_none() {
+                notes = notes.push(self::note(
+                    "Wii storage will be kept or created on first boot.",
+                    palette,
+                ));
+            }
+            notes = notes.push(self::note("System files with these names will be replaced.", palette));
+            if self.sources.ipl.is_none() {
+                notes = notes.push(self::note("Add a GameCube IPL later in Guided Setup.", palette));
+            }
+            content = content.push(
+                container(column![self::divider(palette.border), notes].spacing(16))
+                    .padding(iced::Padding::default().top(8)),
+            );
         }
 
         let enabled = !self.busy;
@@ -251,7 +261,7 @@ impl Setup {
             body = body.push(text(error.clone()).size(12).color(palette.purple));
         }
         if self.busy {
-            body = body.push(self::note("Working... Please keep Gecko open.", palette));
+            body = body.push(self::note("Working... Keep Gecko open.", palette));
         }
         let body = body.push(column![self::divider(palette.border), actions].spacing(16));
 
@@ -285,15 +295,7 @@ impl Setup {
         .spacing(6)
         .width(Length::Fill);
 
-        let mut controls = row![self::action(
-            if path.is_some() { "Change..." } else { "Choose..." },
-            Message::SetupPick(field),
-            palette,
-            ButtonKind::Secondary,
-            !self.busy,
-        )]
-        .spacing(4)
-        .align_y(Alignment::Center);
+        let mut controls = row![].spacing(4).align_y(Alignment::Center);
         if path.is_some() {
             controls = controls.push(self::action(
                 "Clear",
@@ -305,6 +307,13 @@ impl Setup {
         } else {
             controls = controls.push(Space::new().width(53));
         }
+        controls = controls.push(self::action(
+            if path.is_some() { "Change..." } else { "Choose..." },
+            Message::SetupPick(field),
+            palette,
+            ButtonKind::Secondary,
+            !self.busy,
+        ));
 
         container(row![info, controls].spacing(14).align_y(Alignment::Center))
             .padding([14, 0])
