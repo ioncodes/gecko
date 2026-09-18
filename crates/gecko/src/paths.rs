@@ -21,6 +21,14 @@ pub fn resolve(rel: impl AsRef<Path>) -> PathBuf {
     self::base().join(rel)
 }
 
+pub fn fs_root() -> PathBuf {
+    if let Some(custom) = std::env::var_os("GECKO_FS_ROOT") {
+        return PathBuf::from(custom);
+    }
+
+    self::resolve("fs")
+}
+
 pub fn cache(rel: impl AsRef<Path>) -> PathBuf {
     self::resolve(Path::new("cache").join(rel))
 }

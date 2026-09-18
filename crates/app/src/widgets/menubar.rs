@@ -243,6 +243,8 @@ fn settings_menu(
     let check = |label: &'static str, msg: Message, on: bool| Item::new(self::menu_item(palette, label, msg, Some(on)));
 
     Menu::new(vec![
+        Item::new(self::menu_item(palette, "Guided Setup...", Message::MenuSetup, None)),
+        Item::new(self::separator(palette)),
         self::submenu(
             palette,
             "Execution Engine",
@@ -351,7 +353,7 @@ fn submenu(
     let content = row![
         text(label).size(13).color(text_color),
         Space::new().width(Length::Fill),
-        text("›").size(13).color(palette.text_dim),
+        crate::widgets::icons::chevron_right(palette.text_dim),
     ]
     .align_y(iced::Alignment::Center);
 

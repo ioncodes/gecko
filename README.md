@@ -79,19 +79,23 @@ Prebuilt releases (including debug builds) can be downloaded [here](https://gith
 ./tinyapp --dsp dsp_rom.bin --coef dsp_coef.bin --dvd YourGame.rvz
 ```
 
-A more modern and friendly experience is provided via `gecko` ([short preview on YouTube](https://www.youtube.com/watch?v=wg62ie71JP0)):
+A more modern and friendly experience is provided via `gecko` ([short preview on YouTube](https://www.youtube.com/watch?v=aCQSc70FV4k)):
 
 ![launcher](images/launcher.png)
 
-It scans the configured GameCube and Wii folders for `.iso`, `.rvz` and `.zip` files. Double-clicking on a row opens a dedicated player window for that game. The decoded GameCube IPL and DSP files are expected to be inside the `system` folder and **must** be named exactly as follows:
+On first launch, a guided setup popup asks for your DSP ROM (`dsp_rom.bin`), DSP coefficient ROM (`dsp_coef.bin`), optional GameCube IPL and game folders. It validates and copies the system files with the correct names, automatically decodes an encoded IPL, saves your settings and scans your games. You can skip setup for now or reopen it from **Settings -> Guided Setup**.
+
+You can also import an optional Wii NAND folder containing `title/` and `shared2/`. The wizard copies it into `fs/` (or `GECKO_FS_ROOT`) only if that destination does not already exist, preserving existing saves. Otherwise, leave NAND unselected to keep existing storage or generate it on first boot.
+
+The launcher scans the configured GameCube and Wii folders for `.iso`, `.rvz` and `.zip` files. Double-clicking on a row opens a dedicated player window for that game. For manual setup, place the decoded GameCube IPL and DSP files inside `system` using the names below. Data paths are relative to the working directory or `GECKO_DATA_DIR` when set:
 
 ```sh
-<gecko exe dir>/
+<gecko data dir>/
   config.toml                # settings, auto-generated
   cache/library.bin          # cached library, auto-generated
   screenshots/               # F12 screenshots, auto-generated
   internal/                  # contains SRAM and memory cards, auto-generated
-  system/                    # system file folder (user provided!)
+  system/                    # system files, copied by guided setup
     IPL.bin                  # GameCube only (must be decoded! see multitool)
     dsp_rom.bin              # GameCube and Wii
     dsp_coef.bin             # GameCube and Wii
@@ -169,15 +173,15 @@ Keyboard and player-window hotkeys are configurable the same way under `Settings
 
 `gecko` player window:
 
-| Key     | Action                                                                |
-| ------- | --------------------------------------------------------------------- |
-| `Space` | Pause / resume emulation                                              |
-| `Tab`   | Toggle the speed limit (run uncapped)                                 |
-| `F5`    | Save state (overwrites the game's existing state)                     |
-| `F7`    | Load state                                                            |
-| `F10`   | Toggle borderless fullscreen                                          |
-| `F11`   | Toggle the FPS and emulation speed overlay                            |
-| `F12`   | Screenshot the emulated framebuffer to `<gecko exe dir>/screenshots/` |
+| Key     | Action                                                                 |
+| ------- | ---------------------------------------------------------------------- |
+| `Space` | Pause / resume emulation                                               |
+| `Tab`   | Toggle the speed limit (run uncapped)                                  |
+| `F5`    | Save state (overwrites the game's existing state)                      |
+| `F7`    | Load state                                                             |
+| `F10`   | Toggle borderless fullscreen                                           |
+| `F11`   | Toggle the FPS and emulation speed overlay                             |
+| `F12`   | Screenshot the emulated framebuffer to `<gecko data dir>/screenshots/` |
 
 </details>
 

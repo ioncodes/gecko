@@ -15,6 +15,7 @@ use crate::game::{AspectMode, CpuMode, Format, Game, Platform, ThemePreference};
 use crate::keybinds::{self, KeyTarget};
 use crate::library::{self, ScanProgress};
 use crate::player::{self, PlayerState, PlayerStatus};
+use crate::setup::{self, Field, Setup, Step};
 use crate::theme::{self, Palette};
 use crate::update::{self, Outcome};
 use crate::widgets::input_settings::{self, BindTarget, InputTab, InvertTarget, KeyboardTab};
@@ -28,6 +29,16 @@ const TOAST_DURATION: Duration = Duration::from_secs(3);
 #[derive(Debug, Clone)]
 pub enum Message {
     Noop,
+    MenuSetup,
+    SetupClose,
+    SetupBack,
+    SetupNext,
+    SetupPick(Field),
+    SetupClear(Field),
+    SetupPicked(Field, Option<PathBuf>),
+    SetupValidated(Result<(), String>),
+    SetupInstall,
+    SetupInstalled(Result<Box<Config>, String>),
     LibraryWindowOpened(window::Id),
     PlayerWindowOpened(window::Id, Box<Game>, Arc<PlayerState>),
     PlayerTick,
@@ -132,6 +143,7 @@ pub struct App {
     search: String,
     search_lc: String,
     scanning: bool,
+    setup: Option<Setup>,
     about_open: bool,
     input_open: bool,
     input_tab: InputTab,
@@ -151,7 +163,11 @@ pub struct App {
 
 impl App {
     pub fn boot(cli_gcn: Option<PathBuf>, cli_wii: Option<PathBuf>) -> (Self, Task<Message>) {
-        let config = config::load(&config::config_path());
+        let config_path = config::config_path();
+        let config = config::load(&config_path);
+        let setup = Setup::new(&config, cli_gcn.clone(), cli_wii.clone());
+        let setup = setup.needed(&config, config_path.is_file()).then_some(setup);
+
         let cache = cache::load(&cache::cache_path());
 
         let mut games: Vec<Game> = cache.entries.values().map(|e| e.game.clone()).collect();
@@ -170,6 +186,7 @@ impl App {
             search: String::new(),
             search_lc: String::new(),
             scanning: false,
+            setup,
             about_open: false,
             input_open: false,
             input_tab: InputTab::Gc,
@@ -240,6 +257,114 @@ impl App {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Noop => Task::none(),
+            Message::MenuSetup => {
+                if self.setup.is_none() {
+                    self.setup = Some(Setup::new(
+                        &self.config,
+                        self.cli_gcn_override.clone(),
+                        self.cli_wii_override.clone(),
+                    ));
+                }
+                Task::none()
+            }
+            Message::SetupClose => {
+                if self.idle_setup().is_some() {
+                    self.setup = None;
+                }
+                Task::none()
+            }
+            Message::SetupBack => {
+                if let Some(setup) = self.idle_setup() {
+                    setup.step = setup.step.prev();
+                    setup.error = None;
+                }
+                Task::none()
+            }
+            Message::SetupClear(field) => {
+                if let Some(setup) = self.idle_setup() {
+                    *setup.sources.path_mut(field) = None;
+                    setup.error = None;
+                }
+                Task::none()
+            }
+            Message::SetupPick(field) => {
+                let Some(setup) = self.idle_setup() else {
+                    return Task::none();
+                };
+
+                setup.busy = true;
+                Task::perform(setup::pick(field), move |path| Message::SetupPicked(field, path))
+            }
+            Message::SetupPicked(field, path) => {
+                if let Some(setup) = &mut self.setup {
+                    setup.busy = false;
+                    if path.is_some() {
+                        *setup.sources.path_mut(field) = path;
+                        setup.error = None;
+                    }
+                }
+                Task::none()
+            }
+            Message::SetupNext => {
+                let Some(setup) = self.idle_setup().filter(|s| s.step != Step::Finish) else {
+                    return Task::none();
+                };
+
+                setup.busy = true;
+                setup.error = None;
+                let sources = setup.sources.clone();
+                let step = setup.step;
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            setup::validate_step(&sources, step).map_err(|e| format!("{e:#}"))
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    Message::SetupValidated,
+                )
+            }
+            Message::SetupValidated(result) => {
+                if let Some(setup) = &mut self.setup {
+                    setup.busy = false;
+                    match result {
+                        Ok(()) => setup.step = setup.step.next(),
+                        Err(error) => setup.error = Some(error),
+                    }
+                }
+                Task::none()
+            }
+            Message::SetupInstall => {
+                let Some(setup) = self.idle_setup().filter(|s| s.step == Step::Finish) else {
+                    return Task::none();
+                };
+
+                setup.busy = true;
+                setup.error = None;
+                let sources = setup.sources.clone();
+                Task::perform(setup::run_install(sources, self.config.clone()), |result| {
+                    Message::SetupInstalled(result.map(Box::new))
+                })
+            }
+            Message::SetupInstalled(result) => {
+                match result {
+                    Ok(config) => {
+                        self.config = *config;
+                        self.setup = None;
+                        self.cli_gcn_override = None;
+                        self.cli_wii_override = None;
+                        return Task::done(Message::ScanRequested);
+                    }
+                    Err(error) => {
+                        if let Some(setup) = &mut self.setup {
+                            setup.busy = false;
+                            setup.error = Some(error);
+                        }
+                    }
+                }
+                Task::none()
+            }
             Message::LibraryWindowOpened(id) => {
                 self.library_window = Some(id);
                 Task::none()
@@ -291,10 +416,6 @@ impl App {
             }
             Message::ScanRequested => {
                 let roots = self.effective_library_roots();
-                if roots.is_empty() {
-                    return Task::none();
-                }
-
                 self.scanning = true;
                 let prior = self.cache.clone();
                 Task::stream(library::scan_library_stream(roots, prior)).map(Message::ScanProgress)
@@ -766,7 +887,7 @@ impl App {
             let (msg, hint) = if self.scanning {
                 ("Scanning...", "Reading disc headers")
             } else if self.effective_library_roots().is_empty() {
-                ("No libraries set", "File → Set GameCube / Wii Folder...")
+                ("No libraries set", "Choose a GameCube or Wii folder from the File menu")
             } else {
                 ("No games found", "Drop ISO, RVZ, or ZIP files into the library folder")
             };
@@ -847,6 +968,9 @@ impl App {
             .into();
         }
 
+        if let Some(setup) = &self.setup {
+            root_element = stack![root_element, setup.view(palette, &self.config)].into();
+        }
         root_element
     }
 
@@ -896,6 +1020,10 @@ impl App {
                 ..container::Style::default()
             })
             .into()
+    }
+
+    fn idle_setup(&mut self) -> Option<&mut Setup> {
+        self.setup.as_mut().filter(|s| !s.busy)
     }
 
     fn effective_library_roots(&self) -> Vec<PathBuf> {

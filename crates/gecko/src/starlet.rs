@@ -46,7 +46,7 @@ impl Starlet {
             handles: HashMap::new(),
             next_fd: 1,
             pending: VecDeque::new(),
-            host_fs_root: self::default_host_fs_root(),
+            host_fs_root: crate::paths::fs_root(),
             delivery_scheduled: false,
         }
     }
@@ -178,14 +178,6 @@ impl Starlet {
             },
         }
     }
-}
-
-fn default_host_fs_root() -> PathBuf {
-    if let Some(custom) = std::env::var_os("GECKO_FS_ROOT") {
-        return PathBuf::from(custom);
-    }
-
-    crate::paths::resolve("fs")
 }
 
 impl System<{ crate::WII }> {

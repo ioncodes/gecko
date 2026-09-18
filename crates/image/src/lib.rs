@@ -2,6 +2,7 @@
 pub mod banner;
 pub mod dol;
 pub mod dvd;
+pub mod ipl;
 pub mod iso;
 #[cfg(feature = "rvz")]
 pub mod rvz;

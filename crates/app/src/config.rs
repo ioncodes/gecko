@@ -8,6 +8,7 @@ use crate::keybinds::KeyboardConfig;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub setup_completed: bool,
     pub gcn_library: Option<PathBuf>,
     pub wii_library: Option<PathBuf>,
     pub cpu_mode: CpuMode,
@@ -166,6 +167,7 @@ fn default_sram_enabled() -> bool {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            setup_completed: false,
             gcn_library: None,
             wii_library: None,
             cpu_mode: CpuMode::default(),

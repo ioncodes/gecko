@@ -1,6 +1,7 @@
 pub mod badge;
 pub mod cover;
 pub mod game_row;
+pub mod icons;
 pub mod input_settings;
 pub mod menubar;
 pub mod overlay;

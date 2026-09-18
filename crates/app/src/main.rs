@@ -7,6 +7,7 @@ mod keybinds;
 mod library;
 mod library_disc;
 mod player;
+mod setup;
 mod theme;
 mod update;
 mod widgets;
