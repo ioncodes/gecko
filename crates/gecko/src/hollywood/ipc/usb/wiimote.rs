@@ -321,11 +321,8 @@ impl WiimoteState {
     pub(super) fn make_input_report(&self) -> Vec<u8> {
         let [bb0, bb1] = self.button_bytes();
         let accel = if self.sideways {
-            [
-                (2 * WIIMOTE_ACCEL_ZERO_G - self.accel[2] as i32).clamp(0, 255) as u8,
-                self.accel[1],
-                self.accel[0],
-            ]
+            let flip = |v: u8| (2 * WIIMOTE_ACCEL_ZERO_G - v as i32).clamp(0, 255) as u8;
+            [flip(self.accel[2]), flip(self.accel[0]), self.accel[1]]
         } else {
             self.accel
         };
