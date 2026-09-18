@@ -133,6 +133,7 @@ pub fn run_headless<const SYSTEM: SystemId>(
     start: usize,
     end: usize,
     out: &std::path::Path,
+    aspect: backend_wgpu::sink::TargetAspect,
 ) {
     let (_instance, _adapter, device, queue) = crate::init_wgpu();
 
@@ -154,7 +155,9 @@ pub fn run_headless<const SYSTEM: SystemId>(
     });
 
     let g = gx.lock().unwrap();
-    let captured = backend_wgpu::capture::capture_texture(&device, &queue, &g.xfb_texture).expect("XFB capture failed");
+    let captured = backend_wgpu::capture::capture_texture(&device, &queue, &g.xfb_texture)
+        .expect("XFB capture failed")
+        .with_aspect(aspect);
     backend_wgpu::capture::write_png(out, captured, true).expect("failed to write PNG");
     eprintln!("wrote {}", out.display());
 }

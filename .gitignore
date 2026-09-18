@@ -20,3 +20,4 @@ system/
 *.sram
 *.dff
 docs/*.md
+internal/

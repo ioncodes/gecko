@@ -39,15 +39,17 @@ pub enum TargetAspect {
 }
 
 impl TargetAspect {
+    pub fn auto(is_wii: bool) -> Self {
+        if is_wii {
+            TargetAspect::Ratio(16.0 / 9.0)
+        } else {
+            TargetAspect::Ratio(4.0 / 3.0)
+        }
+    }
+
     pub fn from_arg(arg: &str, is_wii: bool) -> Self {
         match arg {
-            "auto" => {
-                if is_wii {
-                    TargetAspect::Ratio(16.0 / 9.0)
-                } else {
-                    TargetAspect::Ratio(4.0 / 3.0)
-                }
-            }
+            "auto" => Self::auto(is_wii),
             "4:3" => TargetAspect::Ratio(4.0 / 3.0),
             "16:9" => TargetAspect::Ratio(16.0 / 9.0),
             "stretch" => TargetAspect::Stretch,
@@ -640,6 +642,7 @@ pub struct Renderer {
     blit_bind_group_layout: wgpu::BindGroupLayout,
     blit_sampler: wgpu::Sampler,
     target_aspect: TargetAspect,
+    last_target_size: Arc<Mutex<Option<(u32, u32)>>>,
     frame_ready_cb: Arc<OnceLock<FrameReadyCallback>>,
     #[cfg(feature = "renderdoc-capture")]
     renderdoc: Arc<Mutex<crate::renderdoc_capture::RenderDocCapture>>,
@@ -776,6 +779,7 @@ impl Renderer {
             blit_bind_group_layout,
             blit_sampler,
             target_aspect,
+            last_target_size: Arc::new(Mutex::new(None)),
             frame_ready_cb,
             #[cfg(feature = "renderdoc-capture")]
             renderdoc,
@@ -827,7 +831,11 @@ impl Renderer {
     /// resolution times the EFB scale. Blocks until the GPU copy completes.
     pub fn capture_xfb(&self) -> Option<crate::capture::CapturedFrame> {
         let texture = self.shared.output.lock().unwrap().clone();
-        crate::capture::capture_texture(&self.device, &self.queue, &texture)
+        let aspect = match (self.target_aspect, *self.last_target_size.lock().unwrap()) {
+            (TargetAspect::Stretch, Some((width, height))) => TargetAspect::Ratio(width as f32 / height as f32),
+            (aspect, _) => aspect,
+        };
+        crate::capture::capture_texture(&self.device, &self.queue, &texture).map(|frame| frame.with_aspect(aspect))
     }
 
     /// Blit the latest XFB output to the given render target. `target_size`
@@ -857,6 +865,7 @@ impl Renderer {
         target_size: (u32, u32),
         load: wgpu::LoadOp<wgpu::Color>,
     ) {
+        *self.last_target_size.lock().unwrap() = Some((target_size.0.max(1), target_size.1.max(1)));
         let output = self.shared.output.lock().unwrap().clone();
         let view = output.create_view(&Default::default());
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {

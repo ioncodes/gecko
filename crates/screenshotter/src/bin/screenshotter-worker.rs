@@ -1,4 +1,4 @@
-use backend_wgpu::sink::InlineSink;
+use backend_wgpu::sink::{InlineSink, TargetAspect};
 use backend_wgpu::{GxRenderer, capture};
 use gecko::HostInput;
 use gecko::flipper::si::pad;
@@ -14,29 +14,18 @@ const IPL: &[u8] = include_bytes!("../../../../private/IPL.decoded.bin");
 const DSP: &[u8] = include_bytes!("../../../../private/dsp_rom.bin");
 const COEF: &[u8] = include_bytes!("../../../../private/dsp_coef.bin");
 
-fn take_screenshot(device: &wgpu::Device, queue: &wgpu::Queue, gx: &GxRenderer, code: &str, frame: u32) {
+fn take_screenshot(device: &wgpu::Device, queue: &wgpu::Queue, gx: &GxRenderer, code: &str, frame: u32, is_wii: bool) {
     let _ = device.poll(wgpu::PollType::Wait {
         submission_index: None,
         timeout: None,
     });
 
-    let mut captured = capture::capture_texture(device, queue, &gx.xfb_texture).expect("capture_texture returned None");
-
-    for px in captured.rgba.chunks_exact_mut(4) {
-        px[3] = 255;
-    }
+    let captured = capture::capture_texture(device, queue, &gx.xfb_texture)
+        .expect("capture_texture returned None")
+        .with_aspect(TargetAspect::auto(is_wii));
 
     let path = format!("screenshotdb/{}/{}.png", code, frame);
-    let file = std::fs::File::create(&path).expect("Failed to create PNG file");
-
-    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), captured.width, captured.height);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-
-    let mut writer = encoder.write_header().expect("Failed to write PNG header");
-    writer
-        .write_image_data(&captured.rgba)
-        .expect("Failed to write PNG data");
+    capture::write_png(std::path::Path::new(&path), captured, true).expect("Failed to write PNG");
 }
 
 fn main() {
@@ -151,7 +140,7 @@ fn drive<const SYSTEM: SystemId>(
     let mut frame: u32 = framerate * 2;
     {
         let g = gx.lock().unwrap();
-        take_screenshot(device, queue, &g, code, frame);
+        take_screenshot(device, queue, &g, code, frame, SYSTEM == gecko::system::WII);
     }
 
     for idx in 0..20 {
@@ -164,7 +153,7 @@ fn drive<const SYSTEM: SystemId>(
         }
 
         let g = gx.lock().unwrap();
-        take_screenshot(device, queue, &g, code, frame);
+        take_screenshot(device, queue, &g, code, frame, SYSTEM == gecko::system::WII);
     }
 }
 

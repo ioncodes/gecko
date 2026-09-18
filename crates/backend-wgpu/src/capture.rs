@@ -4,11 +4,55 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::align_up;
+use crate::sink::TargetAspect;
 
 pub struct CapturedFrame {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+}
+
+impl CapturedFrame {
+    pub fn with_aspect(self, aspect: TargetAspect) -> Self {
+        let TargetAspect::Ratio(ratio) = aspect else {
+            return self;
+        };
+        let width = (self.height as f32 * ratio).round() as u32;
+        if width == self.width {
+            return self;
+        }
+
+        let scale = self.width as f32 / width as f32;
+        let max_x = self.width as usize - 1;
+        let samples: Vec<_> = (0..width)
+            .map(|x| {
+                let src = ((x as f32 + 0.5) * scale - 0.5).clamp(0.0, max_x as f32);
+                let left = src.floor() as usize;
+                (left * 4, (left + 1).min(max_x) * 4, src.fract())
+            })
+            .collect();
+
+        let mut rgba = vec![0; width as usize * self.height as usize * 4];
+        for (src, dst) in self
+            .rgba
+            .chunks_exact(self.width as usize * 4)
+            .zip(rgba.chunks_exact_mut(width as usize * 4))
+        {
+            for (pixel, &(left, right, weight)) in dst.chunks_exact_mut(4).zip(&samples) {
+                for channel in 0..4 {
+                    pixel[channel] = (src[left + channel] as f32 * (1.0 - weight)
+                        + src[right + channel] as f32 * weight)
+                        .round() as u8;
+                }
+            }
+        }
+
+        Self {
+            width,
+            height: self.height,
+            rgba,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -103,17 +103,18 @@ fn run<const SYSTEM: gecko::SystemId>(file: dff::DffFile, args: Args) {
     let last = file.frames.len() - 1;
     let start = args.start.min(last);
     let end = args.end.unwrap_or(last).clamp(start, last);
+    let aspect = TargetAspect::from_arg(&args.aspect, file.is_wii);
 
     if args.debug {
         if let Some(ref out) = args.screenshot {
-            debug::ui::run_headless::<SYSTEM>(file, args.file, start, end, out);
+            debug::ui::run_headless::<SYSTEM>(file, args.file, start, end, out, aspect);
         } else {
             debug::ui::run_debug::<SYSTEM>(file, args.file, start, end);
         }
     } else if let Some(ref out) = args.screenshot {
-        self::run_headless::<SYSTEM>(&file, start, end, out, args.dump_textures.as_deref());
+        self::run_headless::<SYSTEM>(&file, start, end, out, args.dump_textures.as_deref(), aspect);
     } else {
-        self::run_windowed::<SYSTEM>(file, start, end, args.once, &args.aspect);
+        self::run_windowed::<SYSTEM>(file, start, end, args.once, aspect);
     }
 }
 
@@ -142,6 +143,7 @@ fn run_headless<const SYSTEM: gecko::SystemId>(
     end: usize,
     out: &PathBuf,
     dump_textures: Option<&std::path::Path>,
+    aspect: TargetAspect,
 ) {
     let (_instance, _adapter, device, queue) = self::init_wgpu();
 
@@ -172,7 +174,9 @@ fn run_headless<const SYSTEM: gecko::SystemId>(
     });
 
     let g = gx.lock().unwrap();
-    let captured = backend_wgpu::capture::capture_texture(&device, &queue, &g.xfb_texture).expect("XFB capture failed");
+    let captured = backend_wgpu::capture::capture_texture(&device, &queue, &g.xfb_texture)
+        .expect("XFB capture failed")
+        .with_aspect(aspect);
     backend_wgpu::capture::write_png(out, captured, true).expect("failed to write PNG");
     eprintln!("wrote {}", out.display());
 }
@@ -306,11 +310,16 @@ impl<const SYSTEM: gecko::SystemId> ApplicationHandler for WindowedApp<SYSTEM> {
     }
 }
 
-fn run_windowed<const SYSTEM: gecko::SystemId>(file: dff::DffFile, start: usize, end: usize, once: bool, aspect: &str) {
+fn run_windowed<const SYSTEM: gecko::SystemId>(
+    file: dff::DffFile,
+    start: usize,
+    end: usize,
+    once: bool,
+    target_aspect: TargetAspect,
+) {
     let (instance, adapter, device, queue) = self::init_wgpu();
 
     let surface_format = wgpu::TextureFormat::Bgra8Unorm;
-    let target_aspect = TargetAspect::from_arg(aspect, file.is_wii);
     let (renderer, sink) =
         backend_wgpu::sink::Renderer::new(device.clone(), queue.clone(), surface_format, target_aspect, 1);
 

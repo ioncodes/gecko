@@ -454,6 +454,7 @@ impl McpServer {
     #[tool(description = "Capture the current frame from the emulator's XFB and return it as a base64 PNG.")]
     async fn get_view(&self) -> Result<CallToolResult, McpError> {
         require_loaded(&self.shared)?;
+        let is_wii = matches!(self.shared.state.lock().unwrap().backend, Some(Backend::Wii(_)));
         let _ = self.shared.device.poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,
@@ -462,6 +463,7 @@ impl McpServer {
             let gx = self.shared.gx.lock().unwrap();
             backend_wgpu::capture::capture_texture(&self.shared.device, &self.shared.queue, &gx.xfb_texture)
                 .ok_or_else(|| McpError::internal_error("capture_texture returned None", None))?
+                .with_aspect(backend_wgpu::sink::TargetAspect::auto(is_wii))
         };
         let mut rgba = captured.rgba;
         for px in rgba.chunks_exact_mut(4) {
