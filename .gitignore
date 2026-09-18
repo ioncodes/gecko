@@ -15,3 +15,8 @@ screenshotdb/
 dump.wav
 profile-dumps/
 /cache/
+config.toml
+system/
+*.sram
+*.dff
+docs/*.md

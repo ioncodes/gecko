@@ -105,7 +105,8 @@ struct Args {
     #[arg(long)]
     script: Option<String>,
 
-    /// Display aspect ratio: auto (16:9 Wii / 4:3 GC), 4:3, 16:9, stretch
+    /// Display aspect ratio: auto (16:9 Wii / 4:3 GC), 4:3, 16:9, stretch.
+    /// On Wii this also sets the console's widescreen setting (SYSCONF IPL.AR).
     #[arg(long, default_value = "auto")]
     aspect: String,
 
@@ -313,6 +314,11 @@ fn configure<const SYSTEM: SystemId>(emulator: &mut System<SYSTEM>, args: &Args)
     } else {
         gecko::ExecutionMode::Jit
     });
+
+    if SYSTEM == system::WII {
+        let widescreen = TargetAspect::from_arg(&args.aspect, true).is_widescreen();
+        emulator.starlet.set_widescreen(widescreen);
+    }
 
     if let Some(ref dsp_path) = args.dsp {
         let dsp_data = std::fs::read(dsp_path).expect("failed to read DSP IROM");

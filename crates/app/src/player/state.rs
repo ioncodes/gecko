@@ -71,10 +71,7 @@ impl std::fmt::Debug for PlayerState {
 
 impl PlayerState {
     pub fn new(game: &Game, config: &Config) -> Arc<Self> {
-        let aspect = match game.platform {
-            Platform::Wii => TargetAspect::Ratio(16.0 / 9.0),
-            Platform::Gcn => TargetAspect::Ratio(4.0 / 3.0),
-        };
+        let aspect = config.aspect.target(game.platform);
         let neutral = match game.platform {
             Platform::Wii => HostInput::wii_neutral().with_wii_options(
                 config.input.wii.nunchuk_attached.unwrap_or(true),
@@ -355,6 +352,9 @@ fn finish_boot<const S: gecko::system::SystemId>(
     game_id: String,
 ) {
     self::configure_emu(&mut emu, &params, sink, state.fps.clone());
+    if S == system::WII {
+        emu.starlet.set_widescreen(state.aspect.is_widescreen());
+    }
     emu.apply_host_input(&*state.input.lock().unwrap());
 
     let audio = self::install_audio_sink(&mut emu);

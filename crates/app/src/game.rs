@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
+use backend_wgpu::sink::TargetAspect;
 use iced::widget::image::Handle;
 use image::Dvd;
 use serde::{Deserialize, Serialize};
@@ -123,6 +124,26 @@ impl From<CpuMode> for gecko::ExecutionMode {
         match mode {
             CpuMode::Jit => gecko::ExecutionMode::Jit,
             CpuMode::Interpreter => gecko::ExecutionMode::Interpreter,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AspectMode {
+    #[default]
+    Auto,
+    Standard,
+    Widescreen,
+    Stretch,
+}
+
+impl AspectMode {
+    pub fn target(self, platform: Platform) -> TargetAspect {
+        match (self, platform) {
+            (AspectMode::Auto, Platform::Wii) | (AspectMode::Widescreen, _) => TargetAspect::Ratio(16.0 / 9.0),
+            (AspectMode::Auto, Platform::Gcn) | (AspectMode::Standard, _) => TargetAspect::Ratio(4.0 / 3.0),
+            (AspectMode::Stretch, _) => TargetAspect::Stretch,
         }
     }
 }

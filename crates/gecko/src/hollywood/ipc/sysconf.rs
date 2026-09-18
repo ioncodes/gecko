@@ -63,6 +63,12 @@ impl IosDevice for SysConf {
         Ok(())
     }
 
+    fn set_widescreen(&mut self, widescreen: bool) {
+        if let Some(offset) = self::entry_data_offset(&self.blob, b"IPL.AR") {
+            self.blob[offset] = u8::from(widescreen);
+        }
+    }
+
     fn read(&mut self, ctx: &mut super::DeviceContext<'_>, out_ptr: u32, out_len: u32) -> i32 {
         let start = self.pos as usize;
         let n = (out_len as usize).min(self.blob.len().saturating_sub(start));
@@ -173,7 +179,7 @@ fn build_blob(language: u8) -> Vec<u8> {
         (b"BT.BAR", EntryData::Byte(1)),
         (b"BT.SPKV", EntryData::Byte(0x58)),
         (b"IPL.LNG", EntryData::Byte(language)),
-        (b"IPL.AR", EntryData::Byte(0)),
+        (b"IPL.AR", EntryData::Byte(1)),
         (b"IPL.E60", EntryData::Bool(false)),
         (b"IPL.PGS", EntryData::Bool(false)),
         (b"IPL.SND", EntryData::Byte(1)),
@@ -203,6 +209,19 @@ fn build_blob(language: u8) -> Vec<u8> {
 
     blob[FOOTER_OFFSET..FOOTER_OFFSET + 4].copy_from_slice(b"SCed");
     blob
+}
+
+fn entry_data_offset(blob: &[u8], name: &[u8]) -> Option<usize> {
+    let count = u16::from_be_bytes([blob[4], blob[5]]) as usize;
+
+    (0..count).find_map(|i| {
+        let dir_pos = 0x06 + i * 2;
+        let entry_off = u16::from_be_bytes([blob[dir_pos], blob[dir_pos + 1]]) as usize;
+        let name_len = (blob[entry_off] & 0x1F) as usize + 1;
+        let name_start = entry_off + 1;
+
+        (blob.get(name_start..name_start + name_len)? == name).then_some(name_start + name_len)
+    })
 }
 
 fn encode_type_namelen(type_code: u8, name_len: usize) -> u8 {

@@ -11,7 +11,7 @@ use iced::{Background, Border, Color, Element, Length, Padding, Subscription, Ta
 
 use crate::cache::{self, LibraryCache};
 use crate::config::{self, Config};
-use crate::game::{CpuMode, Format, Game, Platform, ThemePreference};
+use crate::game::{AspectMode, CpuMode, Format, Game, Platform, ThemePreference};
 use crate::keybinds::{self, KeyTarget};
 use crate::library::{self, ScanProgress};
 use crate::player::{self, PlayerState, PlayerStatus};
@@ -50,6 +50,7 @@ pub enum Message {
     MenuToggleSram,
     MenuSetTheme(ThemePreference),
     MenuSetUpscale(u32),
+    MenuSetAspect(AspectMode),
     MenuAbout,
     AboutClose,
     MenuInputSettings,
@@ -441,6 +442,11 @@ impl App {
                 self.persist_config();
                 Task::none()
             }
+            Message::MenuSetAspect(aspect) => {
+                self.config.aspect = aspect;
+                self.persist_config();
+                Task::none()
+            }
             Message::MenuAbout => {
                 self.about_open = true;
                 Task::none()
@@ -782,6 +788,7 @@ impl App {
                 self.config.theme,
                 self.config.skip_ipl,
                 self.config.upscale,
+                self.config.aspect,
                 self.config.memcard_enabled,
                 self.config.sram_enabled,
             ),

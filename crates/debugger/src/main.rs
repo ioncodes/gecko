@@ -433,7 +433,8 @@ struct Args {
     #[arg(long)]
     script: Option<String>,
 
-    /// Display aspect ratio: auto (16:9 Wii / 4:3 GC), 4:3, 16:9, stretch
+    /// Display aspect ratio: auto (16:9 Wii / 4:3 GC), 4:3, 16:9, stretch.
+    /// On Wii this also sets the console's widescreen setting (SYSCONF IPL.AR).
     #[arg(long, default_value = "auto")]
     aspect: String,
 
@@ -534,6 +535,11 @@ fn main() {
     if let Some(ref coef_path) = args.coef {
         let coef_data = std::fs::read(coef_path).expect("failed to read DSP coefficient ROM");
         emulator.load_dsp_coef(&coef_data);
+    }
+
+    if let EmulatorVariant::Wii(emu) = &mut emulator {
+        let widescreen = TargetAspect::from_arg(&args.aspect, true).is_widescreen();
+        emu.starlet.set_widescreen(widescreen);
     }
 
     if let Some(ref path) = args.script {

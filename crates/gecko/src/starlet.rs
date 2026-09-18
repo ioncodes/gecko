@@ -121,6 +121,12 @@ impl Starlet {
         }
     }
 
+    pub fn set_widescreen(&mut self, widescreen: bool) {
+        if let Some(dev) = self.devices.get_mut("/shared2/sys/SYSCONF") {
+            dev.set_widescreen(widescreen);
+        }
+    }
+
     pub fn set_wiimote_options(&mut self, attached: bool, sideways: bool) {
         if let Some(dev) = self.devices.get_mut(WIIMOTE_DEVICE_PATH) {
             dev.set_wiimote_options(attached, sideways);

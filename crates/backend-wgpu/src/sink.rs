@@ -54,6 +54,13 @@ impl TargetAspect {
             other => panic!("--aspect must be auto|4:3|16:9|stretch, got {other:?}"),
         }
     }
+
+    pub fn is_widescreen(self) -> bool {
+        match self {
+            TargetAspect::Ratio(ratio) => ratio > 4.0 / 3.0,
+            TargetAspect::Stretch => true,
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

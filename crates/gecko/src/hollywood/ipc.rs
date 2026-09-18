@@ -109,6 +109,8 @@ pub trait IosDevice: Send {
 
     fn set_wiimote_shake(&mut self, _active: bool) {}
 
+    fn set_widescreen(&mut self, _widescreen: bool) {}
+
     fn set_wiimote_options(&mut self, _attached: bool, _sideways: bool) {}
 
     fn set_wiimote_accel(&mut self, _accel: Option<[f32; 3]>) {}

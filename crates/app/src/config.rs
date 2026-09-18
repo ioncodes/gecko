@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::game::{CpuMode, ThemePreference};
+use crate::game::{AspectMode, CpuMode, ThemePreference};
 use crate::keybinds::KeyboardConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,6 +20,7 @@ pub struct Config {
     pub skip_ipl: bool,
     #[serde(default = "self::default_upscale")]
     pub upscale: u32,
+    pub aspect: AspectMode,
     #[serde(default = "self::default_memcard_enabled")]
     pub memcard_enabled: bool,
     #[serde(default = "self::default_sram_enabled")]
@@ -175,6 +176,7 @@ impl Default for Config {
             ipl: None,
             skip_ipl: self::default_skip_ipl(),
             upscale: self::default_upscale(),
+            aspect: AspectMode::default(),
             memcard_enabled: self::default_memcard_enabled(),
             sram_enabled: self::default_sram_enabled(),
             input: hostinput::InputConfig::default(),
