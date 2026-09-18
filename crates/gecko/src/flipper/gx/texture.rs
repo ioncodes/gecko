@@ -33,6 +33,64 @@ pub fn decode_to_rgba(tex: &[u8], desc: &TextureDescriptor, palette: &[u16], tlu
     rgba
 }
 
+pub fn mip_level_count(width: u32, height: u32, filter: super::regs::MinFilter, max_lod: u8) -> u32 {
+    if !filter.uses_mipmaps() {
+        return 1;
+    }
+
+    (u32::from(max_lod).div_ceil(16) + 1).min(width.max(height).ilog2() + 1)
+}
+
+pub fn mip_dimensions(width: u32, height: u32, levels: u32) -> impl Iterator<Item = (u32, u32)> {
+    (0..levels).map(move |level| ((width >> level).max(1), (height >> level).max(1)))
+}
+
+pub fn mip_data_size(width: u32, height: u32, format: TextureFormat, levels: u32) -> usize {
+    self::mip_dimensions(width, height, levels)
+        .map(|(w, h)| self::raw_data_size(w, h, format))
+        .sum()
+}
+
+pub fn decode_mips_to_rgba(
+    tex: &[u8],
+    desc: &TextureDescriptor,
+    palette: &[u16],
+    tlut_format: TlutFormat,
+    levels: u32,
+) -> Vec<u8> {
+    if levels == 1 {
+        return self::decode_to_rgba(tex, desc, palette, tlut_format);
+    }
+
+    let mut rgba = Vec::with_capacity(
+        self::mip_dimensions(desc.width, desc.height, levels)
+            .map(|(w, h)| (w * h * 4) as usize)
+            .sum(),
+    );
+
+    let mut offset = 0;
+    for (width, height) in self::mip_dimensions(desc.width, desc.height, levels) {
+        let size = self::raw_data_size(width, height, desc.format);
+        let level = TextureDescriptor { width, height, ..*desc };
+        rgba.extend(self::decode_to_rgba(
+            tex.get(offset..offset + size).unwrap_or(&[]),
+            &level,
+            palette,
+            tlut_format,
+        ));
+        offset += size;
+    }
+
+    rgba
+}
+
+#[derive(Clone, Copy)]
+pub struct TextureHash {
+    pub hash: u64,
+    pub generation: u64,
+    pub layout: (u32, u32, TextureFormat, u32),
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct BlockDims {
     pub tile_w: u32,

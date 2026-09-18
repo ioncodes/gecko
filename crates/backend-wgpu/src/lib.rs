@@ -139,7 +139,15 @@ pub(crate) fn compute_draw_buffer_layout(
     }
 }
 
-type SamplerKey = (WrapMode, WrapMode, MagFilter, MinFilter);
+type SamplerKey = (WrapMode, WrapMode, MagFilter, MinFilter, u8, u8);
+const DEFAULT_SAMPLER_KEY: SamplerKey = (
+    WrapMode::Clamp,
+    WrapMode::Clamp,
+    MagFilter::Linear,
+    MinFilter::Linear,
+    0,
+    0,
+);
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct BindGroupCacheKey {
@@ -214,6 +222,7 @@ pub(crate) struct DrawUniforms {
     /// Indirect texturing needs these instead of `textureDimensions`
     /// because scaled EFB copies bind a larger GPU texture.
     pub tex_dims: [glam::UVec4; 4],
+    pub tex_lod_bias: [f32; 8],
 }
 
 pub(crate) const DRAW_UNIFORMS_SIZE: NonZeroU64 = match NonZeroU64::new(std::mem::size_of::<DrawUniforms>() as u64) {
@@ -289,10 +298,10 @@ pub struct GxRenderer {
     // EFB: multisampled (4x) reversed depth (near = 1, far = 0).
     pub(crate) efb_depth_view: wgpu::TextureView,
     pub(crate) efb_needs_clear: bool,
-    pub(crate) sampler_cache: FxHashMap<(WrapMode, WrapMode, MagFilter, MinFilter), wgpu::Sampler>,
+    pub(crate) sampler_cache: FxHashMap<SamplerKey, wgpu::Sampler>,
     pub(crate) texture_cache: FxHashMap<TextureKey, (TextureFormat, wgpu::Texture, wgpu::TextureView)>,
-    // Retired LoadTexture allocations grouped by (w, h).
-    pub(crate) texture_pool: FxHashMap<(u32, u32), Vec<wgpu::Texture>>,
+    // Retired LoadTexture allocations grouped by (w, h, mip levels).
+    pub(crate) texture_pool: FxHashMap<(u32, u32, u32), Vec<wgpu::Texture>>,
     pub(crate) efb_copy_cache: FxHashMap<Address, EfbCopyEntry>,
     pub(crate) efb_copy_pool: FxHashMap<(u32, u32), Vec<(wgpu::Texture, wgpu::TextureView)>>,
     pub(crate) efb_pack_pipelines: render::EfbPackPipelines,
@@ -348,6 +357,7 @@ pub struct GxRenderer {
     pub(crate) draw_fast_path_compatible: bool,
     pub(crate) current_texture_ids: [Option<TextureKey>; 8],
     pub(crate) current_sampler_keys: [Option<SamplerKey>; 8],
+    pub(crate) current_lod_bias: [f32; 8],
     // XFB output texture: composited from per-copy snapshots by PresentXfb.
     pub xfb_texture: wgpu::Texture,
     pub xfb_view: wgpu::TextureView,
@@ -529,6 +539,7 @@ impl GxRenderer {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            lod_max_clamp: 0.0,
             ..Default::default()
         });
 
@@ -955,10 +966,7 @@ impl GxRenderer {
             efb_needs_clear: true,
             sampler_cache: {
                 let mut m = FxHashMap::default();
-                m.insert(
-                    (WrapMode::Clamp, WrapMode::Clamp, MagFilter::Linear, MinFilter::Linear),
-                    sampler,
-                );
+                m.insert(DEFAULT_SAMPLER_KEY, sampler);
                 m
             },
             texture_cache: FxHashMap::default(),
@@ -1008,6 +1016,7 @@ impl GxRenderer {
             draw_fast_path_compatible: false,
             current_texture_ids: Default::default(),
             current_sampler_keys: Default::default(),
+            current_lod_bias: [0.0; 8],
             xfb_texture,
             xfb_view,
             xfb_has_content: false,
@@ -1157,6 +1166,7 @@ impl GxRenderer {
         &mut self,
         device: &wgpu::Device,
         dest: &wgpu::Texture,
+        mip_level: u32,
         rgba: &[u8],
         width: u32,
         height: u32,
@@ -1197,7 +1207,10 @@ impl GxRenderer {
                     rows_per_image: None,
                 },
             },
-            dest.as_image_copy(),
+            wgpu::TexelCopyTextureInfo {
+                mip_level,
+                ..dest.as_image_copy()
+            },
             wgpu::Extent3d {
                 width,
                 height,

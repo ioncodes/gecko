@@ -42,6 +42,7 @@ impl RenderSink for McpSink {
                 height,
                 fmt,
                 rgba,
+                ..
             } => {
                 let mut i = self.introspect.lock().unwrap();
                 let frame = i.frame_index;
@@ -51,7 +52,10 @@ impl RenderSink for McpSink {
                         width: *width,
                         height: *height,
                         format: *fmt,
-                        rgba: rgba.clone(),
+                        rgba: rgba
+                            .get(..(*width as usize * *height as usize * 4))
+                            .unwrap_or(&[])
+                            .to_vec(),
                         last_seen_frame: frame,
                     },
                 );

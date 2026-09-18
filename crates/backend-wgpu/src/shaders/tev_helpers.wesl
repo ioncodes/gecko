@@ -1,4 +1,4 @@
-import super::common::{VsOut, tex0, tex1, tex2, tex3, tex4, tex5, tex6, tex7, samp0, samp1, samp2, samp3, samp4, samp5, samp6, samp7};
+import super::common::{VsOut, draw, tex0, tex1, tex2, tex3, tex4, tex5, tex6, tex7, samp0, samp1, samp2, samp3, samp4, samp5, samp6, samp7};
 
 fn extract_bits(val: u32, lo: u32, width: u32) -> u32 {
     return (val >> lo) & ((1u << width) - 1u);
@@ -54,15 +54,15 @@ fn stq_to_uv(stq: vec3<f32>) -> vec2<f32> {
 
 fn sample_texmap(texmap: u32, uv: vec2<f32>) -> vec4<f32> {
     switch texmap {
-        case 0u: { return textureSample(tex0, samp0, uv); }
-        case 1u: { return textureSample(tex1, samp1, uv); }
-        case 2u: { return textureSample(tex2, samp2, uv); }
-        case 3u: { return textureSample(tex3, samp3, uv); }
-        case 4u: { return textureSample(tex4, samp4, uv); }
-        case 5u: { return textureSample(tex5, samp5, uv); }
-        case 6u: { return textureSample(tex6, samp6, uv); }
-        case 7u: { return textureSample(tex7, samp7, uv); }
-        default: { return textureSample(tex0, samp0, uv); }
+        case 0u: { return textureSampleBias(tex0, samp0, uv, draw.tex_lod_bias[0u][0u]); }
+        case 1u: { return textureSampleBias(tex1, samp1, uv, draw.tex_lod_bias[0u][1u]); }
+        case 2u: { return textureSampleBias(tex2, samp2, uv, draw.tex_lod_bias[0u][2u]); }
+        case 3u: { return textureSampleBias(tex3, samp3, uv, draw.tex_lod_bias[0u][3u]); }
+        case 4u: { return textureSampleBias(tex4, samp4, uv, draw.tex_lod_bias[1u][0u]); }
+        case 5u: { return textureSampleBias(tex5, samp5, uv, draw.tex_lod_bias[1u][1u]); }
+        case 6u: { return textureSampleBias(tex6, samp6, uv, draw.tex_lod_bias[1u][2u]); }
+        case 7u: { return textureSampleBias(tex7, samp7, uv, draw.tex_lod_bias[1u][3u]); }
+        default: { return textureSampleBias(tex0, samp0, uv, draw.tex_lod_bias[0u][0u]); }
     }
 }
 

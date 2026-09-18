@@ -51,6 +51,7 @@ struct DrawUniforms {
     // a larger GPU texture, so textureDimensions must not be used for
     // guest texel math.
     tex_dims: array<vec4<u32>, 4>,
+    tex_lod_bias: array<vec4<f32>, 2>,
 };
 
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;

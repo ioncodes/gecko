@@ -151,6 +151,7 @@ impl GraphicsProcessor {
         if self.recorder.as_ref().is_some_and(|rec| rec.is_recording()) {
             let vf = self.build_vertex_format(cmd);
             let view = mmio.ram_view();
+            let mip_levels: [u32; 8] = std::array::from_fn(|slot| self.texture_mip_levels(slot));
             let rec = self.recorder.as_deref_mut().unwrap();
             let mut offset = 0;
 
@@ -160,8 +161,11 @@ impl GraphicsProcessor {
                 offset += len;
             }
 
-            for desc in self.cur_textures.iter().flatten() {
-                let len = super::texture::raw_data_size(desc.width, desc.height, desc.format);
+            for (slot, desc) in self.cur_textures.iter().enumerate() {
+                let Some(desc) = desc else {
+                    continue;
+                };
+                let len = super::texture::mip_data_size(desc.width, desc.height, desc.format, mip_levels[slot]);
                 rec.use_draw_texture(&view, desc.ram_addr as u32, len);
             }
         }

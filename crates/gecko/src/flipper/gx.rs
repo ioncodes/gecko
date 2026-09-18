@@ -126,7 +126,7 @@ pub struct GraphicsProcessor {
     pub cached_lights: [LightData; 8],
     #[cfg(feature = "gx-stats")]
     pub(crate) stats: GxStats,
-    pub texture_hashes: FxHashMap<TextureKey, (u64, u64)>,
+    pub texture_hashes: FxHashMap<TextureKey, texture::TextureHash>,
     pub execution_mode: ExecutionMode,
 }
 

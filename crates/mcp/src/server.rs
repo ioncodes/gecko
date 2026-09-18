@@ -507,7 +507,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Return one previously uploaded GX texture as a base64 PNG. Identify by ram_addr (and variant for paletted textures)."
+        description = "Return one previously uploaded GX texture as a base64 PNG. Identify by ram_addr and the variant returned by the texture list."
     )]
     async fn get_texture(&self, Parameters(args): Parameters<GetTextureArgs>) -> Result<CallToolResult, McpError> {
         let intro = self.shared.introspect.lock().unwrap();

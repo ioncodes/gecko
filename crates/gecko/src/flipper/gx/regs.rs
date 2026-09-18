@@ -627,6 +627,12 @@ pub enum MinFilter {
     LinearMipmapLinear = 6,
 }
 
+impl MinFilter {
+    pub fn uses_mipmaps(self) -> bool {
+        !matches!(self, Self::Nearest | Self::Linear)
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Hash, BitEnum)]
 pub enum RasterChannel {
     Color0 = 0,
@@ -698,6 +704,18 @@ pub struct TxSetMode0 {
 
     #[bits(5..=7)]
     pub min_filter: MinFilter,
+
+    #[bits(9..=16)]
+    pub lod_bias: u8,
+}
+
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TxSetMode1 {
+    #[bits(0..=7)]
+    pub min_lod: u8,
+    #[bits(8..=15)]
+    pub max_lod: u8,
 }
 
 // TEV color combiner input select (SELA-SELD)

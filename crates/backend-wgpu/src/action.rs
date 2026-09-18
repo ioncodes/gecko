@@ -5,7 +5,7 @@ use crate::{
     helpers,
 };
 use gecko::flipper::gx::draw::Primitive;
-use gecko::flipper::gx::regs::{CullMode, MagFilter, MinFilter, WrapMode};
+use gecko::flipper::gx::regs::CullMode;
 use gecko::host::{DrawSegment, DrawState, GxAction};
 use glam::{Mat4, UVec4, Vec4};
 #[cfg(feature = "gx-stats")]
@@ -268,6 +268,7 @@ impl GxRenderer {
                 width,
                 height,
                 fmt,
+                mip_levels,
                 rgba,
             } => {
                 let tid = *id;
@@ -276,16 +277,11 @@ impl GxRenderer {
                     height: *height,
                     depth_or_array_layers: 1,
                 };
-                let direct_copy_layout = wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(*width * 4),
-                    rows_per_image: None,
-                };
 
                 let keep_cached = self
                     .efb_copy_cache
                     .get(&tid.ram_addr)
-                    .is_some_and(|e| e.matches(*fmt, *width, *height));
+                    .is_some_and(|e| *mip_levels == 1 && e.matches(*fmt, *width, *height));
                 let reference_only = rgba.is_empty();
 
                 assert!(
@@ -293,20 +289,26 @@ impl GxRenderer {
                     "pending EFB texture missing from renderer cache"
                 );
 
+                if !reference_only
+                    && self
+                        .draw_bg_keys
+                        .iter()
+                        .any(|k| k.tex_keys.iter().flatten().any(|t| t.ram_addr == tid.ram_addr))
+                {
+                    self.flush_draws_keep_vertices(device, queue);
+                }
                 if !keep_cached && let Some(entry) = self.efb_copy_cache.remove(&tid.ram_addr) {
                     self.return_to_pool(entry.texture, entry.view);
+                    self.bind_group_cache
+                        .retain(|key, _| !key.tex_keys.iter().flatten().any(|k| k.ram_addr == tid.ram_addr));
                 }
 
                 if let Some((_, cached_tex, _)) = self.texture_cache.get(&tid) {
                     let size = cached_tex.size();
-                    if size.width == *width && size.height == *height {
+                    if size.width == *width && size.height == *height && cached_tex.mip_level_count() == *mip_levels {
                         if !reference_only {
                             let cached_tex = cached_tex.clone();
-                            let staged = self.stage_texture_upload(device, &cached_tex, rgba, *width, *height);
-
-                            if !staged {
-                                queue.write_texture(cached_tex.as_image_copy(), rgba, direct_copy_layout, copy_size);
-                            }
+                            self.upload_texture_levels(device, queue, &cached_tex, rgba);
                         }
 
                         if let Some((cached_fmt, _, _)) = self.texture_cache.get_mut(&tid) {
@@ -317,7 +319,10 @@ impl GxRenderer {
                     }
                 }
 
-                let pooled = self.texture_pool.get_mut(&(*width, *height)).and_then(|v| v.pop());
+                let pooled = self
+                    .texture_pool
+                    .get_mut(&(*width, *height, *mip_levels))
+                    .and_then(|v| v.pop());
 
                 let tex = pooled.unwrap_or_else(|| {
                     let texture_label = format!(
@@ -327,7 +332,7 @@ impl GxRenderer {
                     device.create_texture(&wgpu::TextureDescriptor {
                         label: Some(&texture_label),
                         size: copy_size,
-                        mip_level_count: 1,
+                        mip_level_count: *mip_levels,
                         sample_count: 1,
                         dimension: wgpu::TextureDimension::D2,
                         format: wgpu::TextureFormat::Rgba8Unorm,
@@ -339,11 +344,7 @@ impl GxRenderer {
                 });
 
                 if !reference_only {
-                    let staged = self.stage_texture_upload(device, &tex, rgba, *width, *height);
-
-                    if !staged {
-                        queue.write_texture(tex.as_image_copy(), rgba, direct_copy_layout, copy_size);
-                    }
+                    self.upload_texture_levels(device, queue, &tex, rgba);
                 }
                 let view = tex.create_view(&Default::default());
 
@@ -380,9 +381,11 @@ impl GxRenderer {
                 wrap_t,
                 mag_filter,
                 min_filter,
+                lod,
             } => {
                 self.current_texture_ids[*slot] = Some(*id);
-                let sampler_key: SamplerKey = (*wrap_s, *wrap_t, *mag_filter, *min_filter);
+                self.current_lod_bias[*slot] = f32::from(lod.bias) / 32.0;
+                let sampler_key: SamplerKey = (*wrap_s, *wrap_t, *mag_filter, *min_filter, lod.min, lod.max);
                 self.current_sampler_keys[*slot] = Some(sampler_key);
                 self.ensure_sampler(device, &sampler_key);
             }
@@ -517,7 +520,11 @@ impl GxRenderer {
                         }
                     }
 
-                    let draw_uniform = DrawUniforms { mvp, tex_dims };
+                    let draw_uniform = DrawUniforms {
+                        mvp,
+                        tex_dims,
+                        tex_lod_bias: self.current_lod_bias,
+                    };
                     let draw_uniform_bytes = bytemuck::bytes_of(&draw_uniform);
                     let bg_key = trim_bg_key(self.current_bind_group_key(), active);
                     let stride = crate::packed_vertex_stride(shader_key.active_texcoords);
@@ -708,9 +715,15 @@ impl GxRenderer {
 
     /// Flush accumulated draw calls into a render pass.
     pub fn flush_pending_draws(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if self.flush_draws_keep_vertices(device, queue) {
+            self.scratch_vertices.clear();
+        }
+    }
+
+    fn flush_draws_keep_vertices(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
         self.poll_compiled_pipelines();
         if self.scratch_draws.is_empty() {
-            return;
+            return false;
         }
 
         debug_assert_eq!(self.scratch_draws.len(), self.draw_pipeline_keys.len());
@@ -733,7 +746,6 @@ impl GxRenderer {
 
         self.execute_action_render_pass(device);
 
-        self.scratch_vertices.clear();
         self.scratch_indices.clear();
         self.scratch_draws.clear();
         self.scratch_uniform_bytes.clear();
@@ -746,6 +758,8 @@ impl GxRenderer {
         self.last_frame_uniform_index = None;
         #[cfg(feature = "renderdoc-capture")]
         self.draw_primitives.clear();
+
+        true
     }
 
     fn execute_action_render_pass(&mut self, device: &wgpu::Device) {
@@ -773,7 +787,7 @@ impl GxRenderer {
         let target_width = self.scaled(crate::EFB_WIDTH);
         let target_height = self.scaled(crate::EFB_HEIGHT);
         let scale = self.efb_scale as f32;
-        let fallback_sampler_key = (WrapMode::Clamp, WrapMode::Clamp, MagFilter::Linear, MinFilter::Linear);
+        let fallback_sampler_key = crate::DEFAULT_SAMPLER_KEY;
         let frame_stride = self.frame_stride;
 
         let num_draws = self.draw_bg_keys.len();
@@ -793,12 +807,17 @@ impl GxRenderer {
                     if let Some(tid) = &bg_key.tex_keys[slot] {
                         let tex_entry = self.texture_cache.get(tid);
                         let efb_match = tex_entry.and_then(|(tex_fmt, tex_tex, _)| {
+                            if tex_tex.mip_level_count() != 1 {
+                                return None;
+                            }
+
                             let size = tex_tex.size();
                             self.efb_copy_cache
                                 .get(&tid.ram_addr)
                                 .filter(|e| e.matches(*tex_fmt, size.width, size.height))
                                 .map(|e| &e.view)
                         });
+
                         if let Some(view) = efb_match.or_else(|| tex_entry.map(|(_, _, v)| v)) {
                             tex_views[slot] = view;
                         } else {
@@ -1216,6 +1235,49 @@ impl GxRenderer {
         }
     }
 
+    fn upload_texture_levels(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        texture: &wgpu::Texture,
+        rgba: &[u8],
+    ) {
+        let mut offset = 0;
+
+        for (level, (width, height)) in
+            gecko::flipper::gx::texture::mip_dimensions(texture.width(), texture.height(), texture.mip_level_count())
+                .enumerate()
+        {
+            let end = offset + (width * height * 4) as usize;
+            let pixels = &rgba[offset..end];
+            if !self.stage_texture_upload(device, texture, level as u32, pixels, width, height) {
+                let _ = self.submit_pending(queue);
+
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        mip_level: level as u32,
+                        ..texture.as_image_copy()
+                    },
+                    pixels,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(width * 4),
+                        rows_per_image: None,
+                    },
+                    wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
+
+            offset = end;
+        }
+
+        debug_assert_eq!(offset, rgba.len());
+    }
+
     fn ensure_sampler(&mut self, device: &wgpu::Device, key: &SamplerKey) {
         self.sampler_cache.entry(*key).or_insert_with(|| {
             device.create_sampler(&wgpu::SamplerDescriptor {
@@ -1224,6 +1286,9 @@ impl GxRenderer {
                 address_mode_v: helpers::map_wrap_mode(key.1),
                 mag_filter: helpers::map_mag_filter(key.2),
                 min_filter: helpers::map_min_filter(key.3),
+                mipmap_filter: helpers::map_mipmap_filter(key.3),
+                lod_min_clamp: f32::from(key.4) / 16.0,
+                lod_max_clamp: f32::from(key.5) / 16.0,
                 ..Default::default()
             })
         });

@@ -538,7 +538,6 @@ impl GxRenderer {
         const PER_BUCKET_CAP: usize = 8;
 
         debug_assert_eq!(tex.format(), wgpu::TextureFormat::Rgba8Unorm);
-        debug_assert_eq!(tex.mip_level_count(), 1);
         debug_assert_eq!(tex.sample_count(), 1);
         debug_assert_eq!(tex.dimension(), wgpu::TextureDimension::D2);
         debug_assert!(tex.usage().contains(
@@ -546,7 +545,10 @@ impl GxRenderer {
         ));
 
         let size = tex.size();
-        let bucket = self.texture_pool.entry((size.width, size.height)).or_default();
+        let bucket = self
+            .texture_pool
+            .entry((size.width, size.height, tex.mip_level_count()))
+            .or_default();
         if bucket.len() < PER_BUCKET_CAP {
             bucket.push(tex);
         }

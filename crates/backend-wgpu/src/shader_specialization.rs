@@ -16,7 +16,8 @@ const MAIN_WESL: &str = include_str!("shaders/main.wesl");
 pub(crate) const KEY_BYTES: usize = 6;
 pub(crate) const SPECIALIZATION_KEY_BYTES: usize = 82 * size_of::<u32>();
 const CACHE_MAGIC: [u8; 4] = *b"GSKC";
-const CACHE_VERSION: u32 = 9;
+const CACHE_VERSION: u32 = 11;
+
 pub(crate) fn shader_cache_path() -> std::path::PathBuf {
     gecko::paths::cache("shader_keys.bin")
 }

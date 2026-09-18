@@ -87,8 +87,8 @@ impl GeometryCapture {
             } => {
                 let size = [*width as usize, *height as usize];
 
-                if !rgba.is_empty() && rgba.len() == size[0] * size[1] * 4 {
-                    let image = egui::ColorImage::from_rgba_unmultiplied(size, rgba);
+                if !rgba.is_empty() && rgba.len() >= size[0] * size[1] * 4 {
+                    let image = egui::ColorImage::from_rgba_unmultiplied(size, &rgba[..size[0] * size[1] * 4]);
                     self.textures.insert(*id, Arc::new(image));
                 } else {
                     self.textures.remove(id);

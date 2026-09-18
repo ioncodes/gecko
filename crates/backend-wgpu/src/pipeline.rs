@@ -179,7 +179,8 @@ impl From<FullPipelineKey> for UberPipelineKey {
 
 pub(crate) const FULL_PIPELINE_KEY_BYTES: usize = SHADER_KEY_BYTES + SPECIALIZATION_KEY_BYTES + PipelineKey::BYTES;
 const PIPELINE_CACHE_MAGIC: [u8; 4] = *b"GPKC";
-const PIPELINE_CACHE_VERSION: u32 = 10;
+const PIPELINE_CACHE_VERSION: u32 = 11;
+
 pub(crate) fn pipeline_cache_path() -> std::path::PathBuf {
     gecko::paths::cache("pipeline_keys.bin")
 }

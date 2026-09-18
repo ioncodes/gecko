@@ -2,7 +2,7 @@ use super::constants::*;
 use super::recorder::MemoryUpdateType;
 use super::regs::*;
 use super::{GraphicsProcessor, draw, texture};
-use crate::host::{GxAction, RenderSink, TextureKey};
+use crate::host::{GxAction, RenderSink, TextureKey, TextureLod};
 use crate::mmio::{Mmio, RamView, RamViewMut};
 
 impl GraphicsProcessor {
@@ -45,10 +45,10 @@ impl GraphicsProcessor {
         // address with a stale size/format. Mark the slot dirty instead;
         // `snapshot_dirty_textures` resolves it right before the next draw,
         // when the full descriptor is consistent.
-        let texture_slot = if idx >= BP_TX_SETMODE0_I0 && idx < BP_TX_SETMODE0_I0 + 4 {
-            Some(idx - BP_TX_SETMODE0_I0)
-        } else if idx >= BP_TX_SETMODE0_I4 && idx < BP_TX_SETMODE0_I4 + 4 {
-            Some(idx - BP_TX_SETMODE0_I4 + 4)
+        let texture_slot = if idx >= BP_TX_SETMODE0_I0 && idx < BP_TX_SETMODE1_I0 + 4 {
+            Some((idx - BP_TX_SETMODE0_I0) & 3)
+        } else if idx >= BP_TX_SETMODE0_I4 && idx < BP_TX_SETMODE1_I4 + 4 {
+            Some(((idx - BP_TX_SETMODE0_I4) & 3) + 4)
         } else if idx >= BP_TX_SETIMAGE0_I0 && idx < BP_TX_SETIMAGE3_I0 + 4 {
             // IMAGE0-3 are four contiguous 4-register blocks (0x88..0x98),
             // each indexed by slot, so `& 3` recovers the slot in any block.
@@ -276,6 +276,7 @@ impl GraphicsProcessor {
             TxSetImage0::from_raw(self.bp_regs[self::tx_slot_reg(BP_TX_SETIMAGE0_I0, BP_TX_SETIMAGE0_I4, slot)]);
         let image3 = TxSetImage3::from_raw(image3_val);
         let mode0 = TxSetMode0::from_raw(self.bp_regs[self::tx_slot_reg(BP_TX_SETMODE0_I0, BP_TX_SETMODE0_I4, slot)]);
+        let mode1 = TxSetMode1::from_raw(self.bp_regs[self::tx_slot_reg(BP_TX_SETMODE1_I0, BP_TX_SETMODE1_I4, slot)]);
 
         let width = (image0.width() + 1) as u32;
         let height = (image0.height() + 1) as u32;
@@ -303,13 +304,14 @@ impl GraphicsProcessor {
         // tmem_offset would silently let the latest load clobber the earlier
         // ones, since bind groups are built lazily and resolve to whichever
         // GPU texture is current at render-pass time.
-        let cache_id = self::texture_cache_id(ram_addr, format, tlut, palette);
+        let mip_levels = texture::mip_level_count(width, height, mode0.min_filter(), mode1.max_lod());
+        let cache_id = self::texture_cache_id(ram_addr, format, tlut, palette, mip_levels);
 
         // Resolve the texture's raw bytes once, against MEM1 or MEM2. If the
         // address doesn't fall in either bank, leave the slot's last binding
         // alone but skip the decode (the renderer will keep its previous
         // texture for this id).
-        let raw_size = texture::raw_data_size(width, height, format);
+        let raw_size = texture::mip_data_size(width, height, format, mip_levels);
         let tex_slice = ram.slice(ram_addr, raw_size);
 
         if tex_slice.is_some()
@@ -318,8 +320,7 @@ impl GraphicsProcessor {
             rec.use_memory(ram, ram_addr as u32, raw_size, MemoryUpdateType::TextureMap);
         }
 
-        let gpu_copy =
-            self.recorder.is_none() && renderer.has_pending_efb_texture(ram_addr as u32, width, height, format);
+        let gpu_copy = self.is_pending_gpu_copy(renderer, ram_addr as u32, width, height, format, mip_levels);
         let changed = !gpu_copy
             && match tex_slice {
                 Some(tex) => self::texture_data_changed(
@@ -328,8 +329,8 @@ impl GraphicsProcessor {
                     cache_id,
                     palette,
                     tlut,
-                    format,
                     ram.range_generation(ram_addr, raw_size).unwrap_or(u64::MAX),
+                    (width, height, format, mip_levels),
                 ),
                 None => {
                     tracing::warn!(
@@ -348,6 +349,7 @@ impl GraphicsProcessor {
                 width,
                 height,
                 fmt: format,
+                mip_levels,
                 rgba: Vec::new(),
             });
         }
@@ -374,7 +376,8 @@ impl GraphicsProcessor {
                 width,
                 height,
                 fmt: format,
-                rgba: texture::decode_to_rgba(tex_slice.unwrap(), &desc, palette, tlut.format),
+                mip_levels,
+                rgba: texture::decode_mips_to_rgba(tex_slice.unwrap(), &desc, palette, tlut.format, mip_levels),
             });
         }
 
@@ -396,7 +399,41 @@ impl GraphicsProcessor {
             wrap_t: mode0.wrap_t(),
             mag_filter: mode0.mag_filter(),
             min_filter: mode0.min_filter(),
+            lod: if mode0.min_filter().uses_mipmaps() {
+                TextureLod {
+                    min: mode1.min_lod().min(mode1.max_lod()),
+                    max: mode1.max_lod(),
+                    bias: mode0.lod_bias() as i8,
+                }
+            } else {
+                TextureLod::default()
+            },
         });
+    }
+
+    fn is_pending_gpu_copy(
+        &self,
+        renderer: &dyn RenderSink,
+        addr: u32,
+        width: u32,
+        height: u32,
+        format: draw::TextureFormat,
+        mip_levels: u32,
+    ) -> bool {
+        mip_levels == 1 && self.recorder.is_none() && renderer.has_pending_efb_texture(addr, width, height, format)
+    }
+
+    pub(crate) fn texture_mip_levels(&self, slot: usize) -> u32 {
+        let image =
+            TxSetImage0::from_raw(self.bp_regs[self::tx_slot_reg(BP_TX_SETIMAGE0_I0, BP_TX_SETIMAGE0_I4, slot)]);
+        let mode0 = TxSetMode0::from_raw(self.bp_regs[self::tx_slot_reg(BP_TX_SETMODE0_I0, BP_TX_SETMODE0_I4, slot)]);
+        let mode1 = TxSetMode1::from_raw(self.bp_regs[self::tx_slot_reg(BP_TX_SETMODE1_I0, BP_TX_SETMODE1_I4, slot)]);
+        texture::mip_level_count(
+            u32::from(image.width()) + 1,
+            u32::from(image.height()) + 1,
+            mode0.min_filter(),
+            mode1.max_lod(),
+        )
     }
 
     pub fn refresh_bound_textures(&mut self, renderer: &mut dyn RenderSink, ram: &RamView<'_>) {
@@ -441,11 +478,17 @@ impl GraphicsProcessor {
                 TxSetImage3::from_raw(self.bp_regs[self::tx_slot_reg(BP_TX_SETIMAGE3_I0, BP_TX_SETIMAGE3_I4, slot)]);
             let width = (image0.width() + 1) as u32;
             let height = (image0.height() + 1) as u32;
-            let len = texture::raw_data_size(width, height, image0.format());
+            let mip_levels = self.texture_mip_levels(slot);
+            let len = texture::mip_data_size(width, height, image0.format(), mip_levels);
 
-            if self.recorder.is_none()
-                && renderer.has_pending_efb_texture(image3.ram_addr() as u32, width, height, image0.format())
-            {
+            if self.is_pending_gpu_copy(
+                renderer,
+                image3.ram_addr() as u32,
+                width,
+                height,
+                image0.format(),
+                mip_levels,
+            ) {
                 continue;
             }
 
@@ -745,8 +788,8 @@ fn slot_palette(palette_mem: &[u16], tmem_offset: u16) -> &[u16] {
 
 /// Mint the renderer cache key for the given texture binding.
 ///
-/// `variant` is `0` for non-paletted formats. For paletted (CI*) formats it's
-/// a 32-bit hash of `(palette content, tlut.format, tmem_offset)` so the
+/// `variant` combines the mip count with a 32-bit hash of
+/// `(palette content, tlut.format, tmem_offset)` for paletted (CI*) formats so the
 /// same RAM index stream sampled through different palettes lands
 /// in distinct cache slots. FFCC's title-logo fade animation alternates
 /// between palettes at a fixed `tmem_offset`; without the variant in the
@@ -754,7 +797,13 @@ fn slot_palette(palette_mem: &[u16], tmem_offset: u16) -> &[u16] {
 /// renderer's cache and bind groups built at render-pass time would all
 /// resolve to whichever decode landed last.
 #[inline(always)]
-fn texture_cache_id(ram_addr: usize, format: draw::TextureFormat, tlut: draw::TlutRef, palette: &[u16]) -> TextureKey {
+fn texture_cache_id(
+    ram_addr: usize,
+    format: draw::TextureFormat,
+    tlut: draw::TlutRef,
+    palette: &[u16],
+    mip_levels: u32,
+) -> TextureKey {
     let variant = if format.is_paletted() {
         let max_entries = match format {
             draw::TextureFormat::CI4 => 16,
@@ -774,7 +823,7 @@ fn texture_cache_id(ram_addr: usize, format: draw::TextureFormat, tlut: draw::Tl
     };
     TextureKey {
         ram_addr: ram_addr as u32,
-        variant,
+        variant: variant ^ (mip_levels - 1).wrapping_mul(0x9e37_79b9),
     }
 }
 
@@ -784,17 +833,18 @@ fn texture_cache_id(ram_addr: usize, format: draw::TextureFormat, tlut: draw::Tl
 /// `cache_id` so paletted textures bound with multiple TLUTs are tracked
 /// independently.
 fn texture_data_changed(
-    hashes: &mut rustc_hash::FxHashMap<TextureKey, (u64, u64)>,
+    hashes: &mut rustc_hash::FxHashMap<TextureKey, texture::TextureHash>,
     tex: &[u8],
     cache_id: TextureKey,
     palette: &[u16],
     tlut: draw::TlutRef,
-    format: draw::TextureFormat,
     memory_generation: u64,
+    layout: (u32, u32, draw::TextureFormat, u32),
 ) -> bool {
+    let format = layout.2;
     if hashes
         .get(&cache_id)
-        .is_some_and(|&(_, previous_generation)| previous_generation == memory_generation)
+        .is_some_and(|prev| prev.generation == memory_generation && prev.layout == layout)
     {
         return false;
     }
@@ -815,8 +865,15 @@ fn texture_data_changed(
         hash ^= tlut.format as u64;
     }
 
-    let prev = hashes.insert(cache_id, (hash, memory_generation));
-    prev.is_none_or(|(previous_hash, _)| previous_hash != hash)
+    let prev = hashes.insert(
+        cache_id,
+        texture::TextureHash {
+            hash,
+            generation: memory_generation,
+            layout,
+        },
+    );
+    prev.is_none_or(|prev| prev.hash != hash || prev.layout != layout)
 }
 
 impl GraphicsProcessor {

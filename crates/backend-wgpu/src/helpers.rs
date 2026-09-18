@@ -24,6 +24,13 @@ pub fn map_min_filter(filter: MinFilter) -> wgpu::FilterMode {
     }
 }
 
+pub fn map_mipmap_filter(filter: MinFilter) -> wgpu::MipmapFilterMode {
+    match filter {
+        MinFilter::NearestMipmapLinear | MinFilter::LinearMipmapLinear => wgpu::MipmapFilterMode::Linear,
+        _ => wgpu::MipmapFilterMode::Nearest,
+    }
+}
+
 pub fn map_src_blend_factor(f: BlendFactor) -> wgpu::BlendFactor {
     match f {
         BlendFactor::Zero => wgpu::BlendFactor::Zero,

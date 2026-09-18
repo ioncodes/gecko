@@ -11,8 +11,9 @@ use std::path::PathBuf;
 /// frame) silently overwrite each other and bind groups built lazily at
 /// render-pass time all resolve to whichever decode landed last.
 ///
-/// `variant` is `0` for non-paletted formats and a 32-bit hash of
-/// `(palette content, tlut.format, tmem_offset)` for paletted ones.
+/// `variant` combines mip count with a 32-bit hash of
+/// `(palette content, tlut.format, tmem_offset)` for paletted textures.
+/// Single-level, non-paletted textures use `0`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct TextureKey {
     pub ram_addr: Address,
@@ -23,6 +24,13 @@ impl TextureKey {
     pub const fn non_paletted(ram_addr: Address) -> Self {
         Self { ram_addr, variant: 0 }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct TextureLod {
+    pub min: u8,
+    pub max: u8,
+    pub bias: i8,
 }
 
 #[derive(Debug)]
@@ -56,6 +64,7 @@ pub enum GxAction {
         width: u32,
         height: u32,
         fmt: TextureFormat,
+        mip_levels: u32,
         rgba: Vec<u8>,
     },
 
@@ -79,6 +88,7 @@ pub enum GxAction {
         wrap_t: WrapMode,
         mag_filter: MagFilter,
         min_filter: MinFilter,
+        lod: TextureLod,
     },
 
     /// Issue a draw call. The renderer uses its tracked state (projection,
