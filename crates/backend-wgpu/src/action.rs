@@ -415,10 +415,11 @@ impl GxRenderer {
                     let view = texture.create_view(&Default::default());
                     (texture, view)
                 };
+                let format = entry.format;
 
                 let mut encoder = self.take_or_create_encoder(device);
                 self.palette_converter
-                    .encode(device, queue, &mut encoder, &source, entry.format, palette, &view);
+                    .encode(device, queue, &mut encoder, &source, format, palette, &view);
                 self.current_encoder = Some(encoder);
                 self.texture_cache
                     .insert(*id, (gecko::flipper::gx::draw::TextureFormat::CI8, texture, view));
