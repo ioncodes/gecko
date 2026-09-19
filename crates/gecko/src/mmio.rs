@@ -252,6 +252,11 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
     }
 
     #[inline(always)]
+    pub fn has_deferred_efb_writebacks(&self) -> bool {
+        !self.efb_writeback_ranges.is_empty()
+    }
+
+    #[inline(always)]
     pub fn efb_writeback_needed(&self, phys: u32, len: usize) -> bool {
         if len == 0 || self.efb_writeback_ranges.is_empty() {
             return false;

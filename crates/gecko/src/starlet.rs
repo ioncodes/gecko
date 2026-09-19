@@ -245,23 +245,25 @@ fn ensure_delivery_scheduled<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, d
     );
 }
 
+const IOS_OPEN: u32 = 1;
+const IOS_CLOSE: u32 = 2;
+const IOS_READ: u32 = 3;
+const IOS_WRITE: u32 = 4;
+const IOS_SEEK: u32 = 5;
+const IOS_IOCTL: u32 = 6;
+const IOS_IOCTLV: u32 = 7;
+
 fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: u32) -> i32 {
     use crate::hollywood::ipc::fs::FS_ENOENT;
     use crate::hollywood::ipc::{IPC_EINVAL, IPC_ENOENT};
-
-    const IOS_OPEN: u32 = 1;
-    const IOS_CLOSE: u32 = 2;
-    const IOS_READ: u32 = 3;
-    const IOS_WRITE: u32 = 4;
-    const IOS_SEEK: u32 = 5;
-    const IOS_IOCTL: u32 = 6;
-    const IOS_IOCTLV: u32 = 7;
 
     assert!(SYSTEM == crate::WII, "Starlet dispatch reached on non-Wii system");
 
     let wii: &mut crate::Wii = unsafe { ::core::mem::transmute(sys) };
     let cmd = wii.mmio.phys_read_u32(cmd_paddr);
     let fd = wii.mmio.phys_read_u32(cmd_paddr + 0x08) as i32;
+
+    self::sync_ios_buffers(wii, cmd_paddr, cmd);
 
     let (starlet, mut ctx) = wii.create_device_context();
 
@@ -391,6 +393,42 @@ fn process_command<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, cmd_paddr: 
             tracing::error!(cmd = other, "unimplemented IOS command");
             IPC_EINVAL
         }
+    }
+}
+
+fn sync_ios_buffers(wii: &mut crate::Wii, cmd_paddr: u32, cmd: u32) {
+    if !wii.mmio.has_deferred_efb_writebacks() {
+        return;
+    }
+
+    let arg = |wii: &crate::Wii, offset: u32| wii.mmio.phys_read_u32(cmd_paddr + offset);
+
+    match cmd {
+        IOS_READ | IOS_WRITE => {
+            let (ptr, len) = (arg(wii, 0x0C), arg(wii, 0x10));
+            wii.sync_deferred_efb_writeback(ptr, len as usize);
+        }
+        IOS_IOCTL => {
+            let (in_ptr, in_len) = (arg(wii, 0x10), arg(wii, 0x14));
+            let (out_ptr, out_len) = (arg(wii, 0x18), arg(wii, 0x1C));
+            wii.sync_deferred_efb_writeback(in_ptr, in_len as usize);
+            wii.sync_deferred_efb_writeback(out_ptr, out_len as usize);
+        }
+        IOS_IOCTLV => {
+            let (in_count, io_count, vec_ptr) = (arg(wii, 0x10), arg(wii, 0x14), arg(wii, 0x18));
+            let Some(vector_bytes) = in_count.checked_add(io_count).and_then(|n| n.checked_mul(8)) else {
+                return;
+            };
+
+            wii.sync_deferred_efb_writeback(vec_ptr, vector_bytes as usize);
+
+            for offset in (0..vector_bytes).step_by(8) {
+                let addr = wii.mmio.phys_read_u32(vec_ptr + offset);
+                let len = wii.mmio.phys_read_u32(vec_ptr + offset + 4);
+                wii.sync_deferred_efb_writeback(addr, len as usize);
+            }
+        }
+        _ => {}
     }
 }
 
