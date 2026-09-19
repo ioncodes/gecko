@@ -1,3 +1,30 @@
+fn tev_wrap_rgb(value: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(vec3<i32>(round(value * 255.0)) & vec3<i32>(255)) / 255.0;
+}
+
+fn tev_wrap_alpha(value: f32) -> f32 {
+    return f32(i32(round(value * 255.0)) & 255) / 255.0;
+}
+
+fn tev_regular(a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32>,
+               bias: u32, sub: bool, scale: u32) -> vec4<f32> {
+    let ai = vec4<i32>(round(a * 255.0));
+    let bi = vec4<i32>(round(b * 255.0));
+    let ci = vec4<i32>(round(c * 255.0));
+    var di = vec4<i32>(round(d * 255.0));
+    if bias == 1u { di += vec4<i32>(128); }
+    if bias == 2u { di -= vec4<i32>(128); }
+
+    let shift = select(scale, 0u, scale == 3u);
+    let factor = ci + (ci >> vec4<u32>(7u));
+    var lerp = ((ai << vec4<u32>(8u)) + (bi - ai) * factor) << vec4<u32>(shift);
+    if scale != 3u { lerp += vec4<i32>(select(128, 127, sub)); }
+    lerp >>= vec4<u32>(8u);
+    var result = (di << vec4<u32>(shift)) + select(lerp, -lerp, sub);
+    if scale == 3u { result >>= vec4<u32>(1u); }
+    return vec4<f32>(result) / 255.0;
+}
+
 // TEV color combiner.
 //
 // In regular mode (bias != 3): result = (d (+/-) lerp(a, b, c) + bias) * scale
@@ -11,12 +38,8 @@ fn tev_combine_color(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, d: vec3<f32>,
     var result: vec3<f32>;
 
     if bias == 3u {
-        let ai = vec3<u32>(u32(round(clamp(a.r, 0.0, 1.0) * 255.0)),
-                           u32(round(clamp(a.g, 0.0, 1.0) * 255.0)),
-                           u32(round(clamp(a.b, 0.0, 1.0) * 255.0)));
-        let bi = vec3<u32>(u32(round(clamp(b.r, 0.0, 1.0) * 255.0)),
-                           u32(round(clamp(b.g, 0.0, 1.0) * 255.0)),
-                           u32(round(clamp(b.b, 0.0, 1.0) * 255.0)));
+        let ai = vec3<u32>(round(a * 255.0));
+        let bi = vec3<u32>(round(b * 255.0));
 
         // scale is the TevCompareMode selector.
         var mask: vec3<f32>;
@@ -52,26 +75,7 @@ fn tev_combine_color(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, d: vec3<f32>,
 
         result = d + c * mask;
     } else {
-        let lerp = a * (vec3(1.0) - c) + b * c;
-
-        if sub {
-            result = d - lerp;
-        } else {
-            result = d + lerp;
-        }
-
-        switch bias {
-            case 1u: { result += vec3(0.5); }   // AddHalf
-            case 2u: { result -= vec3(0.5); }   // SubHalf
-            default: {}
-        }
-
-        switch scale {
-            case 1u: { result *= 2.0; }     // Scale2
-            case 2u: { result *= 4.0; }     // Scale4
-            case 3u: { result *= 0.5; }     // Divide2
-            default: {}
-        }
+        result = tev_regular(vec4(a, 0.0), vec4(b, 0.0), vec4(c, 0.0), vec4(d, 0.0), bias, sub, scale).rgb;
     }
 
     if do_clamp {
@@ -90,14 +94,10 @@ fn tev_combine_alpha(a: f32, b: f32, c: f32, d: f32,
     var result: f32;
 
     if bias == 3u {
-        let ai = vec3<u32>(u32(round(clamp(a_rgb.r, 0.0, 1.0) * 255.0)),
-                           u32(round(clamp(a_rgb.g, 0.0, 1.0) * 255.0)),
-                           u32(round(clamp(a_rgb.b, 0.0, 1.0) * 255.0)));
-        let bi = vec3<u32>(u32(round(clamp(b_rgb.r, 0.0, 1.0) * 255.0)),
-                           u32(round(clamp(b_rgb.g, 0.0, 1.0) * 255.0)),
-                           u32(round(clamp(b_rgb.b, 0.0, 1.0) * 255.0)));
-        let aa = u32(round(clamp(a, 0.0, 1.0) * 255.0));
-        let ba = u32(round(clamp(b, 0.0, 1.0) * 255.0));
+        let ai = vec3<u32>(round(a_rgb * 255.0));
+        let bi = vec3<u32>(round(b_rgb * 255.0));
+        let aa = u32(round(a * 255.0));
+        let ba = u32(round(b * 255.0));
 
         var hit: f32;
         switch scale {
@@ -117,26 +117,7 @@ fn tev_combine_alpha(a: f32, b: f32, c: f32, d: f32,
 
         result = d + c * hit;
     } else {
-        let lerp = a * (1.0 - c) + b * c;
-
-        if sub {
-            result = d - lerp;
-        } else {
-            result = d + lerp;
-        }
-
-        switch bias {
-            case 1u: { result += 0.5; }
-            case 2u: { result -= 0.5; }
-            default: {}
-        }
-
-        switch scale {
-            case 1u: { result *= 2.0; }
-            case 2u: { result *= 4.0; }
-            case 3u: { result *= 0.5; }
-            default: {}
-        }
+        result = tev_regular(vec4(a), vec4(b), vec4(c), vec4(d), bias, sub, scale).x;
     }
 
     if do_clamp {

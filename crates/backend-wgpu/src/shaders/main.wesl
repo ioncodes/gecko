@@ -1,7 +1,7 @@
 import super::common::{FrameUniforms, DrawUniforms, VsIn, VsOut, frame, draw, tex0, tex1, tex2, tex3, tex4, tex5, tex6, tex7, samp0, samp1, samp2, samp3, samp4, samp5, samp6, samp7};
 import super::tev_helpers::{extract_bits, select_texcoord, texmap_size, texmap_uv, sample_texmap, swizzle_tev_color, tev_color_in, tev_alpha_in};
 import super::tev_indirect::{IndirectSamples, IndirectResult, sample_indirect_textures, apply_indirect};
-import super::tev_combiners::{tev_combine_color, tev_combine_alpha};
+import super::tev_combiners::{tev_combine_color, tev_combine_alpha, tev_wrap_rgb, tev_wrap_alpha};
 import super::alpha_test::{alpha_compare, alpha_combine};
 import super::lighting::{compute_lighting_c0, compute_lighting_c1};
 
@@ -237,9 +237,9 @@ fn run_stage(
 
     let konst_color = frame.tev_konst_colors[stage];
 
-    let in_a = tev_color_in(c_a, tex_color, ras_color, (*state).regs, konst_color);
-    let in_b = tev_color_in(c_b, tex_color, ras_color, (*state).regs, konst_color);
-    let in_c = tev_color_in(c_c, tex_color, ras_color, (*state).regs, konst_color);
+    let in_a = tev_wrap_rgb(tev_color_in(c_a, tex_color, ras_color, (*state).regs, konst_color));
+    let in_b = tev_wrap_rgb(tev_color_in(c_b, tex_color, ras_color, (*state).regs, konst_color));
+    let in_c = tev_wrap_rgb(tev_color_in(c_c, tex_color, ras_color, (*state).regs, konst_color));
     let in_d = tev_color_in(c_d, tex_color, ras_color, (*state).regs, konst_color);
 
     let color_result = tev_combine_color(in_a, in_b, in_c, in_d, c_bias, c_sub, c_scale, c_clamp);
@@ -255,9 +255,9 @@ fn run_stage(
     let a_scale = extract_bits(aenv, 20u, 2u);
     let a_dest = extract_bits(aenv, 22u, 2u);
 
-    let ain_a = tev_alpha_in(a_a, tex_color, ras_color, (*state).regs, konst_color);
-    let ain_b = tev_alpha_in(a_b, tex_color, ras_color, (*state).regs, konst_color);
-    let ain_c = tev_alpha_in(a_c, tex_color, ras_color, (*state).regs, konst_color);
+    let ain_a = tev_wrap_alpha(tev_alpha_in(a_a, tex_color, ras_color, (*state).regs, konst_color));
+    let ain_b = tev_wrap_alpha(tev_alpha_in(a_b, tex_color, ras_color, (*state).regs, konst_color));
+    let ain_c = tev_wrap_alpha(tev_alpha_in(a_c, tex_color, ras_color, (*state).regs, konst_color));
     let ain_d = tev_alpha_in(a_d, tex_color, ras_color, (*state).regs, konst_color);
 
     let alpha_result = tev_combine_alpha(ain_a, ain_b, ain_c, ain_d, in_a, in_b, a_bias, a_sub, a_scale, a_clamp);
@@ -303,7 +303,10 @@ fn run_tev(in: VsOut) -> TevResult {
     @if(TEV_STAGE_15_ENABLED) { run_stage(14u, shader_state(gx_tev_order_14, dynamic_tev_order(14u)), shader_state(gx_tev_color_env_14, dynamic_tev_color_env(14u)), shader_state(gx_tev_alpha_env_14, dynamic_tev_alpha_env(14u)), shader_state(gx_tev_indirect_14, dynamic_tev_indirect(14u)), in, color0, presampled, &state); }
     @if(TEV_STAGE_16_ENABLED) { run_stage(15u, shader_state(gx_tev_order_15, dynamic_tev_order(15u)), shader_state(gx_tev_color_env_15, dynamic_tev_color_env(15u)), shader_state(gx_tev_alpha_env_15, dynamic_tev_alpha_env(15u)), shader_state(gx_tev_indirect_15, dynamic_tev_indirect(15u)), in, color0, presampled, &state); }
 
-    let color = vec4<f32>(state.regs[state.last_color_dest].rgb, state.regs[state.last_alpha_dest].a);
+    let color = vec4<f32>(
+        tev_wrap_rgb(state.regs[state.last_color_dest].rgb),
+        tev_wrap_alpha(state.regs[state.last_alpha_dest].a),
+    );
 
     @if(ALPHA_TEST_ENABLED) {
         let c0 = alpha_compare(color.a, frame.alpha_ref0, shader_state(gx_alpha_comp_0, frame.alpha_comp0));
