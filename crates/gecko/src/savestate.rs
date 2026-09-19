@@ -242,9 +242,7 @@ pub fn unpack(system: SystemId, data: &[u8]) -> Result<Vec<u8>, StateError> {
 
 impl<const SYSTEM: SystemId> System<SYSTEM> {
     pub fn save_state(&mut self) -> Result<Vec<u8>, StateError> {
-        let mut ram = self.mmio.ram_view_mut();
-        self.render_sink.flush_efb_copies(&mut ram);
-        self.mmio.clear_deferred_efb_writebacks();
+        self.flush_deferred_efb_writebacks();
 
         let mut w = StateWriter::new();
 
@@ -282,10 +280,11 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     }
 
     pub fn load_state(&mut self, data: &[u8]) -> Result<(), StateError> {
-        self.mmio.clear_deferred_efb_writebacks();
         let payload = self::unpack(SYSTEM, data)?;
         let version = u32::from_le_bytes(data[4..8].try_into().unwrap());
         let mut r = StateReader::new(&payload);
+
+        self.flush_deferred_efb_writebacks();
 
         self.vsync_pending = r.bool()?;
         self.vi_present_seen_this_frame = r.bool()?;

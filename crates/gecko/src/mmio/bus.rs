@@ -86,6 +86,10 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             return;
         }
 
+        self.flush_deferred_efb_writebacks();
+    }
+
+    pub(crate) fn flush_deferred_efb_writebacks(&mut self) {
         let mut ram = self.mmio.ram_view_mut();
         self.render_sink.flush_efb_copies(&mut ram);
         self.mmio.clear_deferred_efb_writebacks();

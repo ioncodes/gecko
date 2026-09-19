@@ -218,6 +218,7 @@ pub fn gather_pipe_bursted<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
 
     while sys.cp.gather_pos >= GP_BURST {
         let wptr = sys.pi.fifo_wptr;
+        sys.sync_deferred_efb_writeback(wptr, GP_BURST as usize);
 
         let mut burst = [0u8; GP_BURST as usize];
         burst.copy_from_slice(&sys.cp.gather_pipe[..GP_BURST as usize]);
