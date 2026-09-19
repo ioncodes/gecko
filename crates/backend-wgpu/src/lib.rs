@@ -182,7 +182,7 @@ pub(crate) struct FrameUniforms {
     pub indirect_refs: u32,
     pub num_indirect_stages: u32,
     pub bump_imask: u32,
-    pub _pad1: u32,
+    pub texgen_types: u32,
     // Per-TEV-stage IND_CMD, packed four per UVec4.
     pub tev_indirect: [glam::UVec4; 4],
     pub light_colors: [glam::Vec4; 8],

@@ -114,6 +114,14 @@ fn dynamic_tev_indirect(stage: u32) -> u32 {
     return frame.tev_indirect[stage / 4u][stage % 4u];
 }
 
+fn color_texgen(slot: u32, regular: vec3<f32>, color0: vec4<f32>, color1: vec4<f32>) -> vec3<f32> {
+    switch extract_bits(frame.texgen_types, slot * 3u, 3u) {
+        case 2u: { return vec3(color0.rg, 1.0); }
+        case 3u: { return vec3(color1.rg, 1.0); }
+        default: { return regular; }
+    }
+}
+
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
     var out: VsOut;
@@ -132,14 +140,14 @@ fn vs_main(in: VsIn) -> VsOut {
         in.color1, in.normal, in.pos_view,
     );
 
-    @if(TEXCOORD_0_ENABLED) { out.uv0 = in.tex0; } @else { out.uv0 = vec3<f32>(0.0, 0.0, 1.0); }
-    @if(TEXCOORD_1_ENABLED) { out.uv1 = in.tex1; } @else { out.uv1 = vec3<f32>(0.0, 0.0, 1.0); }
-    @if(TEXCOORD_2_ENABLED) { out.uv2 = in.tex2; } @else { out.uv2 = vec3<f32>(0.0, 0.0, 1.0); }
-    @if(TEXCOORD_3_ENABLED) { out.uv3 = in.tex3; } @else { out.uv3 = vec3<f32>(0.0, 0.0, 1.0); }
-    @if(TEXCOORD_4_ENABLED) { out.uv4 = in.tex4; } @else { out.uv4 = vec3<f32>(0.0, 0.0, 1.0); }
-    @if(TEXCOORD_5_ENABLED) { out.uv5 = in.tex5; } @else { out.uv5 = vec3<f32>(0.0, 0.0, 1.0); }
-    @if(TEXCOORD_6_ENABLED) { out.uv6 = in.tex6; } @else { out.uv6 = vec3<f32>(0.0, 0.0, 1.0); }
-    @if(TEXCOORD_7_ENABLED) { out.uv7 = in.tex7; } @else { out.uv7 = vec3<f32>(0.0, 0.0, 1.0); }
+    @if(TEXCOORD_0_ENABLED) { out.uv0 = color_texgen(0u, in.tex0, out.color, out.color1); } @else { out.uv0 = vec3<f32>(0.0, 0.0, 1.0); }
+    @if(TEXCOORD_1_ENABLED) { out.uv1 = color_texgen(1u, in.tex1, out.color, out.color1); } @else { out.uv1 = vec3<f32>(0.0, 0.0, 1.0); }
+    @if(TEXCOORD_2_ENABLED) { out.uv2 = color_texgen(2u, in.tex2, out.color, out.color1); } @else { out.uv2 = vec3<f32>(0.0, 0.0, 1.0); }
+    @if(TEXCOORD_3_ENABLED) { out.uv3 = color_texgen(3u, in.tex3, out.color, out.color1); } @else { out.uv3 = vec3<f32>(0.0, 0.0, 1.0); }
+    @if(TEXCOORD_4_ENABLED) { out.uv4 = color_texgen(4u, in.tex4, out.color, out.color1); } @else { out.uv4 = vec3<f32>(0.0, 0.0, 1.0); }
+    @if(TEXCOORD_5_ENABLED) { out.uv5 = color_texgen(5u, in.tex5, out.color, out.color1); } @else { out.uv5 = vec3<f32>(0.0, 0.0, 1.0); }
+    @if(TEXCOORD_6_ENABLED) { out.uv6 = color_texgen(6u, in.tex6, out.color, out.color1); } @else { out.uv6 = vec3<f32>(0.0, 0.0, 1.0); }
+    @if(TEXCOORD_7_ENABLED) { out.uv7 = color_texgen(7u, in.tex7, out.color, out.color1); } @else { out.uv7 = vec3<f32>(0.0, 0.0, 1.0); }
     
     return out;
 }

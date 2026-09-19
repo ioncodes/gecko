@@ -20,6 +20,7 @@ struct FrameUniforms {
     indirect_refs: u32,
     num_indirect_stages: u32,
     bump_imask: u32,
+    texgen_types: u32,
     tev_indirect: array<vec4<u32>, 4>,
     // XF lighting state
     light_colors: array<vec4<f32>, 8>,

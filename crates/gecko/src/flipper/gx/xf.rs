@@ -7,6 +7,7 @@ use crate::mmio::RamView;
 const XF_LIGHT_END: usize = XF_LIGHT_BASE + 8 * XF_LIGHT_STRIDE;
 const XF_CHAN_CFG_BEGIN: usize = XF_AMBIENT_COLOR0;
 const XF_CHAN_CFG_END: usize = XF_ALPHA_CTRL1 + 1;
+const XF_TEXGEN_END: usize = XF_TEXGEN_BASE + 8;
 
 #[inline(always)]
 fn ranges_overlap(a_begin: usize, a_end: usize, b_begin: usize, b_end: usize) -> bool {
@@ -18,6 +19,7 @@ struct XfDirty {
     projection: bool,
     viewport: bool,
     lighting: bool,
+    texgen: bool,
 }
 
 impl GraphicsProcessor {
@@ -27,7 +29,8 @@ impl GraphicsProcessor {
         let tracked = self::ranges_overlap(base, end, XF_PROJECTION_BASE, XF_PROJECTION_END + 1)
             || self::ranges_overlap(base, end, XF_VIEWPORT_BASE, XF_VIEWPORT_END + 1)
             || self::ranges_overlap(base, end, XF_LIGHT_BASE, XF_LIGHT_END)
-            || self::ranges_overlap(base, end, XF_CHAN_CFG_BEGIN, XF_CHAN_CFG_END);
+            || self::ranges_overlap(base, end, XF_CHAN_CFG_BEGIN, XF_CHAN_CFG_END)
+            || self::ranges_overlap(base, end, XF_NUM_TEXGENS, XF_TEXGEN_END);
 
         let mut dirty = XfDirty::default();
 
@@ -35,6 +38,7 @@ impl GraphicsProcessor {
             let reg = base + i;
             if reg < self.xf_mem.len() {
                 if tracked && self.xf_mem[reg] != val {
+                    dirty.texgen |= (XF_NUM_TEXGENS..XF_TEXGEN_END).contains(&reg);
                     dirty.projection |= (XF_PROJECTION_BASE..=XF_PROJECTION_END).contains(&reg);
                     dirty.viewport |= (XF_VIEWPORT_BASE..=XF_VIEWPORT_END).contains(&reg);
                     dirty.lighting |= (XF_LIGHT_BASE..XF_LIGHT_END).contains(&reg)
@@ -65,6 +69,10 @@ impl GraphicsProcessor {
         if dirty.viewport {
             self.rebuild_viewport();
             renderer.exec(GxAction::SetViewport(self.cur_viewport));
+        }
+
+        if dirty.texgen {
+            self.frame_state_dirty = true;
         }
 
         if dirty.lighting {

@@ -27,7 +27,7 @@ fn compute_light_factor(ctrl: u32, light_idx: u32, normal: vec3<f32>, pos: vec3<
     } else if attn_select {
         let dist = length(ldir);
         ldir = normalize(ldir);
-        let cos_angle = dot(light_dir, ldir);
+        let cos_angle = max(dot(light_dir, ldir), 0.0);
         let angle_attn = max(cosatt.x + cosatt.y * cos_angle + cosatt.z * cos_angle * cos_angle, 0.0);
         attn = safe_div(angle_attn, distatt.x + distatt.y * dist + distatt.z * dist * dist);
     } else {

@@ -278,6 +278,9 @@ impl GraphicsProcessor {
                 material_color: self.cached_material_color,
                 lights: self.cached_lights,
                 active_texcoords: (self.xf_mem[crate::flipper::gx::constants::XF_NUM_TEXGENS] as u8).min(8),
+                texgen_types: (0..8).fold(0, |types, i| {
+                    types | ((TexGenReg::from_raw(self.xf_mem[XF_TEXGEN_BASE + i]).texgen_type() as u32) << (i * 3))
+                }),
                 texcoord_scales: std::array::from_fn(|i| (self.bp_regs[BP_SU_SSIZE0 + i] & 0xffff) + 1),
                 ztex_bias: TevZtex1::from_raw(self.bp_regs[BP_TEV_ZTEX1]).bias(),
                 ztex_type: ztex2.tex_type(),

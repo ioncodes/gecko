@@ -84,7 +84,7 @@ fn build_frame_uniform(
         indirect_refs: draw.indirect_refs,
         num_indirect_stages: draw.num_indirect_stages as u32,
         bump_imask: draw.bump_imask,
-        _pad1: 0,
+        texgen_types: draw.texgen_types,
         tev_indirect: pack_u32_slice_to_uvec4x4(&draw.tev_indirect),
         light_colors: draw.lights.each_ref().map(|l| Vec4::from(l.color)),
         light_cosatt: draw.lights.each_ref().map(|l| Vec4::from(l.cosatt)),
