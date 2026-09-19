@@ -1,4 +1,4 @@
-import super::common::{VsOut, draw, tex0, tex1, tex2, tex3, tex4, tex5, tex6, tex7, samp0, samp1, samp2, samp3, samp4, samp5, samp6, samp7};
+import super::common::{VsOut, frame, draw, tex0, tex1, tex2, tex3, tex4, tex5, tex6, tex7, samp0, samp1, samp2, samp3, samp4, samp5, samp6, samp7};
 
 fn extract_bits(val: u32, lo: u32, width: u32) -> u32 {
     return (val >> lo) & ((1u << width) - 1u);
@@ -50,6 +50,20 @@ fn stq_to_uv(stq: vec3<f32>) -> vec2<f32> {
         return stq.xy;
     }
     return stq.xy / stq.z;
+}
+
+fn select_pair(pair: vec4<u32>, i: u32) -> vec2<u32> {
+    return select(pair.xy, pair.zw, (i & 1u) == 1u);
+}
+
+fn texmap_size(texmap: u32) -> vec2<f32> {
+    let dims = select_pair(draw.tex_dims[texmap / 2u], texmap);
+    return vec2<f32>(max(dims, vec2<u32>(1u, 1u)));
+}
+
+fn texmap_uv(stq: vec3<f32>, texcoord: u32, size: vec2<f32>) -> vec2<f32> {
+    let scale = vec2<f32>(select_pair(frame.texcoord_scales[texcoord / 2u], texcoord));
+    return stq_to_uv(stq) * scale / size;
 }
 
 fn sample_texmap(texmap: u32, uv: vec2<f32>) -> vec4<f32> {

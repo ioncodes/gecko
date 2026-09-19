@@ -178,6 +178,8 @@ pub const XF_VIEWPORT_END: usize = 0x101F;
 // BP scissor registers
 pub const BP_SU_SCIS_TL: usize = 0x20;
 pub const BP_SU_SCIS_BR: usize = 0x21;
+pub const BP_SU_SSIZE0: usize = 0x30;
+pub const BP_SU_SIZE_END: usize = 0x40;
 pub const BP_SU_SCIS_OFFSET: usize = 0x59;
 
 // BP EFB copy registers

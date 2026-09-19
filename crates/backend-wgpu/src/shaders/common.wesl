@@ -42,6 +42,7 @@ struct FrameUniforms {
     ztex_op: u32,
     dst_alpha: u32,
     zfreeze_plane: vec4<f32>,
+    texcoord_scales: array<vec4<u32>, 4>,
 };
 
 struct DrawUniforms {

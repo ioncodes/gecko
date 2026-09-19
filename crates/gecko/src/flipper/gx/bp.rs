@@ -98,6 +98,10 @@ impl GraphicsProcessor {
             }
         }
 
+        if (BP_SU_SSIZE0..BP_SU_SIZE_END).contains(&idx) {
+            self.frame_state_dirty = true;
+        }
+
         // Forward PE render state
         match idx {
             BP_PE_ZMODE => {
@@ -924,3 +928,4 @@ impl GraphicsProcessor {
         tracing::debug!(ram_base = format!("{ram_base:#010X}"), tmem_offset, entries, "LOADTLUT");
     }
 }
+

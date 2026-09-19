@@ -205,13 +205,14 @@ pub(crate) struct FrameUniforms {
     pub ztex_op: u32,
     pub dst_alpha: u32,
     pub zfreeze_plane: glam::Vec4,
+    pub texcoord_scales: [glam::UVec4; 4],
 }
 
 pub(crate) const FRAME_UNIFORMS_SIZE: NonZeroU64 = match NonZeroU64::new(std::mem::size_of::<FrameUniforms>() as u64) {
     Some(v) => v,
     None => panic!("FrameUniforms must be non-zero sized"),
 };
-const _: () = assert!(std::mem::size_of::<FrameUniforms>() == 1568);
+const _: () = assert!(std::mem::size_of::<FrameUniforms>() == 1632);
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -219,7 +220,7 @@ pub(crate) struct DrawUniforms {
     pub mvp: glam::Mat4,
     /// Guest texture dimensions for texmaps 0-7, two slots per
     /// vector (slot i at `tex_dims[i / 2]`, xy for even i, zw for odd).
-    /// Indirect texturing needs these instead of `textureDimensions`
+    /// Texture-coordinate scaling needs these instead of `textureDimensions`
     /// because scaled EFB copies bind a larger GPU texture.
     pub tex_dims: [glam::UVec4; 4],
     pub tex_lod_bias: [f32; 8],

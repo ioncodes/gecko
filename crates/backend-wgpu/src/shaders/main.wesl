@@ -1,6 +1,6 @@
 import super::common::{FrameUniforms, DrawUniforms, VsIn, VsOut, frame, draw, tex0, tex1, tex2, tex3, tex4, tex5, tex6, tex7, samp0, samp1, samp2, samp3, samp4, samp5, samp6, samp7};
-import super::tev_helpers::{extract_bits, select_texcoord, stq_to_uv, sample_texmap, swizzle_tev_color, tev_color_in, tev_alpha_in};
-import super::tev_indirect::{IndirectSamples, IndirectResult, sample_indirect_textures, apply_indirect, texmap_size};
+import super::tev_helpers::{extract_bits, select_texcoord, texmap_size, texmap_uv, sample_texmap, swizzle_tev_color, tev_color_in, tev_alpha_in};
+import super::tev_indirect::{IndirectSamples, IndirectResult, sample_indirect_textures, apply_indirect};
 import super::tev_combiners::{tev_combine_color, tev_combine_alpha};
 import super::alpha_test::{alpha_compare, alpha_combine};
 import super::lighting::{compute_lighting_c0, compute_lighting_c1};
@@ -187,8 +187,8 @@ fn run_stage(
     let ras_channel = (order >> 7u) & 7u;
 
     let stq = select_texcoord(in, texcoord_idx);
-    let direct_uv = stq_to_uv(stq);
     let direct_size = texmap_size(texmap_idx);
+    let direct_uv = texmap_uv(stq, texcoord_idx, direct_size);
     let indirect = apply_indirect(ind_cmd, direct_uv, direct_size, presampled, (*state).running_uv);
     (*state).running_uv = indirect.uv;
 

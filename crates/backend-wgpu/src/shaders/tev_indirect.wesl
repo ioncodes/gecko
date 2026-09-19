@@ -1,11 +1,5 @@
-import super::common::{VsOut, frame, draw};
-import super::tev_helpers::{select_texcoord, stq_to_uv, sample_texmap};
-
-fn texmap_size(texmap: u32) -> vec2<f32> {
-    let pair = draw.tex_dims[texmap / 2u];
-    let dims = select(pair.xy, pair.zw, (texmap & 1u) == 1u);
-    return vec2<f32>(max(dims, vec2<u32>(1u, 1u)));
-}
+import super::common::{VsOut, frame};
+import super::tev_helpers::{select_texcoord, select_pair, texmap_size, texmap_uv, sample_texmap};
 
 fn ind_quantize_and_bias(
     sample: vec3<f32>,
@@ -69,16 +63,11 @@ fn sample_indirect_one(i: u32, in: VsOut, indirect_refs: u32, result: ptr<functi
     let shift = i * 6u;
     let texmap = (indirect_refs >> shift) & 7u;
     let texcoord = (indirect_refs >> (shift + 3u)) & 7u;
-    let scale_pair = frame.indirect_scales[i / 2u];
-    let scale_s: u32 = select(scale_pair.x, scale_pair.z, (i & 1u) == 1u);
-    let scale_t: u32 = select(scale_pair.y, scale_pair.w, (i & 1u) == 1u);
+    let scale = select_pair(frame.indirect_scales[i / 2u], i);
 
     let stq = select_texcoord(in, texcoord);
-    let direct_uv = stq_to_uv(stq);
-    let sample_uv = vec2<f32>(
-        direct_uv.x * exp2(-f32(scale_s)),
-        direct_uv.y * exp2(-f32(scale_t)),
-    );
+    let direct_uv = texmap_uv(stq, texcoord, texmap_size(texmap));
+    let sample_uv = direct_uv * exp2(-vec2<f32>(scale));
     let sample = sample_texmap(texmap, sample_uv);
     (*result).samples[i] = sample.abg;
 }

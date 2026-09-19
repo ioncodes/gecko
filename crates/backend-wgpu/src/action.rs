@@ -106,6 +106,7 @@ fn build_frame_uniform(
         zfreeze_plane: draw.zfreeze.map_or(Vec4::ZERO, |p| {
             Vec4::new(p.dx / efb_scale as f32, p.dy / efb_scale as f32, p.c, 1.0)
         }),
+        texcoord_scales: pack_u32_slice_to_uvec4x4(&draw.texcoord_scales),
     }
 }
 
@@ -455,7 +456,6 @@ impl GxRenderer {
                     } else {
                         draw_active_slot_mask(state)
                     };
-                    let num_indirect_stages = state.num_indirect_stages;
                     let next_frame_uniform = (state_changed || self.last_frame_uniform_index.is_none())
                         .then(|| build_frame_uniform(state, self.current_alpha_compare, self.efb_scale));
                     if !self.shader_cache.contains_key(&shader_key) {
@@ -499,25 +499,23 @@ impl GxRenderer {
 
                     let mut tex_dims = [UVec4::splat(1); 4];
 
-                    if num_indirect_stages > 0 {
-                        for slot in 0..8 {
-                            if (active >> slot) & 1 == 0 {
-                                continue;
-                            }
-
-                            let Some(tid) = &self.current_texture_ids[slot] else {
-                                continue;
-                            };
-
-                            let Some((_, tex, _)) = self.texture_cache.get(tid) else {
-                                continue;
-                            };
-
-                            let size = tex.size();
-                            let c = (slot % 2) * 2;
-                            tex_dims[slot / 2][c] = size.width;
-                            tex_dims[slot / 2][c + 1] = size.height;
+                    for slot in 0..8 {
+                        if (active >> slot) & 1 == 0 {
+                            continue;
                         }
+
+                        let Some(tid) = &self.current_texture_ids[slot] else {
+                            continue;
+                        };
+
+                        let Some((_, tex, _)) = self.texture_cache.get(tid) else {
+                            continue;
+                        };
+
+                        let size = tex.size();
+                        let c = (slot % 2) * 2;
+                        tex_dims[slot / 2][c] = size.width;
+                        tex_dims[slot / 2][c + 1] = size.height;
                     }
 
                     let draw_uniform = DrawUniforms {

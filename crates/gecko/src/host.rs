@@ -193,6 +193,7 @@ pub struct DrawData {
 pub struct DrawState {
     pub dst_alpha: Option<u8>,
     pub active_texcoords: u8,
+    pub texcoord_scales: [u32; 16],
     pub zfreeze: Option<crate::flipper::gx::depth::DepthPlane>,
     // TEV combiner state
     pub tev_color_env: [u32; 16],
