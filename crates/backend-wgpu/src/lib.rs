@@ -4,6 +4,7 @@ mod clear;
 #[cfg(not(target_arch = "wasm32"))]
 mod dump;
 mod helpers;
+mod palette;
 mod pipeline;
 mod render;
 #[cfg(feature = "renderdoc-capture")]
@@ -244,6 +245,7 @@ pub(crate) struct EfbCopyEntry {
     pub(crate) native_h: u32,
     pub(crate) texture: wgpu::Texture,
     pub(crate) view: wgpu::TextureView,
+    pub(crate) palette_source: Option<wgpu::Texture>,
 }
 
 impl EfbCopyEntry {
@@ -304,6 +306,7 @@ pub struct GxRenderer {
     // Retired LoadTexture allocations grouped by (w, h, mip levels).
     pub(crate) texture_pool: FxHashMap<(u32, u32, u32), Vec<wgpu::Texture>>,
     pub(crate) efb_copy_cache: FxHashMap<Address, EfbCopyEntry>,
+    pub(crate) palette_converter: palette::PaletteConverter,
     pub(crate) efb_copy_pool: FxHashMap<(u32, u32), Vec<(wgpu::Texture, wgpu::TextureView)>>,
     pub(crate) efb_pack_pipelines: render::EfbPackPipelines,
     pub(crate) efb_depth_pack_pipelines: render::EfbDepthPackPipelines,
@@ -321,6 +324,7 @@ pub struct GxRenderer {
     pub(crate) scratch_vertices: Vec<GpuVertex>,
     pub(crate) scratch_draws: Vec<DrawRecord>,
     pub(crate) scratch_uniform_bytes: Vec<u8>,
+    pub(crate) scratch_vertex_bytes: Vec<u8>,
     pub(crate) bind_group_cache: FxHashMap<BindGroupCacheKey, wgpu::BindGroup>,
     // Per-frame draw accumulation (persists across process_action calls,
     // flushed by flush_pending_draws).
@@ -913,6 +917,7 @@ impl GxRenderer {
             r8: depth_pack("efb_depth_pack_r8", "fs_r8"),
             rg8: depth_pack("efb_depth_pack_rg8", "fs_rg8"),
         };
+        let palette_converter = palette::PaletteConverter::new(device, pack_formats_wgsl, make_pack_pipeline);
         let efb_clear = clear::EfbClear::new(
             device,
             surface_format,
@@ -973,6 +978,7 @@ impl GxRenderer {
             texture_cache: FxHashMap::default(),
             texture_pool: FxHashMap::default(),
             efb_copy_cache: FxHashMap::default(),
+            palette_converter,
             efb_copy_pool: FxHashMap::default(),
             efb_pack_pipelines,
             efb_depth_pack_pipelines,
@@ -984,6 +990,7 @@ impl GxRenderer {
             scratch_vertices: Vec::new(),
             scratch_draws: Vec::new(),
             scratch_uniform_bytes: Vec::new(),
+            scratch_vertex_bytes: Vec::new(),
             bind_group_cache: FxHashMap::default(),
             frame_uniform_bytes: Vec::new(),
             draw_pipeline_keys: Vec::new(),

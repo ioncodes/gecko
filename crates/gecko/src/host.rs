@@ -68,6 +68,13 @@ pub enum GxAction {
         rgba: Vec<u8>,
     },
 
+    LoadEfbPalette {
+        id: TextureKey,
+        width: u32,
+        height: u32,
+        palette: Box<[[u8; 4]; 256]>,
+    },
+
     /// Debug action: Drop every cached pipeline, bind group, and texture on
     /// the renderer side. Used by the GX debug window to force fresh decodes.
     InvalidateCaches,

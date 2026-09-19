@@ -347,7 +347,16 @@ impl GraphicsProcessor {
                 }
             };
 
-        if gpu_copy {
+        if gpu_copy && format == draw::TextureFormat::CI8 {
+            renderer.exec(GxAction::LoadEfbPalette {
+                id: cache_id,
+                width,
+                height,
+                palette: Box::new(std::array::from_fn(|i| {
+                    texture::palette_lookup(palette, i, tlut.format)
+                })),
+            });
+        } else if gpu_copy {
             renderer.exec(GxAction::LoadTexture {
                 id: cache_id,
                 width,
@@ -928,4 +937,3 @@ impl GraphicsProcessor {
         tracing::debug!(ram_base = format!("{ram_base:#010X}"), tmem_offset, entries, "LOADTLUT");
     }
 }
-

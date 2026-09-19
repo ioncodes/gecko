@@ -359,6 +359,70 @@ impl GxRenderer {
                     self.return_load_texture_to_pool(old_tex);
                 }
             }
+            GxAction::LoadEfbPalette {
+                id,
+                width,
+                height,
+                palette,
+            } => {
+                if self
+                    .draw_bg_keys
+                    .iter()
+                    .any(|k| k.tex_keys.iter().flatten().any(|t| t.ram_addr == id.ram_addr))
+                {
+                    self.flush_draws_keep_vertices(device, queue);
+                }
+
+                let entry = self.efb_copy_cache.get(&id.ram_addr).expect("missing palette EFB copy");
+                let source = entry
+                    .palette_source
+                    .as_ref()
+                    .expect("missing native EFB snapshot")
+                    .clone();
+                debug_assert_eq!((source.width(), source.height()), (*width, *height));
+
+                let existing = self.texture_cache.get(id).filter(|(_, texture, _)| {
+                    texture.width() == *width
+                        && texture.height() == *height
+                        && texture.mip_level_count() == 1
+                        && texture.usage().contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
+                });
+
+                let (texture, view) = if let Some((_, texture, view)) = existing {
+                    (texture.clone(), view.clone())
+                } else {
+                    if self.texture_cache.contains_key(id) {
+                        self.bind_group_cache
+                            .retain(|key, _| !key.tex_keys.contains(&Some(*id)));
+                    }
+                    let texture = device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("efb_ci8_decoded"),
+                        size: wgpu::Extent3d {
+                            width: *width,
+                            height: *height,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING
+                            | wgpu::TextureUsages::RENDER_ATTACHMENT
+                            | wgpu::TextureUsages::COPY_SRC
+                            | wgpu::TextureUsages::COPY_DST,
+                        view_formats: &[],
+                    });
+                    let view = texture.create_view(&Default::default());
+                    (texture, view)
+                };
+
+                let mut encoder = self.take_or_create_encoder(device);
+                self.palette_converter
+                    .encode(device, queue, &mut encoder, &source, entry.format, palette, &view);
+                self.current_encoder = Some(encoder);
+                self.texture_cache
+                    .insert(*id, (gecko::flipper::gx::draw::TextureFormat::CI8, texture, view));
+            }
             GxAction::InvalidateCaches => {
                 self.flush_pending_draws(device, queue);
                 let _ = self.submit_pending(queue);

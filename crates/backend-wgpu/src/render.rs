@@ -129,45 +129,28 @@ impl GxRenderer {
         }
 
         let layout = self.draw_buffer_layout;
-        let total_used = layout.index_offset + index_used;
-        let Some(size) = std::num::NonZeroU64::new(total_used) else {
-            return;
-        };
-        let mut view = queue
-            .write_buffer_with(&self.draw_buffer, 0, size)
-            .expect("gx_draw_buffer too small for write_buffer_with");
-        let frame_off = layout.frame_offset as usize;
-        let draw_off = layout.draw_offset as usize;
-        let vertex_off = layout.vertex_offset as usize;
-        let index_off = layout.index_offset as usize;
-        view.slice(frame_off..frame_off + frame_uniform_bytes.len())
-            .copy_from_slice(frame_uniform_bytes);
-        view.slice(draw_off..draw_off + self.scratch_uniform_bytes.len())
-            .copy_from_slice(&self.scratch_uniform_bytes);
+        queue.write_buffer(&self.draw_buffer, layout.frame_offset, frame_uniform_bytes);
+        queue.write_buffer(&self.draw_buffer, layout.draw_offset, &self.scratch_uniform_bytes);
 
+        self.scratch_vertex_bytes.resize(vertex_used as usize, 0);
         for draw in &self.scratch_draws {
             let stride = draw.packed_vertex_stride as usize;
-            let texcoord_bytes = stride - 68;
-            let mut cursor = vertex_off + draw.packed_vertex_byte_offset as usize;
+            let mut cursor = draw.packed_vertex_byte_offset as usize;
             let src_base = draw.src_vertex_index as usize;
             let src_end = src_base + draw.vertex_count as usize;
             for src_v in &self.scratch_vertices[src_base..src_end] {
-                let src_bytes = bytemuck::bytes_of(src_v);
-
-                view.slice(cursor..cursor + 68).copy_from_slice(&src_bytes[..68]);
-                if texcoord_bytes > 0 {
-                    view.slice(cursor + 68..cursor + 68 + texcoord_bytes)
-                        .copy_from_slice(&src_bytes[68..68 + texcoord_bytes]);
-                }
-
+                self.scratch_vertex_bytes[cursor..cursor + stride]
+                    .copy_from_slice(&bytemuck::bytes_of(src_v)[..stride]);
                 cursor += stride;
             }
         }
+        queue.write_buffer(&self.draw_buffer, layout.vertex_offset, &self.scratch_vertex_bytes);
 
-        if !self.scratch_indices.is_empty() {
-            view.slice(index_off..index_off + index_used as usize)
-                .copy_from_slice(bytemuck::cast_slice(&self.scratch_indices));
-        }
+        queue.write_buffer(
+            &self.draw_buffer,
+            layout.index_offset,
+            bytemuck::cast_slice(&self.scratch_indices),
+        );
     }
 
     pub(crate) fn execute_copy_xfb(
@@ -378,6 +361,7 @@ impl GxRenderer {
         half: bool,
         copy_format: CopyFormat,
         source: EfbCopySource,
+        palette_source: Option<wgpu::Texture>,
     ) {
         if let EfbCopySource::Color { intensity, .. } = source {
             debug_assert!(
@@ -480,6 +464,7 @@ impl GxRenderer {
                 native_h: dst_h,
                 texture: tex,
                 view,
+                palette_source,
             },
         );
     }
@@ -764,6 +749,9 @@ impl GxRenderer {
             return;
         };
 
+        let readback_width = if mipmap { (width / 2).max(1) } else { width };
+        let readback_height = if mipmap { (height / 2).max(1) } else { height };
+
         if depth_copy {
             self.execute_depth_writeback(
                 device,
@@ -777,6 +765,20 @@ impl GxRenderer {
                 stride,
                 copy_format_enum,
             );
+
+            let mut encoder = self.take_or_create_encoder(device);
+            let palette_source = self.snapshot_palette_source(
+                device,
+                &mut encoder,
+                dest_addr,
+                copy_format_enum,
+                self.efb_depth_writeback_target.as_ref().unwrap().0.as_image_copy(),
+                readback_width,
+                readback_height,
+                wgpu::TextureFormat::Rgba8Unorm,
+            );
+            self.current_encoder = Some(encoder);
+
             self.cache_efb_copy(
                 device,
                 queue,
@@ -788,12 +790,11 @@ impl GxRenderer {
                 mipmap,
                 copy_format_enum,
                 EfbCopySource::Depth,
+                palette_source,
             );
             return;
         }
 
-        let readback_width = if mipmap { (width / 2).max(1) } else { width };
-        let readback_height = if mipmap { (height / 2).max(1) } else { height };
         self.discard_superseded_writebacks(dest_addr, readback_width, readback_height, copy_format_enum, stride);
 
         let bytes_per_row = align_up(readback_width as u64 * 4, 256);
@@ -875,13 +876,25 @@ impl GxRenderer {
             (readback_tex, wgpu::Origin3d::ZERO)
         };
 
+        let src = wgpu::TexelCopyTextureInfo {
+            texture: src_texture,
+            mip_level: 0,
+            origin: src_origin,
+            aspect: wgpu::TextureAspect::All,
+        };
+        let palette_source = self.snapshot_palette_source(
+            device,
+            &mut encoder,
+            dest_addr,
+            copy_format_enum,
+            src,
+            readback_width,
+            readback_height,
+            self.surface_format.remove_srgb_suffix(),
+        );
+
         encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: src_texture,
-                mip_level: 0,
-                origin: src_origin,
-                aspect: wgpu::TextureAspect::default(),
-            },
+            src,
             wgpu::TexelCopyBufferInfo {
                 buffer: &staging,
                 layout: wgpu::TexelCopyBufferLayout {
@@ -935,6 +948,7 @@ impl GxRenderer {
                 intensity: is_intensity,
                 alpha_supported,
             },
+            palette_source,
         );
     }
 
@@ -973,6 +987,47 @@ impl GxRenderer {
             swap_bgra: false,
             force_opaque: false,
         });
+    }
+
+    fn snapshot_palette_source(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        dest_addr: Address,
+        copy_format: CopyFormat,
+        src: wgpu::TexelCopyTextureInfo<'_>,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) -> Option<wgpu::Texture> {
+        if !copy_format.is_palette_index() {
+            return None;
+        }
+
+        let texture = self
+            .efb_copy_cache
+            .get(&dest_addr)
+            .and_then(|entry| entry.palette_source.as_ref())
+            .filter(|texture| texture.width() == width && texture.height() == height && texture.format() == format)
+            .cloned()
+            .unwrap_or_else(|| {
+                device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("efb_native_palette_source"),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+            });
+        encoder.copy_texture_to_texture(src, texture.as_image_copy(), texture.size());
+        Some(texture)
     }
 
     fn encode_depth_readback(
@@ -1193,7 +1248,7 @@ impl GxRenderer {
                 && pending.copy_format == copy_format
                 && pending.stride == stride
             {
-                let old = self.pending_writebacks.swap_remove(i);
+                let old = self.pending_writebacks.remove(i);
                 self.return_readback_staging(old.staging, old.staging_capacity);
             } else {
                 i += 1;

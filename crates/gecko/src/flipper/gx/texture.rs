@@ -519,7 +519,7 @@ fn tlut_entry_to_rgba(packed: u16, format: TlutFormat) -> [u8; 4] {
 }
 
 #[inline(always)]
-fn palette_lookup(palette: &[u16], index: usize, format: TlutFormat) -> [u8; 4] {
+pub fn palette_lookup(palette: &[u16], index: usize, format: TlutFormat) -> [u8; 4] {
     let entry = palette.get(index).copied().unwrap_or(0);
     tlut_entry_to_rgba(entry, format)
 }
@@ -773,6 +773,10 @@ impl CopyFormat {
             CopyFormat::RGB5A3 => TextureFormat::RGB5A3,
             CopyFormat::RGBA8 | CopyFormat::Z24X8 => TextureFormat::RGBA8,
         }
+    }
+
+    pub const fn is_palette_index(self) -> bool {
+        matches!(self, CopyFormat::I8 | CopyFormat::R8)
     }
 }
 

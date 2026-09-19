@@ -86,7 +86,7 @@ struct PendingEfbTexture {
     end: u32,
     width: u32,
     height: u32,
-    format: gecko::flipper::gx::draw::TextureFormat,
+    format: gecko::flipper::gx::texture::CopyFormat,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -403,7 +403,7 @@ impl RenderSink for ThreadedSink {
                         end,
                         width,
                         height,
-                        format: format.base_texture_format(),
+                        format,
                     });
                 }
             }
@@ -457,9 +457,13 @@ impl RenderSink for ThreadedSink {
         height: u32,
         fmt: gecko::flipper::gx::draw::TextureFormat,
     ) -> bool {
-        self.pending_efb_textures
-            .iter()
-            .any(|copy| copy.addr == addr && copy.width == width && copy.height == height && copy.format == fmt)
+        self.pending_efb_textures.iter().any(|copy| {
+            copy.addr == addr
+                && copy.width == width
+                && copy.height == height
+                && (copy.format.base_texture_format() == fmt
+                    || (copy.format.is_palette_index() && fmt == gecko::flipper::gx::draw::TextureFormat::CI8))
+        })
     }
 
     fn flush_efb_copies(&mut self, ram: &mut gecko::mmio::RamViewMut<'_>) {
