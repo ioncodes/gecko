@@ -293,6 +293,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
         self.gekko = r.pod()?;
         self.mmio.load_state(&mut r)?;
+        self.refresh_lcache_fastmem();
 
         self.vi = r.pod()?;
         self.pe = r.pod()?;

@@ -34,13 +34,13 @@ const QUANT_TABLE: [f32; 64] = {
     table
 };
 
-fn gqr_ld_type(gqr: u32) -> u8 {
+pub(crate) fn gqr_ld_type(gqr: u32) -> u8 {
     ((gqr >> 16) & 0x7) as u8
 }
 fn gqr_ld_scale(gqr: u32) -> u8 {
     ((gqr >> 24) & 0x3f) as u8
 }
-fn gqr_st_type(gqr: u32) -> u8 {
+pub(crate) fn gqr_st_type(gqr: u32) -> u8 {
     (gqr & 0x7) as u8
 }
 fn gqr_st_scale(gqr: u32) -> u8 {

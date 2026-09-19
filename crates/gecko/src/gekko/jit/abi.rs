@@ -120,6 +120,10 @@ pub const fn fastmem_lut_ptr_offset<const SYSTEM: SystemId>() -> usize {
     offset_of!(System<SYSTEM>, mmio) + offset_of!(Mmio<SYSTEM>, fastmem_lut_ptr)
 }
 
+pub const fn lcache_fastmem_ptr_offset<const SYSTEM: SystemId>() -> usize {
+    offset_of!(System<SYSTEM>, mmio) + offset_of!(Mmio<SYSTEM>, lcache_fastmem_ptr)
+}
+
 #[inline(always)]
 pub const fn code_refcount_ptr_offset<const SYSTEM: SystemId>() -> usize {
     offset_of!(System<SYSTEM>, mmio) + offset_of!(Mmio<SYSTEM>, code_refcount_ptr)

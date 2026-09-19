@@ -1,5 +1,6 @@
 use crate::gekko::instruction::Instruction;
 use crate::gekko::lut::*;
+use crate::gekko::spr::Spr;
 use crate::gekko::sr::Sr;
 use crate::system::{System, SystemId};
 
@@ -30,40 +31,7 @@ pub fn spr<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, inst
         OP_MTSPR => {
             let spr_num = instr.spr_swapped();
             let val = ctx.gekko.read_gpr(instr.rs());
-            match spr_num {
-                22 => {
-                    ctx.scheduler.cancel(crate::scheduler::Handler::DecUnderflow);
-                    ctx.gekko.dec.write(ctx.scheduler.cycles, val);
-                    ctx.gekko.spr.dec = val;
-                    ctx.scheduler.schedule_in(
-                        crate::gekko::dec::cycles_until_underflow(val),
-                        crate::scheduler::Handler::DecUnderflow,
-                    );
-                    tracing::debug!(cycles = ctx.scheduler.cycles, value = val, "decrementer set");
-                }
-                284 => ctx.scheduler.set_timebase_lower(val),
-                285 => ctx.scheduler.set_timebase_upper(val),
-                921 => {
-                    ctx.gekko.spr.wpar = val & !1;
-                    ctx.cp.gather_pos = 0;
-                }
-                923 => {
-                    ctx.gekko.spr.dmal = crate::gekko::spr::DmaLower::from_raw(val);
-                    if ctx.gekko.spr.dmal.trigger() {
-                        let dmau = ctx.gekko.spr.dmau;
-                        let dmal = ctx.gekko.spr.dmal;
-                        let written = ctx.mmio.process_locked_cache_dma(&dmau, &dmal);
-                        #[cfg(feature = "jit")]
-                        if let Some((phys, len)) = written {
-                            ctx.mmio.queue_icbi_for_range(phys, len);
-                        }
-                        #[cfg(not(feature = "jit"))]
-                        let _ = written;
-                        ctx.gekko.spr.dmal.set_trigger(false);
-                    }
-                }
-                _ => ctx.gekko.spr.write(spr_num, val),
-            }
+            ctx.write_spr(spr_num, val);
         }
         OP_MFSPR => {
             let spr_num = instr.spr_swapped();
@@ -186,4 +154,47 @@ pub fn dcbz<const OP: u32, const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, ins
 pub fn sc<const SYSTEM: SystemId>(ctx: &mut System<SYSTEM>, _instr: Instruction) {
     ctx.scheduler.cycles += crate::gekko::cycles::cycles_for_op(OP_SC) as u64;
     ctx.cause_syscall_interrupt();
+}
+
+impl<const SYSTEM: SystemId> System<SYSTEM> {
+    pub(crate) fn write_spr(&mut self, num: u32, val: u32) {
+        match num {
+            22 => {
+                self.scheduler.cancel(crate::scheduler::Handler::DecUnderflow);
+                self.gekko.dec.write(self.scheduler.cycles, val);
+                self.gekko.spr.dec = val;
+                self.scheduler.schedule_in(
+                    crate::gekko::dec::cycles_until_underflow(val),
+                    crate::scheduler::Handler::DecUnderflow,
+                );
+                tracing::debug!(cycles = self.scheduler.cycles, value = val, "decrementer set");
+            }
+            284 => self.scheduler.set_timebase_lower(val),
+            285 => self.scheduler.set_timebase_upper(val),
+            _ if Spr::is_dbat(num) => {
+                self.gekko.spr.write(num, val);
+                self.refresh_lcache_fastmem();
+            }
+            921 => {
+                self.gekko.spr.wpar = val & !1;
+                self.cp.gather_pos = 0;
+            }
+            923 => {
+                self.gekko.spr.dmal = crate::gekko::spr::DmaLower::from_raw(val);
+                if self.gekko.spr.dmal.trigger() {
+                    let dmau = self.gekko.spr.dmau;
+                    let dmal = self.gekko.spr.dmal;
+                    let written = self.mmio.process_locked_cache_dma(&dmau, &dmal);
+                    #[cfg(feature = "jit")]
+                    if let Some((phys, len)) = written {
+                        self.mmio.queue_icbi_for_range(phys, len);
+                    }
+                    #[cfg(not(feature = "jit"))]
+                    let _ = written;
+                    self.gekko.spr.dmal.set_trigger(false);
+                }
+            }
+            _ => self.gekko.spr.write(num, val),
+        }
+    }
 }

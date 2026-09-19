@@ -189,45 +189,11 @@ pub extern "C" fn read_spr_wii(sys: *mut core::ffi::c_void, num: u32) -> u32 {
     read_spr::<WII>(sys.cast(), num)
 }
 
-#[inline(always)]
-fn write_spr<const SYSTEM: SystemId>(sys: *mut System<SYSTEM>, num: u32, val: u32) {
-    let sys = unsafe { &mut *sys };
-    match num {
-        22 => {
-            sys.scheduler.cancel(crate::scheduler::Handler::DecUnderflow);
-            sys.gekko.dec.write(sys.scheduler.cycles, val);
-            sys.gekko.spr.dec = val;
-            sys.scheduler.schedule_in(
-                crate::gekko::dec::cycles_until_underflow(val),
-                crate::scheduler::Handler::DecUnderflow,
-            );
-        }
-        284 => sys.scheduler.set_timebase_lower(val),
-        285 => sys.scheduler.set_timebase_upper(val),
-        921 => {
-            sys.gekko.spr.wpar = val & !1;
-            sys.cp.gather_pos = 0;
-        }
-        923 => {
-            sys.gekko.spr.dmal = crate::gekko::spr::DmaLower::from_raw(val);
-            if sys.gekko.spr.dmal.trigger() {
-                let dmau = sys.gekko.spr.dmau;
-                let dmal = sys.gekko.spr.dmal;
-                if let Some((phys, len)) = sys.mmio.process_locked_cache_dma(&dmau, &dmal) {
-                    sys.mmio.queue_icbi_for_range(phys, len);
-                }
-                sys.gekko.spr.dmal.set_trigger(false);
-            }
-        }
-        _ => sys.gekko.spr.write(num, val),
-    }
-}
-
 pub extern "C" fn write_spr_gc(sys: *mut core::ffi::c_void, num: u32, val: u32) {
-    write_spr::<GC>(sys.cast(), num, val);
+    unsafe { (*sys.cast::<System<GC>>()).write_spr(num, val) };
 }
 pub extern "C" fn write_spr_wii(sys: *mut core::ffi::c_void, num: u32, val: u32) {
-    write_spr::<WII>(sys.cast(), num, val);
+    unsafe { (*sys.cast::<System<WII>>()).write_spr(num, val) };
 }
 
 #[inline(always)]

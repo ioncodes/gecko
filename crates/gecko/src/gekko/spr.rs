@@ -137,6 +137,10 @@ pub struct Spr {
 }
 
 impl Spr {
+    pub const fn is_dbat(spr_num: u32) -> bool {
+        matches!(spr_num, 536..=543 | 568..=575)
+    }
+
     pub fn read_gqr(&self, index: u8) -> u32 {
         match index {
             0 => self.gqr0,

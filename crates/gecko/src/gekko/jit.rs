@@ -28,6 +28,8 @@ use rustc_hash::FxHashMap;
 
 use crate::system::{GC, System, SystemId, WII};
 
+use self::translator::GqrAssumptions;
+
 pub type BlockEntry = usize;
 
 type TrampolineFn = unsafe extern "C" fn(*mut core::ffi::c_void, usize) -> u32;
@@ -697,7 +699,8 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             self.hle_code_sizes.insert(pc, DIV2I_SIZE);
             self.compile_div2i(pc)
         } else {
-            self.compile(&spec, &gprs_snapshot)
+            let gqrs_snapshot = core::array::from_fn(|i| sys.gekko.spr.read_gqr(i as u8));
+            self.compile(&spec, &gprs_snapshot, &gqrs_snapshot)
         };
 
         self.cache.insert(pc, entry);
@@ -816,15 +819,18 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             return id;
         }
 
-        self.block_seq = self.block_seq.wrapping_add(1);
-        let name = format!("gecko_block_{:08x}_{}", pc, self.block_seq);
-        let id = self
-            .module
-            .declare_function(&name, Linkage::Local, &self.block_sig)
-            .expect("declare block");
+        let id = self.declare_block_fn("gecko_block", pc);
         self.block_func_ids.insert(pc, id);
 
         id
+    }
+
+    fn declare_block_fn(&mut self, prefix: &str, pc: u32) -> FuncId {
+        self.block_seq = self.block_seq.wrapping_add(1);
+        let name = format!("{prefix}_{pc:08x}_{}", self.block_seq);
+        self.module
+            .declare_function(&name, Linkage::Local, &self.block_sig)
+            .expect("declare block")
     }
 
     #[cfg_attr(feature = "hotpath", hotpath::measure(label = "ppc_jit_run_block"))]
@@ -1158,7 +1164,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         entry
     }
 
-    fn compile(&mut self, spec: &block::BlockSpec, gprs: &[u32; 32]) -> BlockEntry {
+    fn compile(&mut self, spec: &block::BlockSpec, gprs: &[u32; 32], gqrs: &[u32; 8]) -> BlockEntry {
         let func_id = self.func_id_for(spec.start_pc);
 
         let _ = self.target_slot_addr(spec.start_pc);
@@ -1168,7 +1174,13 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         #[cfg(not(feature = "jit-stats"))]
         let entry_counter_addr: Option<usize> = None;
 
-        let entry = self.compile_function(spec, gprs, func_id, entry_counter_addr);
+        let assumptions = GqrAssumptions::for_block(spec, gqrs);
+        let specialization = assumptions.as_ref().map(|assumptions| {
+            let fallback_id = self.declare_block_fn("gecko_generic", spec.start_pc);
+            let fallback = self.compile_function(spec, gprs, fallback_id, entry_counter_addr, None);
+            (assumptions, fallback)
+        });
+        let entry = self.compile_function(spec, gprs, func_id, entry_counter_addr, specialization);
 
         let slot_addr = self.target_slot_addr(spec.start_pc);
         unsafe {
@@ -1186,6 +1198,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         gprs: &[u32; 32],
         func_id: FuncId,
         entry_counter_addr: Option<usize>,
+        specialization: Option<(&GqrAssumptions, BlockEntry)>,
     ) -> BlockEntry {
         self.ctx.clear();
         self.ctx.func.signature = self.block_sig.clone();
@@ -1206,6 +1219,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             gprs,
             &chain,
             entry_counter_addr,
+            specialization,
         );
 
         drop(chain);

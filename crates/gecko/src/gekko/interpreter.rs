@@ -4,7 +4,7 @@ mod compare;
 mod cr_ops;
 mod fp_ops;
 mod ps_ops;
-mod psq;
+pub(crate) mod psq;
 mod rotate;
 mod store_load;
 mod system;
