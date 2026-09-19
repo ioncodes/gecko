@@ -132,7 +132,7 @@ pub enum GxAction {
     },
 
     /// Present a CPU-drawn external framebuffer read straight from guest RAM
-    /// (no GX EFB copy happened, e.g. consoletest).
+    /// (e.g. consoletest, or a movie decoder overwriting a GX copy).
     PresentRawXfb {
         width: u32,
         height: u32,

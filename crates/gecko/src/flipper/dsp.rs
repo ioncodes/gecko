@@ -309,7 +309,7 @@ impl Dsp {
     }
 
     pub fn process_aram_dma<const SYSTEM: SystemId>(&mut self, mmio: &mut Mmio<SYSTEM>) {
-        let ram_addr = (self.aram_dma_mmio_addr.raw() & 0x3FFFFFFF) as usize;
+        let ram_addr = self.aram_dma_mmio_addr.raw() as usize;
         let aram_addr = self.aram_dma_aram_addr.raw() as usize;
         let count = self.aram_dma_control.count() as usize;
 
@@ -1086,9 +1086,12 @@ impl Dsp {
         self.aram_info = r.pod()?;
         self.aram_mode = r.pod()?;
         self.aram_refresh = r.pod()?;
-        self.aram_dma_mmio_addr = r.pod()?;
-        self.aram_dma_aram_addr = r.pod()?;
-        self.aram_dma_control = r.pod()?;
+        let aram_dma_mmio_addr: regs::AramDmaMmioAddr = r.pod()?;
+        let aram_dma_aram_addr: regs::AramDmaAramAddr = r.pod()?;
+        let aram_dma_control: regs::AramDmaControl = r.pod()?;
+        self.aram_dma_mmio_addr = regs::AramDmaMmioAddr::from_raw(aram_dma_mmio_addr.raw() & regs::ARAM_DMA_MASK);
+        self.aram_dma_aram_addr = regs::AramDmaAramAddr::from_raw(aram_dma_aram_addr.raw() & regs::ARAM_DMA_MASK);
+        self.aram_dma_control = regs::AramDmaControl::from_raw(aram_dma_control.raw() & regs::ARAM_DMA_CONTROL_MASK);
         self.audio_dma_start_addr = r.pod()?;
         self.audio_dma_control = r.pod()?;
 

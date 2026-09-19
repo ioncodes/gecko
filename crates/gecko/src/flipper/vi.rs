@@ -334,6 +334,24 @@ pub fn refresh_interrupts<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     }
 }
 
+/// XFB is YUY2 (YCbCr 4:2:2): each 32 bit word = [Y0][Cb][Y1][Cr] (big endian).
+/// One word covers two adjacent pixels sharing Cb and Cr.
+pub(crate) fn yuyv_to_rgb(word: u32) -> [u32; 2] {
+    let y0 = ((word >> 24) & 0xFF) as f32 - 16.0;
+    let cb = ((word >> 16) & 0xFF) as f32 - 128.0;
+    let y1 = ((word >> 8) & 0xFF) as f32 - 16.0;
+    let cr = (word & 0xFF) as f32 - 128.0;
+
+    let to_rgb = |y: f32| -> u32 {
+        let r = (1.164 * y + 1.596 * cr).clamp(0.0, 255.0) as u32;
+        let g = (1.164 * y - 0.813 * cr - 0.391 * cb).clamp(0.0, 255.0) as u32;
+        let b = (1.164 * y + 2.018 * cb).clamp(0.0, 255.0) as u32;
+        (r << 16) | (g << 8) | b
+    };
+
+    [to_rgb(y0), to_rgb(y1)]
+}
+
 impl<const SYSTEM: SystemId> System<SYSTEM> {
     #[rustfmt::skip]
     pub fn render_xfb(&self) -> Vec<u32> {
@@ -344,23 +362,10 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         let mut pixels = vec![0u32; width * height];
         let xfb_addr = self.vi.xfb_addr();
 
-        // XFB is YUY2 (YCbCr 4:2:2): each 32 bit word = [Y0][Cb][Y1][Cr] (big endian).
-        // One word covers two adjacent pixels sharing Cb and Cr.
-        let ycbcr_to_rgb = |y: f32, cb: f32, cr: f32| -> u32 {
-            let r = (1.164 * y + 1.596 * cr).clamp(0.0, 255.0) as u8;
-            let g = (1.164 * y - 0.813 * cr - 0.391 * cb).clamp(0.0, 255.0) as u8;
-            let b = (1.164 * y + 2.018 * cb).clamp(0.0, 255.0) as u8;
-            ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
-        };
-
         for i in 0..(width * height / 2) {
-            let word = self.mmio.phys_read_u32(xfb_addr + (i as u32) * 4);
-            let y0 = ((word >> 24) & 0xFF) as f32 - 16.0;
-            let cb = ((word >> 16) & 0xFF) as f32 - 128.0;
-            let y1 = ((word >>  8) & 0xFF) as f32 - 16.0;
-            let cr = ( word        & 0xFF) as f32 - 128.0;
-            pixels[i * 2]     = ycbcr_to_rgb(y0, cb, cr);
-            pixels[i * 2 + 1] = ycbcr_to_rgb(y1, cb, cr);
+            let [p0, p1] = self::yuyv_to_rgb(self.mmio.phys_read_u32(xfb_addr + (i as u32) * 4));
+            pixels[i * 2]     = p0;
+            pixels[i * 2 + 1] = p1;
         }
         pixels
     }

@@ -331,6 +331,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
         self.render_sink.exec(crate::host::GxAction::InvalidateCaches);
         self.render_sink.reset_efb();
+        self.audio_sink.set_sample_rate(self.ai.control.aid_sample_rate_hz());
 
         Ok(())
     }

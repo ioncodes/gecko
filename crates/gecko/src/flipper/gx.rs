@@ -135,11 +135,22 @@ pub struct GraphicsProcessor {
 /// like Dolphin. `seen_present_seq` ages out dead regions. As seen in
 /// Another Code: R or whatever it's called, it builds each frame from a
 /// 230+228 line copy pair and showed a black seam plus a lagging bottom half.
+#[derive(Clone, Copy, Default)]
 pub struct XfbRegion {
     pub stride: u32,
     pub first_seq: u64,
     pub copy_seq: u64,
     pub seen_present_seq: u64,
+    pub ram_hash: Option<u64>,
+    pub ram_generation: Option<u64>,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl XfbRegion {
+    pub fn ram_len(stride: u32, width: u32, height: u32) -> usize {
+        stride as usize * height.saturating_sub(1) as usize + width as usize * 2
+    }
 }
 
 // Drop regions that haven't been re-copied for a few frames so dead layouts
@@ -272,7 +283,7 @@ pub fn present_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
 
     if sys.gx.xfb_copy_seq == 0 {
         let base = sys.vi.latched_xfb_base;
-        self::present_raw_xfb(sys, base, frame_w, frame_h);
+        self::present_raw_xfb(sys, base, frame_w, frame_h, frame_w * 2, frame_w, frame_h);
         return;
     }
 
@@ -299,6 +310,29 @@ pub fn present_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     } else {
         vi_base
     };
+
+    if let Some(region) = sys.gx.xfb_regions.get(&frame_base).copied() {
+        let ram = sys.mmio.ram_view();
+        let ram_len = XfbRegion::ram_len(region.stride, region.width, region.height);
+        let cpu_written = region.ram_generation != ram.range_generation(frame_base as usize, ram_len)
+            || region.ram_hash.is_some_and(|hash| {
+                ram.slice(frame_base as usize, ram_len)
+                    .is_some_and(|bytes| twox_hash::xxhash3_64::Hasher::oneshot(bytes) != hash)
+            });
+
+        if cpu_written {
+            self::present_raw_xfb(
+                sys,
+                frame_base,
+                frame_w,
+                frame_h,
+                region.stride,
+                region.width,
+                region.height,
+            );
+            return;
+        }
+    }
 
     // Measure the page-flip cadence. Emission is paced to it further down.
     if frame_base != sys.gx.xfb_last_seen_base {
@@ -492,29 +526,36 @@ pub fn present_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     sys.gx.xfb_last_present_base = frame_base;
 }
 
-fn present_raw_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>, base: u32, width: u32, height: u32) {
+fn present_raw_xfb<const SYSTEM: SystemId>(
+    sys: &mut System<SYSTEM>,
+    base: u32,
+    width: u32,
+    height: u32,
+    stride: u32,
+    source_width: u32,
+    source_height: u32,
+) {
     if base == 0 || width == 0 || height == 0 {
         return;
     }
 
-    let pixel_count = (width as usize) * (height as usize);
-    let mut pixels = vec![0u32; pixel_count];
+    let mut pixels = vec![0xff00_0000u32; width as usize * height as usize];
 
-    let to_bgra = |y: f32, cb: f32, cr: f32| -> u32 {
-        let r = (1.164 * y + 1.596 * cr).clamp(0.0, 255.0) as u32;
-        let g = (1.164 * y - 0.813 * cr - 0.391 * cb).clamp(0.0, 255.0) as u32;
-        let b = (1.164 * y + 2.018 * cb).clamp(0.0, 255.0) as u32;
-        0xFF00_0000 | (r << 16) | (g << 8) | b
-    };
+    let copy_w = width.min(source_width) & !1;
+    let copy_h = height.min(source_height);
+    let ram = sys.mmio.ram_view();
 
-    for i in 0..pixel_count / 2 {
-        let word = sys.mmio.phys_read_u32(base + (i as u32) * 4);
-        let y0 = ((word >> 24) & 0xFF) as f32 - 16.0;
-        let cb = ((word >> 16) & 0xFF) as f32 - 128.0;
-        let y1 = ((word >> 8) & 0xFF) as f32 - 16.0;
-        let cr = (word & 0xFF) as f32 - 128.0;
-        pixels[i * 2] = to_bgra(y0, cb, cr);
-        pixels[i * 2 + 1] = to_bgra(y1, cb, cr);
+    for y in 0..copy_h {
+        let Some(row) = ram.slice((base + y * stride) as usize, copy_w as usize * 2) else {
+            continue;
+        };
+
+        let out = &mut pixels[(y * width) as usize..][..copy_w as usize];
+        for (word, out) in row.chunks_exact(4).zip(out.chunks_exact_mut(2)) {
+            let [p0, p1] = crate::flipper::vi::yuyv_to_rgb(u32::from_be_bytes(word.try_into().unwrap()));
+            out[0] = 0xFF00_0000 | p0;
+            out[1] = 0xFF00_0000 | p1;
+        }
     }
 
     sys.render_sink.exec(GxAction::PresentRawXfb { width, height, pixels });
@@ -664,6 +705,7 @@ impl GraphicsProcessor {
                 first_seq: r.u64()?,
                 copy_seq: r.u64()?,
                 seen_present_seq: r.u64()?,
+                ..Default::default()
             };
             self.xfb_regions.insert(base, region);
         }

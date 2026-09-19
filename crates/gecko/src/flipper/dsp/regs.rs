@@ -276,7 +276,19 @@ crate::mmio_default_access!(AramRefresh => System.dsp.aram_refresh);
 #[derive(Copy, Clone, Debug)]
 pub struct AramDmaMmioAddr {}
 crate::mmio_reg!(AramDmaMmioAddr: u32 @ 0xCC005020);
-crate::mmio_default_access!(AramDmaMmioAddr => System.dsp.aram_dma_mmio_addr);
+
+pub(super) const ARAM_DMA_MASK: u32 = 0x03ff_ffe0;
+pub(super) const ARAM_DMA_CONTROL_MASK: u32 = 0x8000_0000 | ARAM_DMA_MASK;
+
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AramDmaMmioAddr {
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.dsp.aram_dma_mmio_addr
+    }
+
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.dsp.aram_dma_mmio_addr = Self::from_raw(self.raw() & ARAM_DMA_MASK);
+    }
+}
 
 // 0xCC005024 4 [R/W] ARAM DMA ARAM Address
 
@@ -284,7 +296,16 @@ crate::mmio_default_access!(AramDmaMmioAddr => System.dsp.aram_dma_mmio_addr);
 #[derive(Copy, Clone, Debug)]
 pub struct AramDmaAramAddr {}
 crate::mmio_reg!(AramDmaAramAddr: u32 @ 0xCC005024);
-crate::mmio_default_access!(AramDmaAramAddr => System.dsp.aram_dma_aram_addr);
+
+impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AramDmaAramAddr {
+    fn read(sys: &mut System<SYSTEM>) -> Self {
+        sys.dsp.aram_dma_aram_addr
+    }
+
+    fn write(self, sys: &mut System<SYSTEM>, _: WriteMask) {
+        sys.dsp.aram_dma_aram_addr = Self::from_raw(self.raw() & ARAM_DMA_MASK);
+    }
+}
 
 // 0xCC005030 4 [W] Audio DMA Start Address (High + Low)
 
@@ -373,7 +394,7 @@ impl<const SYSTEM: SystemId> MmioAccess<System<SYSTEM>> for AramDmaControl {
     }
 
     fn write(self, sys: &mut System<SYSTEM>, mask: WriteMask) {
-        sys.dsp.aram_dma_control = self;
+        sys.dsp.aram_dma_control = Self::from_raw(self.raw() & ARAM_DMA_CONTROL_MASK);
         if !mask.any(2, 4) {
             return;
         }

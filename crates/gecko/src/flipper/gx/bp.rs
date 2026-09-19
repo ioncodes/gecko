@@ -271,7 +271,7 @@ impl GraphicsProcessor {
 
         // EFB copy trigger (BP 0x52)
         if idx == BP_PE_COPY_CMD {
-            self.efb_copy(renderer, val);
+            self.efb_copy(renderer, &ram.as_view(), val);
         }
     }
 
@@ -580,7 +580,7 @@ impl GraphicsProcessor {
     }
 
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
-    fn efb_copy(&mut self, renderer: &mut dyn RenderSink, trigger: u32) {
+    fn efb_copy(&mut self, renderer: &mut dyn RenderSink, ram: &RamView<'_>, trigger: u32) {
         let src = EfbCopySrc::from_raw(self.bp_regs[BP_PE_COPY_SRC]);
         let dims = EfbCopyDims::from_raw(self.bp_regs[BP_PE_COPY_DIMS]);
         let src_x = src.left() as u32;
@@ -645,20 +645,24 @@ impl GraphicsProcessor {
             self.xfb_copy_seq += 1;
             let copy_seq = self.xfb_copy_seq;
             let present_seq = self.xfb_present_seq;
+            let ram_len = super::XfbRegion::ram_len(dest_stride, src_w, dst_h);
+            let first_seq = self.xfb_regions.get(&dest_addr).map_or(copy_seq, |r| r.first_seq);
 
-            self.xfb_regions
-                .entry(dest_addr)
-                .and_modify(|r| {
-                    r.stride = dest_stride;
-                    r.copy_seq = copy_seq;
-                    r.seen_present_seq = present_seq;
-                })
-                .or_insert(super::XfbRegion {
+            self.xfb_regions.insert(
+                dest_addr,
+                super::XfbRegion {
                     stride: dest_stride,
-                    first_seq: copy_seq,
+                    first_seq,
                     copy_seq,
                     seen_present_seq: present_seq,
-                });
+                    ram_hash: ram
+                        .slice(dest_addr as usize, ram_len)
+                        .map(twox_hash::xxhash3_64::Hasher::oneshot),
+                    ram_generation: ram.range_generation(dest_addr as usize, ram_len),
+                    width: src_w,
+                    height: dst_h,
+                },
+            );
 
             self.xfb_dirty = true;
 
