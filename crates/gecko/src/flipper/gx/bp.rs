@@ -645,7 +645,6 @@ impl GraphicsProcessor {
             self.xfb_copy_seq += 1;
             let copy_seq = self.xfb_copy_seq;
             let present_seq = self.xfb_present_seq;
-            let ram_len = super::XfbRegion::ram_len(dest_stride, src_w, dst_h);
             let first_seq = self.xfb_regions.get(&dest_addr).map_or(copy_seq, |r| r.first_seq);
 
             self.xfb_regions.insert(
@@ -655,10 +654,7 @@ impl GraphicsProcessor {
                     first_seq,
                     copy_seq,
                     seen_present_seq: present_seq,
-                    ram_hash: ram
-                        .slice(dest_addr as usize, ram_len)
-                        .map(twox_hash::xxhash3_64::Hasher::oneshot),
-                    ram_generation: ram.range_generation(dest_addr as usize, ram_len),
+                    ram_hash: super::XfbRegion::hash_ram(ram, dest_addr, dest_stride, src_w, dst_h),
                     width: src_w,
                     height: dst_h,
                 },

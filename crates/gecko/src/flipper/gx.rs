@@ -20,6 +20,7 @@ use crate::flipper::gx::regs::{
     AlphaCompare, BlendMode, ChanCtrl, TevAlphaEnv, TevColorEnv, TevRegisterH, TevRegisterL, ZMode,
 };
 use crate::host::{GxAction, LightData, TextureKey, XfbPart};
+use crate::mmio::RamView;
 use crate::system::{ExecutionMode, System, SystemId};
 use rustc_hash::FxHashMap;
 
@@ -142,7 +143,6 @@ pub struct XfbRegion {
     pub copy_seq: u64,
     pub seen_present_seq: u64,
     pub ram_hash: Option<u64>,
-    pub ram_generation: Option<u64>,
     pub width: u32,
     pub height: u32,
 }
@@ -150,6 +150,17 @@ pub struct XfbRegion {
 impl XfbRegion {
     pub fn ram_len(stride: u32, width: u32, height: u32) -> usize {
         stride as usize * height.saturating_sub(1) as usize + width as usize * 2
+    }
+
+    pub fn hash_ram(ram: &RamView<'_>, base: u32, stride: u32, width: u32, height: u32) -> Option<u64> {
+        ram.slice(base as usize, Self::ram_len(stride, width, height))
+            .map(twox_hash::xxhash3_64::Hasher::oneshot)
+    }
+
+    pub fn cpu_written(&self, ram: &RamView<'_>, base: u32) -> bool {
+        self.ram_hash.is_some_and(|prev| {
+            Self::hash_ram(ram, base, self.stride, self.width, self.height).is_some_and(|now| now != prev)
+        })
     }
 }
 
@@ -312,15 +323,7 @@ pub fn present_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     };
 
     if let Some(region) = sys.gx.xfb_regions.get(&frame_base).copied() {
-        let ram = sys.mmio.ram_view();
-        let ram_len = XfbRegion::ram_len(region.stride, region.width, region.height);
-        let cpu_written = region.ram_generation != ram.range_generation(frame_base as usize, ram_len)
-            || region.ram_hash.is_some_and(|hash| {
-                ram.slice(frame_base as usize, ram_len)
-                    .is_some_and(|bytes| twox_hash::xxhash3_64::Hasher::oneshot(bytes) != hash)
-            });
-
-        if cpu_written {
+        if region.cpu_written(&sys.mmio.ram_view(), frame_base) {
             self::present_raw_xfb(
                 sys,
                 frame_base,
