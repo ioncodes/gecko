@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use backend_wgpu::capture;
@@ -42,6 +42,8 @@ pub enum Message {
     LibraryWindowOpened(window::Id),
     PlayerWindowOpened(window::Id, Box<Game>, Arc<PlayerState>),
     PlayerTick,
+    PlayerCaptureMouse(window::Id, bool),
+    PlayerFocused(window::Id, bool),
     WindowClosed(window::Id),
     LibraryPicked(Platform, Option<PathBuf>),
     ScanRequested,
@@ -130,6 +132,9 @@ pub struct PlayerWindow {
     pub(crate) game: Game,
     pub(crate) state: Arc<PlayerState>,
     pub(crate) fullscreen: bool,
+    pub(crate) mouse_capture: Arc<Mutex<player::MouseCapture>>,
+    pub(crate) capture_intent: bool,
+    pub(crate) captured: bool,
     pub(crate) overlay: bool,
     pub(crate) toast: Option<Toast>,
 }
@@ -378,15 +383,41 @@ impl App {
                         game: *game,
                         state,
                         fullscreen: false,
+                        mouse_capture: Arc::new(Mutex::new(player::MouseCapture::default())),
+                        capture_intent: false,
+                        captured: false,
                         overlay: false,
                         toast: None,
                     },
                 );
                 Task::none()
             }
+            Message::PlayerCaptureMouse(id, capture) => {
+                let Some(player) = self.players.get_mut(&id) else {
+                    return Task::none();
+                };
+
+                player.capture_intent = capture;
+                self.apply_mouse_capture(id, capture)
+            }
+            Message::PlayerFocused(id, focused) => {
+                let Some(player) = self.players.get(&id) else {
+                    return Task::none();
+                };
+
+                if !focused {
+                    player.state.clear_input();
+                }
+
+                let capture = focused && player.capture_intent;
+                self.apply_mouse_capture(id, capture)
+            }
             Message::PlayerTick => {
                 let now = Instant::now();
                 for player in self.players.values_mut() {
+                    if player.captured {
+                        player.mouse_capture.lock().unwrap().poll();
+                    }
                     if player.toast.as_ref().is_some_and(|t| now >= t.expires) {
                         player.toast = None;
                     }
@@ -980,7 +1011,8 @@ impl App {
         let text_color = palette.text;
 
         let status = player.state.status();
-        let shader: Element<'a, Message> = player::shader_widget(player.state.clone(), window_id).into();
+        let shader: Element<'a, Message> =
+            player::shader_widget(player.state.clone(), window_id, player.captured).into();
 
         let overlay: Option<Element<'a, Message>> = match &status {
             PlayerStatus::Ready => None,
@@ -1020,6 +1052,28 @@ impl App {
                 ..container::Style::default()
             })
             .into()
+    }
+
+    fn apply_mouse_capture(&mut self, id: window::Id, capture: bool) -> Task<Message> {
+        let Some(player) = self.players.get_mut(&id) else {
+            return Task::none();
+        };
+
+        let capture = capture && player.game.platform == Platform::Wii;
+        if player.captured == capture && !(capture && player::MouseCapture::RECLIP_ON_MOVE) {
+            return Task::none();
+        }
+
+        player.captured = capture;
+        let mouse_capture = player.mouse_capture.clone();
+
+        window::run(id, move |window| {
+            if let Err(error) = mouse_capture.lock().unwrap().set(window, capture) {
+                tracing::warn!(%error, "failed to change player mouse capture");
+            }
+            Message::Noop
+        })
+        .discard()
     }
 
     fn idle_setup(&mut self) -> Option<&mut Setup> {

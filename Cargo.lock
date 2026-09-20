@@ -2389,8 +2389,12 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "walkdir",
+ "wayland-client",
+ "wayland-protocols",
  "webbrowser",
  "wgpu",
+ "windows-sys 0.61.2",
+ "x11-dl",
  "zerocopy",
  "zip",
 ]

@@ -205,6 +205,11 @@ impl PlayerState {
         }
     }
 
+    pub fn clear_input(&self) {
+        let mut input = self.input.lock().unwrap();
+        *input = input.cleared();
+    }
+
     pub fn hotkey(&self, key: Code) -> Option<Hotkey> {
         self.keymap.lock().unwrap().hotkeys.lookup(key)
     }

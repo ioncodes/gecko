@@ -61,6 +61,7 @@ pub struct HotkeysConfig {
     pub screenshot: Option<String>,
     pub save_state: Option<String>,
     pub load_state: Option<String>,
+    pub release_mouse: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -158,6 +159,7 @@ pub struct Hotkeys {
     pub screenshot: Code,
     pub save_state: Code,
     pub load_state: Code,
+    pub release_mouse: Code,
 }
 
 impl Default for Hotkeys {
@@ -170,6 +172,7 @@ impl Default for Hotkeys {
             screenshot: Code::F12,
             save_state: Code::F5,
             load_state: Code::F7,
+            release_mouse: Code::Escape,
         }
     }
 }
@@ -190,6 +193,7 @@ pub enum Hotkey {
     Screenshot,
     SaveState,
     LoadState,
+    ReleaseMouse,
 }
 
 impl Hotkeys {
@@ -208,6 +212,8 @@ impl Hotkeys {
             Some(Hotkey::SaveState)
         } else if key == self.load_state {
             Some(Hotkey::LoadState)
+        } else if key == self.release_mouse {
+            Some(Hotkey::ReleaseMouse)
         } else {
             None
         }
@@ -255,6 +261,7 @@ pub enum KeyTarget {
     HotkeyScreenshot,
     HotkeySaveState,
     HotkeyLoadState,
+    HotkeyReleaseMouse,
 }
 
 pub const GC_KEY_TARGETS: &[(KeyTarget, &str)] = &[
@@ -303,6 +310,7 @@ pub const HOTKEY_TARGETS: &[(KeyTarget, &str)] = &[
     (KeyTarget::HotkeyScreenshot, "Screenshot"),
     (KeyTarget::HotkeySaveState, "Save State"),
     (KeyTarget::HotkeyLoadState, "Load State"),
+    (KeyTarget::HotkeyReleaseMouse, "Release Mouse"),
 ];
 
 pub fn field(config: &mut KeyboardConfig, target: KeyTarget) -> &mut Option<String> {
@@ -346,6 +354,7 @@ pub fn field(config: &mut KeyboardConfig, target: KeyTarget) -> &mut Option<Stri
         KeyTarget::HotkeyScreenshot => &mut config.hotkeys.screenshot,
         KeyTarget::HotkeySaveState => &mut config.hotkeys.save_state,
         KeyTarget::HotkeyLoadState => &mut config.hotkeys.load_state,
+        KeyTarget::HotkeyReleaseMouse => &mut config.hotkeys.release_mouse,
     }
 }
 
@@ -391,6 +400,7 @@ impl Keymap {
             KeyTarget::HotkeyScreenshot => self.hotkeys.screenshot,
             KeyTarget::HotkeySaveState => self.hotkeys.save_state,
             KeyTarget::HotkeyLoadState => self.hotkeys.load_state,
+            KeyTarget::HotkeyReleaseMouse => self.hotkeys.release_mouse,
         }
     }
 }
@@ -440,6 +450,7 @@ impl KeyboardConfig {
         self::set(&mut keymap.hotkeys.screenshot, &self.hotkeys.screenshot);
         self::set(&mut keymap.hotkeys.save_state, &self.hotkeys.save_state);
         self::set(&mut keymap.hotkeys.load_state, &self.hotkeys.load_state);
+        self::set(&mut keymap.hotkeys.release_mouse, &self.hotkeys.release_mouse);
 
         keymap
     }

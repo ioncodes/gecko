@@ -6,12 +6,17 @@ use iced::{Rectangle, mouse, window};
 
 use crate::app::Message;
 use crate::keybinds::Hotkey;
+use crate::player::MouseCapture;
 use crate::player::state::{self, PlayerState};
 
-pub fn shader_widget(state: Arc<PlayerState>, window: window::Id) -> Shader<Message, PlayerProgram> {
-    Shader::new(PlayerProgram { state, window })
-        .width(iced::Length::Fill)
-        .height(iced::Length::Fill)
+pub fn shader_widget(state: Arc<PlayerState>, window: window::Id, captured: bool) -> Shader<Message, PlayerProgram> {
+    Shader::new(PlayerProgram {
+        state,
+        window,
+        captured,
+    })
+    .width(iced::Length::Fill)
+    .height(iced::Length::Fill)
 }
 
 fn hotkey_message(hotkey: Hotkey, window: window::Id) -> Message {
@@ -23,12 +28,14 @@ fn hotkey_message(hotkey: Hotkey, window: window::Id) -> Message {
         Hotkey::Screenshot => Message::PlayerScreenshot(window),
         Hotkey::SaveState => Message::PlayerSaveState(window),
         Hotkey::LoadState => Message::PlayerLoadState(window),
+        Hotkey::ReleaseMouse => Message::PlayerCaptureMouse(window, false),
     }
 }
 
 pub struct PlayerProgram {
     state: Arc<PlayerState>,
     window: window::Id,
+    captured: bool,
 }
 
 impl Program<Message> for PlayerProgram {
@@ -53,7 +60,7 @@ impl Program<Message> for PlayerProgram {
                 iced::keyboard::Event::KeyPressed {
                     physical_key, repeat, ..
                 } => {
-                    let hotkey = match state::physical_to_code(physical_key) {
+                    let message = match state::physical_to_code(physical_key) {
                         Some(_) if *repeat => None,
                         Some(code) => match self.state.hotkey(code) {
                             Some(hotkey) => Some(self::hotkey_message(hotkey, self.window)),
@@ -65,7 +72,7 @@ impl Program<Message> for PlayerProgram {
                         None => None,
                     };
 
-                    match hotkey {
+                    match message {
                         Some(message) => Some(shader::Action::publish(message)),
                         None => Some(shader::Action::request_redraw()),
                     }
@@ -96,6 +103,9 @@ impl Program<Message> for PlayerProgram {
                 iced::mouse::Event::ButtonPressed(button) => {
                     if cursor.is_over(bounds) {
                         self.state.handle_mouse_button(*button, true);
+                        if !self.captured {
+                            return Some(shader::Action::publish(Message::PlayerCaptureMouse(self.window, true)));
+                        }
                     }
                     Some(shader::Action::request_redraw())
                 }
@@ -105,12 +115,23 @@ impl Program<Message> for PlayerProgram {
                 }
                 _ => None,
             },
+            iced::Event::Window(window::Event::Moved(_) | window::Event::Resized(_))
+                if self.captured && MouseCapture::RECLIP_ON_MOVE =>
+            {
+                Some(shader::Action::publish(Message::PlayerCaptureMouse(self.window, true)))
+            }
+            iced::Event::Window(window::Event::Focused) => {
+                Some(shader::Action::publish(Message::PlayerFocused(self.window, true)))
+            }
+            iced::Event::Window(window::Event::Unfocused) => {
+                Some(shader::Action::publish(Message::PlayerFocused(self.window, false)))
+            }
             _ => None,
         }
     }
 
     fn mouse_interaction(&self, _state: &Self::State, bounds: Rectangle, cursor: mouse::Cursor) -> mouse::Interaction {
-        if cursor.is_over(bounds) {
+        if self.captured && cursor.is_over(bounds) {
             mouse::Interaction::Hidden
         } else {
             mouse::Interaction::None
