@@ -15,7 +15,7 @@ impl MouseCapture {
             return Ok(());
         }
 
-        self::confine(self, window, capture)?;
+        self.confine(window, capture)?;
         self.active = capture;
 
         Ok(())
@@ -30,23 +30,25 @@ impl MouseCapture {
 }
 
 #[cfg(target_os = "linux")]
-fn confine(capture_state: &mut MouseCapture, window: &dyn Window, capture: bool) -> anyhow::Result<()> {
-    use iced::window::raw_window_handle::RawWindowHandle;
+impl MouseCapture {
+    fn confine(&mut self, window: &dyn Window, capture: bool) -> anyhow::Result<()> {
+        use iced::window::raw_window_handle::RawWindowHandle;
 
-    match window.window_handle()?.as_raw() {
-        RawWindowHandle::Wayland(surface) => {
-            if capture_state.wayland.is_none() && capture {
-                capture_state.wayland = Some(wayland::Capture::new(window, surface)?);
+        match window.window_handle()?.as_raw() {
+            RawWindowHandle::Wayland(surface) => {
+                if self.wayland.is_none() && capture {
+                    self.wayland = Some(wayland::Capture::new(window, surface)?);
+                }
+
+                if let Some(wayland) = &mut self.wayland {
+                    wayland.set(capture)?;
+                }
+
+                Ok(())
             }
-
-            if let Some(wayland) = &mut capture_state.wayland {
-                wayland.set(capture)?;
-            }
-
-            Ok(())
+            RawWindowHandle::Xlib(handle) => self::confine_x11(window, handle.window, capture),
+            _ => anyhow::bail!("mouse confinement is unsupported on this window system"),
         }
-        RawWindowHandle::Xlib(handle) => self::confine_x11(window, handle.window, capture),
-        _ => anyhow::bail!("mouse confinement is unsupported on this window system"),
     }
 }
 
@@ -98,45 +100,49 @@ fn confine_x11(window: &dyn Window, target: u64, capture: bool) -> anyhow::Resul
 }
 
 #[cfg(target_os = "windows")]
-fn confine(_capture_state: &mut MouseCapture, window: &dyn Window, capture: bool) -> anyhow::Result<()> {
-    use iced::window::raw_window_handle::RawWindowHandle;
-    use windows_sys::Win32::Foundation::{POINT, RECT};
-    use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{ClipCursor, GetClientRect};
+impl MouseCapture {
+    fn confine(&mut self, window: &dyn Window, capture: bool) -> anyhow::Result<()> {
+        use iced::window::raw_window_handle::RawWindowHandle;
+        use windows_sys::Win32::Foundation::{POINT, RECT};
+        use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{ClipCursor, GetClientRect};
 
-    let RawWindowHandle::Win32(handle) = window.window_handle()?.as_raw() else {
-        anyhow::bail!("mouse confinement is unsupported on this window system");
-    };
+        let RawWindowHandle::Win32(handle) = window.window_handle()?.as_raw() else {
+            anyhow::bail!("mouse confinement is unsupported on this window system");
+        };
 
-    // SAFETY: iced lends a live HWND; all output pointers are valid stack storage.
-    unsafe {
-        let mut rect = RECT::default();
+        // SAFETY: iced lends a live HWND; all output pointers are valid stack storage.
+        unsafe {
+            let mut rect = RECT::default();
 
-        if capture {
-            let hwnd = handle.hwnd.get() as _;
-            anyhow::ensure!(GetClientRect(hwnd, &mut rect) != 0, "GetClientRect failed");
+            if capture {
+                let hwnd = handle.hwnd.get() as _;
+                anyhow::ensure!(GetClientRect(hwnd, &mut rect) != 0, "GetClientRect failed");
 
-            let mut origin = POINT::default();
-            anyhow::ensure!(ClientToScreen(hwnd, &mut origin) != 0, "ClientToScreen failed");
+                let mut origin = POINT::default();
+                anyhow::ensure!(ClientToScreen(hwnd, &mut origin) != 0, "ClientToScreen failed");
 
-            rect.left += origin.x;
-            rect.right += origin.x;
-            rect.top += origin.y;
-            rect.bottom += origin.y;
+                rect.left += origin.x;
+                rect.right += origin.x;
+                rect.top += origin.y;
+                rect.bottom += origin.y;
+            }
+
+            anyhow::ensure!(
+                ClipCursor(if capture { &rect } else { std::ptr::null() }) != 0,
+                "ClipCursor failed"
+            );
         }
 
-        anyhow::ensure!(
-            ClipCursor(if capture { &rect } else { std::ptr::null() }) != 0,
-            "ClipCursor failed"
-        );
+        Ok(())
     }
-
-    Ok(())
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-fn confine(_capture_state: &mut MouseCapture, _window: &dyn Window, _capture: bool) -> anyhow::Result<()> {
-    anyhow::bail!("mouse confinement is unsupported on this window system")
+impl MouseCapture {
+    fn confine(&mut self, _window: &dyn Window, _capture: bool) -> anyhow::Result<()> {
+        anyhow::bail!("mouse confinement is unsupported on this window system")
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -210,18 +216,16 @@ mod wayland {
         }
 
         pub fn set(&mut self, capture: bool) -> anyhow::Result<()> {
-            match capture {
-                true if self.confined.is_none() => {
-                    let qh = self.queue.handle();
-                    let pointer = self.seat.get_pointer(&qh, ());
-                    let confined =
-                        self.constraints
-                            .confine_pointer(&self.surface, &pointer, None, Lifetime::Persistent, &qh, ());
+            if !capture {
+                self::release(&mut self.confined);
+            } else if self.confined.is_none() {
+                let qh = self.queue.handle();
+                let pointer = self.seat.get_pointer(&qh, ());
+                let confined =
+                    self.constraints
+                        .confine_pointer(&self.surface, &pointer, None, Lifetime::Persistent, &qh, ());
 
-                    self.confined = Some((confined, pointer));
-                }
-                false => self::release(&mut self.confined),
-                true => {}
+                self.confined = Some((confined, pointer));
             }
 
             self.connection.flush()?;

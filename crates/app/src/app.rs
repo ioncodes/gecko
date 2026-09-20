@@ -1060,10 +1060,6 @@ impl App {
         };
 
         let capture = capture && player.game.platform == Platform::Wii;
-        if player.captured == capture && !(capture && player::MouseCapture::RECLIP_ON_MOVE) {
-            return Task::none();
-        }
-
         player.captured = capture;
         let mouse_capture = player.mouse_capture.clone();
 

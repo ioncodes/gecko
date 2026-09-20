@@ -100,32 +100,31 @@ impl Program<Message> for PlayerProgram {
                     self.state.clear_ir_pointer();
                     Some(shader::Action::request_redraw())
                 }
-                iced::mouse::Event::ButtonPressed(button) => {
-                    if cursor.is_over(bounds) {
-                        self.state.handle_mouse_button(*button, true);
-                        if !self.captured {
-                            return Some(shader::Action::publish(Message::PlayerCaptureMouse(self.window, true)));
-                        }
+                iced::mouse::Event::ButtonPressed(button) if cursor.is_over(bounds) => {
+                    self.state.handle_mouse_button(*button, true);
+
+                    match self.captured {
+                        true => Some(shader::Action::request_redraw()),
+                        false => Some(shader::Action::publish(Message::PlayerCaptureMouse(self.window, true))),
                     }
-                    Some(shader::Action::request_redraw())
                 }
+                iced::mouse::Event::ButtonPressed(_) => Some(shader::Action::request_redraw()),
                 iced::mouse::Event::ButtonReleased(button) => {
                     self.state.handle_mouse_button(*button, false);
                     Some(shader::Action::request_redraw())
                 }
                 _ => None,
             },
-            iced::Event::Window(window::Event::Moved(_) | window::Event::Resized(_))
-                if self.captured && MouseCapture::RECLIP_ON_MOVE =>
-            {
-                Some(shader::Action::publish(Message::PlayerCaptureMouse(self.window, true)))
-            }
-            iced::Event::Window(window::Event::Focused) => {
-                Some(shader::Action::publish(Message::PlayerFocused(self.window, true)))
-            }
-            iced::Event::Window(window::Event::Unfocused) => {
-                Some(shader::Action::publish(Message::PlayerFocused(self.window, false)))
-            }
+            iced::Event::Window(event) => match event {
+                window::Event::Moved(_) | window::Event::Resized(_)
+                    if self.captured && MouseCapture::RECLIP_ON_MOVE =>
+                {
+                    Some(shader::Action::publish(Message::PlayerCaptureMouse(self.window, true)))
+                }
+                window::Event::Focused => Some(shader::Action::publish(Message::PlayerFocused(self.window, true))),
+                window::Event::Unfocused => Some(shader::Action::publish(Message::PlayerFocused(self.window, false))),
+                _ => None,
+            },
             _ => None,
         }
     }
