@@ -340,16 +340,24 @@ struct FsOutDepth {
     @builtin(frag_depth) depth: f32,
 }
 
+// Hardware readbacks are consistent with a signed 27bit depth field! The
+// frozen plane value wraps into -2^26 through 2^26 - 1 before saturating to Z24.
+// Unsure if this is true, it seems we'd have to ask the crackhead engineer who designed this.
+// Thanks @hazel for testing on hardware :D
+fn zfreeze_depth(z: f32) -> f32 {
+    return clamp(z - floor(z / 134217728.0 + 0.5) * 134217728.0, 0.0, 16777215.0);
+}
+
 fn shade_depth(in: VsOut) -> FsOutDepth {
     let r = run_tev(in);
     var depth = in.clip_pos.z;
     var z24 = round((1.0 - depth) * 16777215.0);
 
     // W enables Z-freeze. XYZ stores the saved plane's A, B, C coeffs.
-    // Evaluate z = A*x + B*y + C at this framebuffer pixel, then clamp to Z24.
+    // Evaluate the plane, wrap its signed depth result, then clamp to Z24.
     // Divide by 2^24 and reverse for host depth (near = 1).
     if frame.zfreeze_plane.w != 0.0 {
-        z24 = clamp(dot(frame.zfreeze_plane.xyz, vec3<f32>(in.clip_pos.xy, 1.0)), 0.0, 16777215.0);
+        z24 = zfreeze_depth(dot(frame.zfreeze_plane.xyz, vec3<f32>(in.clip_pos.xy, 1.0)));
         depth = 1.0 - z24 / 16777216.0;
     }
 
