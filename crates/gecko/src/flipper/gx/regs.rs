@@ -592,6 +592,67 @@ pub struct TxSetImage0 {
 
 #[chapa::bitfield(u32, order = lsb0)]
 #[derive(Debug, Clone, Copy)]
+pub struct TxSetImage1 {
+    #[bits(0..=14)]
+    pub tmem_even: u16,
+    #[bits(15..=17)]
+    pub cache_width: u8,
+    #[bits(18..=20)]
+    pub cache_height: u8,
+    #[bits(21)]
+    pub manually_managed: bool,
+}
+
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy)]
+pub struct TxSetImage2 {
+    #[bits(0..=14)]
+    pub tmem_odd: u16,
+    #[bits(15..=17)]
+    pub cache_width: u8,
+    #[bits(18..=20)]
+    pub cache_height: u8,
+}
+
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy)]
+pub struct PreloadMode {
+    #[bits(0..=14)]
+    pub count: u16,
+    #[bits(15..=16)]
+    pub tile_type: u8,
+}
+
+impl PreloadMode {
+    pub fn split_banks(&self) -> bool {
+        self.tile_type() == 3
+    }
+}
+
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy)]
+pub struct PreloadAddress {
+    #[bits(0..=23)]
+    pub address: u32,
+}
+
+impl PreloadAddress {
+    pub fn byte_address(&self) -> usize {
+        self.address() as usize * super::constants::TMEM_LINE_SIZE
+    }
+}
+
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy)]
+pub struct LoadTlut1 {
+    #[bits(0..=9)]
+    pub tmem_offset: u16,
+    #[bits(10..=20)]
+    pub count: u16,
+}
+
+#[chapa::bitfield(u32, order = lsb0)]
+#[derive(Debug, Clone, Copy)]
 pub struct TxSetImage3 {
     #[bits(0..=23)]
     pub image_base: u32,

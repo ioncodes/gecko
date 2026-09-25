@@ -152,6 +152,7 @@ impl GraphicsProcessor {
             let vf = self.build_vertex_format(cmd);
             let view = mmio.ram_view();
             let mip_levels: [u32; 8] = std::array::from_fn(|slot| self.texture_mip_levels(slot));
+            let preloaded: [bool; 8] = std::array::from_fn(|slot| self.texture_is_preloaded(slot));
             let rec = self.recorder.as_deref_mut().unwrap();
             let mut offset = 0;
 
@@ -162,6 +163,9 @@ impl GraphicsProcessor {
             }
 
             for (slot, desc) in self.cur_textures.iter().enumerate() {
+                if preloaded[slot] {
+                    continue;
+                }
                 let Some(desc) = desc else {
                     continue;
                 };

@@ -1,6 +1,7 @@
 mod bp;
 pub mod constants;
 pub mod depth;
+mod diagnostics;
 pub mod draw;
 pub mod fifo;
 #[cfg(feature = "jit")]
@@ -11,6 +12,7 @@ pub mod regs;
 pub mod tev;
 mod texgen;
 pub mod texture;
+mod tmem;
 mod vertex;
 mod xf;
 
@@ -58,10 +60,10 @@ pub struct GraphicsProcessor {
     // Per-texture-slot TLUT binding (tmem offset + palette pixel format),
     // populated by BP_TX_SETTLUT writes.
     pub cur_tluts: [draw::TlutRef; 8],
-    // Palette TMEM: backing store for indexed texture palettes. Addressed as
-    // u16 entries; a LOADTLUT copies count*16 entries starting at
-    // (tmem_offset * 256). Fixed-size so indexing is branch-free.
-    pub palette_mem: Vec<u16>,
+    // Shared 1 MiB TMEM for palettes and manually preloaded textures.
+    // Entries hold guest big-endian u16s decoded to native order.
+    pub tmem: Vec<u16>,
+    pub(crate) tmem_generation: u64,
     pub cur_tev_color_env: [TevColorEnv; 16],
     pub cur_tev_alpha_env: [TevAlphaEnv; 16],
     pub cur_tev_color_regs_lo: [TevRegisterL; 4],
@@ -216,7 +218,8 @@ impl GraphicsProcessor {
             cur_textures: Default::default(),
             tex_dirty: 0,
             cur_tluts: [draw::TlutRef::default(); 8],
-            palette_mem: vec![0u16; TLUT_MEM_ENTRIES],
+            tmem: vec![0u16; constants::TMEM_SIZE / 2],
+            tmem_generation: 0,
             cur_tev_color_env: Default::default(),
             cur_tev_alpha_env: Default::default(),
             cur_tev_color_regs_lo: Default::default(),
@@ -598,7 +601,8 @@ impl GraphicsProcessor {
         w.bytes(bytemuck::cast_slice(&self.bp_regs));
         w.bytes(bytemuck::cast_slice(&self.cp_regs));
         w.bytes(bytemuck::cast_slice(&self.xf_mem));
-        w.bytes(bytemuck::cast_slice(&self.palette_mem));
+        // Keep the original half-MiB layout; newer states append the rest.
+        w.bytes(bytemuck::cast_slice(&self.tmem[..TLUT_MEM_ENTRIES]));
         w.bytes(&self.fifo);
 
         w.pod(&self.cur_textures);
@@ -668,7 +672,7 @@ impl GraphicsProcessor {
         r.bytes_into(bytemuck::cast_slice_mut(&mut self.bp_regs))?;
         r.bytes_into(bytemuck::cast_slice_mut(&mut self.cp_regs))?;
         r.bytes_into(bytemuck::cast_slice_mut(&mut self.xf_mem))?;
-        r.bytes_into(bytemuck::cast_slice_mut(&mut self.palette_mem))?;
+        r.bytes_into(bytemuck::cast_slice_mut(&mut self.tmem[..TLUT_MEM_ENTRIES]))?;
 
         self.fifo.clear();
         self.fifo.extend_from_slice(r.bytes()?);

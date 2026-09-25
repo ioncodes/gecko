@@ -1,6 +1,6 @@
 use super::constants::*;
 use super::math::Vec3;
-use super::{GraphicsProcessor, draw};
+use super::{GraphicsProcessor, diagnostics, draw};
 use crate::host::{GxAction, RenderSink};
 use crate::mmio::RamView;
 
@@ -36,6 +36,9 @@ impl GraphicsProcessor {
 
         for (i, val) in values.enumerate() {
             let reg = base + i;
+            if !diagnostics::xf_implemented(reg) {
+                diagnostics::unimplemented("XF", reg, val);
+            }
             if reg < self.xf_mem.len() {
                 if tracked && self.xf_mem[reg] != val {
                     dirty.texgen |= (XF_NUM_TEXGENS..XF_TEXGEN_END).contains(&reg);
@@ -157,9 +160,18 @@ impl GraphicsProcessor {
     pub fn load_cp(&mut self, data: &[u8]) {
         let idx = data[0] as usize;
         let val = u32::from_be_bytes([data[1], data[2], data[3], data[4]]);
+
+        if !diagnostics::cp_implemented(idx) {
+            diagnostics::unimplemented("CP", idx, val);
+        }
+
+        let Some(register) = self.cp_regs.get_mut(idx) else {
+            return;
+        };
+
         #[cfg(feature = "jit")]
-        let changed = self.cp_regs[idx] != val;
-        self.cp_regs[idx] = val;
+        let changed = *register != val;
+        *register = val;
 
         #[cfg(feature = "jit")]
         if changed

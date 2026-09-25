@@ -289,7 +289,7 @@ pub fn show_gx<const SYSTEM: SystemId>(
                         );
                         let tlut = gx.cur_tluts[slot];
                         let base = (tlut.tmem_offset as usize) * 256;
-                        let palette = gx.palette_mem.get(base..).unwrap_or(&[]);
+                        let palette = gx.tmem.get(base..).unwrap_or(&[]);
                         ui.collapsing(heading, |ui| {
                             texture_preview(ui, tex, &mmio.ram, palette, tlut);
                         });

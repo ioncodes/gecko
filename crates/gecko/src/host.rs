@@ -13,7 +13,8 @@ use std::path::PathBuf;
 ///
 /// `variant` combines mip count and mipmap enablement with a 32-bit hash of
 /// `(palette content, tlut.format, tmem_offset)` for paletted textures.
-/// Single-level, non-paletted textures use `0`.
+/// Single-level, non-paletted RAM textures use `0`. Preloaded textures also
+/// mix in their odd-bank TMEM address.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct TextureKey {
     pub ram_addr: Address,

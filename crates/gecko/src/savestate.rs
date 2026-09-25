@@ -2,7 +2,7 @@ use crate::system::{System, SystemId, WII};
 use std::path::PathBuf;
 
 pub const STATE_MAGIC: [u8; 4] = *b"GKST";
-pub const STATE_VERSION: u32 = 3;
+pub const STATE_VERSION: u32 = 4;
 
 const COMPRESSION_LEVEL: i32 = 1;
 
@@ -275,6 +275,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         // Version 2 appends the DSP exception latch to preserve version 1 layouts
         w.u8(self.dsp.pending_exceptions);
         w.pod(&self.gx.zfreeze_plane);
+        // Version 4 extends the old palette-only snapshot to all of TMEM.
+        self.gx.save_tmem_tail(&mut w);
 
         self::pack(SYSTEM, &w.into_inner())
     }
@@ -315,6 +317,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
 
         self.dsp.pending_exceptions = if version >= 2 { r.u8()? } else { 0 };
         self.gx.zfreeze_plane = if version >= 3 { r.pod()? } else { Default::default() };
+        self.gx.load_tmem_tail(&mut r, version >= 4)?;
 
         if r.remaining() != 0 {
             return Err(StateError::Corrupt("trailing data"));

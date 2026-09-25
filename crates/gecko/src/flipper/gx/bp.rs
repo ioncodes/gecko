@@ -1,7 +1,7 @@
 use super::constants::*;
 use super::recorder::MemoryUpdateType;
 use super::regs::*;
-use super::{GraphicsProcessor, draw, texture};
+use super::{GraphicsProcessor, diagnostics, draw, texture};
 use crate::host::{GxAction, RenderSink, TextureKey, TextureLod};
 use crate::mmio::{Mmio, RamView, RamViewMut};
 
@@ -25,9 +25,13 @@ impl GraphicsProcessor {
             self.stats.bp_writes += 1;
         }
 
+        if !diagnostics::bp_implemented(idx) {
+            diagnostics::unimplemented("BP", idx, val);
+        }
+
         let command_write = matches!(
             idx,
-            BP_BP_MASK | BP_LOAD_TLUT1 | BP_PE_DONE | BP_PE_TOKEN | BP_PE_TOKEN_INT | BP_PE_COPY_CMD
+            BP_BP_MASK | BP_LOAD_TLUT1 | BP_PRELOAD_MODE | BP_PE_DONE | BP_PE_TOKEN | BP_PE_TOKEN_INT | BP_PE_COPY_CMD
         );
         if val == old && !command_write {
             return;
@@ -82,20 +86,14 @@ impl GraphicsProcessor {
 
         // LOADTLUT: writing TLUT1 triggers a copy from main RAM (address in
         // TLUT0, stored pre-shifted by 5) into our palette TMEM. Any paletted
-        // texture already bound is now looking at fresh palette bytes, so we
-        // must redecode it. We don't know which slots' TLUT regions overlap
-        // the load, so rescan all paletted slots (saw this in Dolphin @
-        // TMEM::InvalidateAll on LOADTLUT1).
+        // texture already bound is now looking at fresh palette bytes.
+        // Palettes and preloaded textures share TMEM, so invalidate both.
         if idx == BP_LOAD_TLUT1 {
             self.load_tlut(&ram.as_view(), val);
-            for slot in 0..self.cur_textures.len() {
-                let image0 = TxSetImage0::from_raw(
-                    self.bp_regs[self::tx_slot_reg(BP_TX_SETIMAGE0_I0, BP_TX_SETIMAGE0_I4, slot)],
-                );
-                if image0.format().is_paletted() {
-                    self.tex_dirty |= 1 << slot;
-                }
-            }
+            self.invalidate_tmem();
+        }
+        if idx == BP_PRELOAD_MODE {
+            self.preload_texture(&ram.as_view(), PreloadMode::from_raw(val));
         }
 
         if (BP_SU_SSIZE0..BP_SU_SIZE_END).contains(&idx) {
@@ -299,7 +297,7 @@ impl GraphicsProcessor {
         );
 
         let tlut = self.cur_tluts[slot];
-        let palette = slot_palette(&self.palette_mem, tlut.tmem_offset);
+        let palette = slot_palette(&self.tmem, tlut.tmem_offset);
 
         // Cache id mixes a hash of the bound palette content + tlut identity
         // into the high 32 bits so each distinct palette state for a CI*
@@ -311,22 +309,37 @@ impl GraphicsProcessor {
         let mipmapped = mode0.min_filter().uses_mipmaps();
         let mip_levels = texture::mip_level_count(width, height, mode0.min_filter(), mode1.max_lod());
         let lod_key = if mipmapped { mip_levels } else { 0 };
-        let cache_id = self::texture_cache_id(ram_addr, format, tlut, palette, lod_key);
+        let preloaded = self.texture_is_preloaded(slot);
+        let mut cache_id = self::texture_cache_id(ram_addr, format, tlut, palette, lod_key);
 
         // Resolve the texture's raw bytes once, against MEM1 or MEM2. If the
         // address doesn't fall in either bank, leave the slot's last binding
         // alone but skip the decode (the renderer will keep its previous
         // texture for this id).
         let raw_size = texture::mip_data_size(width, height, format, mip_levels);
-        let tex_slice = ram.slice(ram_addr, raw_size);
+        let tmem_bytes;
+        let (tex_slice, generation) = if preloaded {
+            let [even, odd] = self.texture_tmem_bases(slot);
+            // Preloaded descriptors may leave IMAGE3 stale or share it among
+            // unrelated textures. Keep these out of RAM/EFB cache entries.
+            cache_id.ram_addr = 0x8000_0000 | even as u32;
+            cache_id.variant ^= (odd as u32).wrapping_mul(0x85eb_ca6b);
+            tmem_bytes = self.preloaded_texture_bytes(slot, width, height, format, mip_levels);
+            (tmem_bytes.as_deref(), self.tmem_generation)
+        } else {
+            let generation = ram.range_generation(ram_addr, raw_size).unwrap_or(u64::MAX);
+            (ram.slice(ram_addr, raw_size), generation)
+        };
 
-        if tex_slice.is_some()
+        if !preloaded
+            && tex_slice.is_some()
             && let Some(rec) = self.recorder.as_deref_mut()
         {
             rec.use_memory(ram, ram_addr as u32, raw_size, MemoryUpdateType::TextureMap);
         }
 
-        let gpu_copy = self.is_pending_gpu_copy(renderer, ram_addr as u32, width, height, format, mip_levels);
+        let gpu_copy =
+            !preloaded && self.is_pending_gpu_copy(renderer, ram_addr as u32, width, height, format, mip_levels);
         let changed = !gpu_copy
             && match tex_slice {
                 Some(tex) => self::texture_data_changed(
@@ -335,7 +348,7 @@ impl GraphicsProcessor {
                     cache_id,
                     palette,
                     tlut,
-                    ram.range_generation(ram_addr, raw_size).unwrap_or(u64::MAX),
+                    generation,
                     (width, height, format, mip_levels),
                 ),
                 None => {
@@ -480,6 +493,9 @@ impl GraphicsProcessor {
         while dirty != 0 {
             let slot = dirty.trailing_zeros() as usize;
             dirty &= !(1 << slot);
+            if self.texture_is_preloaded(slot) {
+                continue;
+            }
 
             let image0 =
                 TxSetImage0::from_raw(self.bp_regs[self::tx_slot_reg(BP_TX_SETIMAGE0_I0, BP_TX_SETIMAGE0_I4, slot)]);
@@ -786,13 +802,13 @@ impl GraphicsProcessor {
 /// Texture slot to BP register index: slots 0-3 live at `base_i0`, slots 4-7
 /// at `base_i4` (TX_SETMODE*/TX_SETIMAGE*/TX_SETTLUT all share this layout).
 #[inline(always)]
-fn tx_slot_reg(base_i0: usize, base_i4: usize, slot: usize) -> usize {
+pub(super) fn tx_slot_reg(base_i0: usize, base_i4: usize, slot: usize) -> usize {
     if slot < 4 { base_i0 + slot } else { base_i4 + (slot - 4) }
 }
 
-fn slot_palette(palette_mem: &[u16], tmem_offset: u16) -> &[u16] {
+fn slot_palette(tmem: &[u16], tmem_offset: u16) -> &[u16] {
     let base = (tmem_offset as usize) * TLUT_ENTRIES_PER_UNIT;
-    palette_mem.get(base..).unwrap_or(&[])
+    tmem.get(base..).unwrap_or(&[])
 }
 
 /// Mint the renderer cache key for the given texture binding.
@@ -877,9 +893,10 @@ impl GraphicsProcessor {
     /// into palette TMEM starting at `tmem_offset * 256`. The source address
     /// can fall in either MEM1 or MEM2 on Wii titles.
     fn load_tlut(&mut self, ram: &RamView<'_>, load_val: u32) {
-        let tmem_offset = (load_val & 0x3FF) as usize;
-        let count = ((load_val >> 10) & 0x7FF) as usize;
-        let ram_base = (self.bp_regs[BP_LOAD_TLUT0] as usize) << 5;
+        let load = LoadTlut1::from_raw(load_val);
+        let tmem_offset = usize::from(load.tmem_offset());
+        let count = usize::from(load.count());
+        let ram_base = PreloadAddress::from_raw(self.bp_regs[BP_LOAD_TLUT0]).byte_address();
         let entries = count * TLUT_LOAD_ENTRIES_PER_UNIT;
         let byte_count = entries * 2;
         let dst_base = tmem_offset * TLUT_ENTRIES_PER_UNIT;
@@ -901,20 +918,17 @@ impl GraphicsProcessor {
         if let Some(rec) = self.recorder.as_deref_mut() {
             rec.use_memory(ram, ram_base as u32, byte_count, MemoryUpdateType::Tmem);
         }
-        if dst_base.saturating_add(entries) > self.palette_mem.len() {
+        if dst_base.saturating_add(entries) > self.tmem.len() {
             tracing::warn!(
                 dst_base,
                 entries,
-                tmem_limit = self.palette_mem.len(),
+                tmem_limit = self.tmem.len(),
                 "LOADTLUT: destination palette range OOB, skipping"
             );
             return;
         }
 
-        let dst = &mut self.palette_mem[dst_base..dst_base + entries];
-        for (entry, chunk) in dst.iter_mut().zip(src.chunks_exact(2)) {
-            *entry = u16::from_be_bytes([chunk[0], chunk[1]]);
-        }
+        self.write_tmem(dst_base * 2, src);
 
         tracing::debug!(ram_base = format!("{ram_base:#010X}"), tmem_offset, entries, "LOADTLUT");
     }

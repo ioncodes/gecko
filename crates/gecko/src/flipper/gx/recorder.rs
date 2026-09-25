@@ -194,7 +194,7 @@ impl FifoRecorder {
         let regs = &gp.xf_mem[dff::XF_MEM_SIZE..dff::XF_MEM_SIZE + dff::XF_REGS_SIZE];
         self.file.xf_regs.copy_from_slice(regs);
 
-        for (i, entry) in gp.palette_mem.iter().enumerate() {
+        for (i, entry) in gp.tmem.iter().enumerate() {
             let off = i * 2;
             if off + 2 > self.file.tex_mem.len() {
                 break;

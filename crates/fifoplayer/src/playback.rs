@@ -1,10 +1,10 @@
-use gecko::flipper::gx::constants::{BP_REG_SIZE, CP_REG_SIZE};
+use gecko::flipper::gx::constants::{BP_LOAD_TLUT1, BP_PRELOAD_MODE, BP_REG_SIZE, CP_REG_SIZE};
 use gecko::flipper::gx::{GraphicsProcessor, texture};
 use gecko::host::{DrawData, DrawSegment, DrawVertex, GxAction, RenderSink, XfbPart};
 use gecko::mmio::{Mmio, RamViewMut};
 use gecko::system::SystemId;
 
-const BP_RESTORE_SKIP: &[usize] = &[0x45, 0x47, 0x48, 0x52, 0x65, 0xFE];
+const BP_RESTORE_SKIP: &[usize] = &[0x45, 0x47, 0x48, 0x52, BP_PRELOAD_MODE, BP_LOAD_TLUT1, 0xFE];
 
 pub struct PlayerSink {
     inner: Box<dyn RenderSink>,
@@ -101,14 +101,7 @@ impl<const SYSTEM: SystemId> Playback<SYSTEM> {
     }
 
     pub fn load_state(&mut self, file: &dff::DffFile, sink: &mut PlayerSink) {
-        for (i, entry) in self.gx.palette_mem.iter_mut().enumerate() {
-            let off = i * 2;
-            if off + 2 > file.tex_mem.len() {
-                break;
-            }
-
-            *entry = u16::from_be_bytes([file.tex_mem[off], file.tex_mem[off + 1]]);
-        }
+        self.gx.load_tmem(&file.tex_mem);
 
         let mut stream: Vec<u8> = Vec::with_capacity(32 * 1024);
 

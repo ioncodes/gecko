@@ -110,6 +110,12 @@ pub const BP_TX_SETTLUT_I4: usize = 0xB8; // TX_SETTLUT maps 4-7
 // register), LOAD_TLUT1 triggers the copy and carries tmem_offset / count.
 pub const BP_LOAD_TLUT0: usize = 0x64;
 pub const BP_LOAD_TLUT1: usize = 0x65;
+pub const BP_PRELOAD_ADDR: usize = 0x60;
+pub const BP_PRELOAD_TMEM_EVEN: usize = 0x61;
+pub const BP_PRELOAD_TMEM_ODD: usize = 0x62;
+pub const BP_PRELOAD_MODE: usize = 0x63;
+pub const TMEM_SIZE: usize = dff::TEX_MEM_SIZE;
+pub const TMEM_LINE_SIZE: usize = 32;
 
 // Palette TMEM layout: tmem_offset is in 256-entry (512-byte) units.
 pub const TLUT_ENTRIES_PER_UNIT: usize = 256;
