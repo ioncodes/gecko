@@ -17,6 +17,7 @@ pub struct Config {
     pub dsp_rom: Option<PathBuf>,
     pub dsp_coef: Option<PathBuf>,
     pub ipl: Option<PathBuf>,
+    pub ipl_hle: bool,
     #[serde(default = "self::default_skip_ipl")]
     pub skip_ipl: bool,
     #[serde(default = "self::default_upscale")]
@@ -176,6 +177,7 @@ impl Default for Config {
             dsp_rom: None,
             dsp_coef: None,
             ipl: None,
+            ipl_hle: false,
             skip_ipl: self::default_skip_ipl(),
             upscale: self::default_upscale(),
             aspect: AspectMode::default(),

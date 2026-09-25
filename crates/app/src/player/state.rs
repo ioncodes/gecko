@@ -83,8 +83,20 @@ impl PlayerState {
         let system_dir = config.system_dir_resolved();
         let dsp = Config::resolve_in_dir(&config.dsp_rom, &system_dir, DSP_ROM_FILE);
         let coef = Config::resolve_in_dir(&config.dsp_coef, &system_dir, DSP_COEF_FILE);
-        let ipl = Config::resolve_in_dir(&config.ipl, &system_dir, IPL_FILE);
-        let boot_error = self::validate(game.platform, game.format, &dsp, &coef, &ipl, &system_dir);
+        let ipl = if config.ipl_hle {
+            None
+        } else {
+            Config::resolve_in_dir(&config.ipl, &system_dir, IPL_FILE)
+        };
+        let boot_error = self::validate(
+            game.platform,
+            game.format,
+            &dsp,
+            &coef,
+            &ipl,
+            config.ipl_hle,
+            &system_dir,
+        );
 
         Arc::new(Self {
             boot: Mutex::new(Some(BootParams {
@@ -448,6 +460,7 @@ fn validate(
     dsp: &Option<PathBuf>,
     coef: &Option<PathBuf>,
     ipl: &Option<PathBuf>,
+    ipl_hle: bool,
     system_dir: &Path,
 ) -> Option<String> {
     let mut missing: Vec<&'static str> = Vec::new();
@@ -457,7 +470,7 @@ fn validate(
     if coef.is_none() {
         missing.push(DSP_COEF_FILE);
     }
-    if platform == Platform::Gcn && format != Format::Dol && ipl.is_none() {
+    if platform == Platform::Gcn && format != Format::Dol && !ipl_hle && ipl.is_none() {
         missing.push(IPL_FILE);
     }
 
@@ -469,7 +482,10 @@ fn validate(
         "DOL executables require dsp_rom.bin and dsp_coef.bin"
     } else {
         match platform {
-            Platform::Gcn => "GameCube games require IPL.bin, dsp_rom.bin and dsp_coef.bin",
+            Platform::Gcn if !ipl_hle => {
+                "GameCube games require IPL.bin, dsp_rom.bin and dsp_coef.bin. Enable Settings > Boot > IPL HLE (GameCube) to boot without IPL.bin"
+            }
+            Platform::Gcn => "GameCube games require dsp_rom.bin and dsp_coef.bin with IPL HLE",
             Platform::Wii => "Wii games require dsp_rom.bin and dsp_coef.bin",
         }
     };

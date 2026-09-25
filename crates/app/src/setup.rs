@@ -26,7 +26,7 @@ impl Field {
         match self {
             Self::Dsp => ("DSP ROM", "Required"),
             Self::Coef => ("DSP coefficients", "Required"),
-            Self::Ipl => ("GameCube IPL", "GameCube only"),
+            Self::Ipl => ("GameCube IPL", "Optional"),
             Self::GameCube => ("GameCube games", "Optional"),
             Self::Wii => ("Wii games", "Optional"),
             Self::Nand => ("Wii NAND", "Optional"),
@@ -133,7 +133,7 @@ impl Setup {
             && (!config_exists
                 || self.sources.dsp.is_none()
                 || self.sources.coef.is_none()
-                || (cfg.gcn_library.is_some() && self.sources.ipl.is_none()))
+                || (cfg.gcn_library.is_some() && !cfg.ipl_hle && self.sources.ipl.is_none()))
     }
 
     pub fn view(&self, palette: &Palette, cfg: &Config) -> Element<'static, Message> {
@@ -171,7 +171,7 @@ impl Setup {
         let fields_and_note = match self.step {
             Step::System => Some((
                 [Field::Dsp, Field::Coef, Field::Ipl],
-                "IPL is only needed for GameCube. Encoded IPLs are decoded automatically.",
+                "Leave IPL empty to use IPL HLE for GameCube. Encoded IPLs are decoded automatically.",
             )),
             Step::Folders => Some((
                 [Field::GameCube, Field::Wii, Field::Nand],
@@ -224,8 +224,11 @@ impl Setup {
                 ));
             }
             notes = notes.push(self::note("System files with these names will be replaced.", palette));
-            if self.sources.ipl.is_none() {
-                notes = notes.push(self::note("Add a GameCube IPL later in Guided Setup.", palette));
+            if self.sources.ipl.is_none() || cfg.ipl_hle {
+                notes = notes.push(self::note(
+                    "GameCube games will use IPL HLE. Change this in Settings > Boot.",
+                    palette,
+                ));
             }
             content = content.push(
                 container(column![self::divider(palette.border), notes].spacing(16))
@@ -480,10 +483,6 @@ fn validate_folders(sources: &Sources) -> anyhow::Result<()> {
         ensure!(path.is_dir(), "Game folder does not exist: {}", path.display());
     }
 
-    ensure!(
-        sources.gcn.is_none() || sources.ipl.is_some(),
-        "Choose a GameCube IPL in step 1 to use a GameCube library."
-    );
     Ok(())
 }
 
@@ -574,6 +573,8 @@ pub fn install(sources: Sources, mut cfg: Config, config_path: &Path, nand_dest:
     cfg.dsp_coef = Some(system.join(DSP_COEF_FILE));
     if sources.ipl.is_some() {
         cfg.ipl = Some(system.join(IPL_FILE));
+    } else {
+        cfg.ipl_hle = true;
     }
     cfg.gcn_library = sources.gcn;
     cfg.wii_library = sources.wii;

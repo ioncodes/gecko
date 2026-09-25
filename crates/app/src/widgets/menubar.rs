@@ -14,6 +14,7 @@ pub fn menubar(
     palette: &Palette,
     cpu: CpuMode,
     theme_pref: ThemePreference,
+    ipl_hle: bool,
     skip_ipl: bool,
     upscale: u32,
     aspect: AspectMode,
@@ -32,6 +33,7 @@ pub fn menubar(
                 palette,
                 cpu,
                 theme_pref,
+                ipl_hle,
                 skip_ipl,
                 upscale,
                 aspect,
@@ -234,6 +236,7 @@ fn settings_menu(
     palette: &Palette,
     cpu: CpuMode,
     theme_pref: ThemePreference,
+    ipl_hle: bool,
     skip_ipl: bool,
     upscale: u32,
     aspect: AspectMode,
@@ -241,6 +244,15 @@ fn settings_menu(
     sram_enabled: bool,
 ) -> Menu<'static, Message, iced::Theme, iced::Renderer> {
     let check = |label: &'static str, msg: Message, on: bool| Item::new(self::menu_item(palette, label, msg, Some(on)));
+
+    let mut boot_items = vec![check("IPL HLE (GameCube)", Message::MenuToggleIplHle, ipl_hle)];
+    if !ipl_hle {
+        boot_items.push(check("Skip IPL (GameCube)", Message::MenuToggleSkipIpl, skip_ipl));
+    }
+    boot_items.extend([
+        check("Memory Card (Slot A)", Message::MenuToggleMemoryCard, memcard_enabled),
+        check("Persist SRAM", Message::MenuToggleSram, sram_enabled),
+    ]);
 
     Menu::new(vec![
         Item::new(self::menu_item(palette, "Guided Setup...", Message::MenuSetup, None)),
@@ -261,15 +273,7 @@ fn settings_menu(
                 ),
             ],
         ),
-        self::submenu(
-            palette,
-            "Boot",
-            vec![
-                check("Skip IPL (GameCube)", Message::MenuToggleSkipIpl, skip_ipl),
-                check("Memory Card (Slot A)", Message::MenuToggleMemoryCard, memcard_enabled),
-                check("Persist SRAM", Message::MenuToggleSram, sram_enabled),
-            ],
-        ),
+        self::submenu(palette, "Boot", boot_items),
         self::submenu(
             palette,
             "Graphics",

@@ -59,6 +59,7 @@ pub enum Message {
     MenuQuit,
     MenuToggleCpu(CpuMode),
     MenuToggleSkipIpl,
+    MenuToggleIplHle,
     MenuToggleMemoryCard,
     MenuToggleSram,
     MenuSetTheme(ThemePreference),
@@ -571,6 +572,11 @@ impl App {
                 self.persist_config();
                 Task::none()
             }
+            Message::MenuToggleIplHle => {
+                self.config.ipl_hle = !self.config.ipl_hle;
+                self.persist_config();
+                Task::none()
+            }
             Message::MenuToggleSkipIpl => {
                 self.config.skip_ipl = !self.config.skip_ipl;
                 self.persist_config();
@@ -941,6 +947,7 @@ impl App {
                 palette,
                 self.config.cpu_mode,
                 self.config.theme,
+                self.config.ipl_hle,
                 self.config.skip_ipl,
                 self.config.upscale,
                 self.config.aspect,

@@ -72,7 +72,10 @@ Gecko is developed with homebrew development and reverse engineering in mind, bu
 Prebuilt releases (including debug builds) can be downloaded [here](https://github.com/ioncodes/gecko/releases). GameCube and Wii require system files to use the emulator, please refer to the ["Required Files"](https://github.com/ioncodes/gecko#required-files) chapter. Minimal commands to launch a game:
 
 ```sh
-# Launch a GameCube game
+# Launch a GameCube game with the built-in IPL HLE
+./tinyapp --dsp dsp_rom.bin --coef dsp_coef.bin --dvd YourGame.rvz
+
+# Launch a GameCube game with a real IPL (skip the boot animation)
 ./tinyapp --ipl IPL.decoded.bin --dsp dsp_rom.bin --coef dsp_coef.bin --skip-ipl --dvd YourGame.rvz
 
 # Launch a Wii game
@@ -85,9 +88,11 @@ A more modern and friendly experience is provided via `gecko` ([short preview on
 
 On first launch, a guided setup popup asks for your DSP ROM (`dsp_rom.bin`), DSP coefficient ROM (`dsp_coef.bin`), optional GameCube IPL and game folders. It validates and copies the system files with the correct names, automatically decodes an encoded IPL, saves your settings and scans your games. You can skip setup for now or reopen it from **Settings -> Guided Setup**.
 
+Enable **Settings -> Boot -> IPL HLE (GameCube)** to boot GameCube discs using [Hazel's](https://codeberg.org/hazelwiss) built-in IPL replacement, even if a real IPL is installed. The setting is saved as `ipl_hle = true` in `config.toml` and applies the next time you launch a game. Guided setup enables HLE automatically if you leave the IPL file empty. Disable HLE to use your real IPL. **Skip IPL (GameCube)** then controls whether its boot animation is skipped. DSP ROMs are still required with either boot method.
+
 You can also import an optional Wii NAND folder containing `title/` and `shared2/`. The wizard copies it into `fs/` (or `GECKO_FS_ROOT`) only if that destination does not already exist, preserving existing saves. Otherwise, leave NAND unselected to keep existing storage or generate it on first boot.
 
-The launcher scans the configured GameCube and Wii folders for `.iso`, `.rvz` and `.zip` files. Double-clicking on a row opens a dedicated player window for that game. For manual setup, place the decoded GameCube IPL and DSP files inside `system` using the names below. Data paths are relative to the working directory or `GECKO_DATA_DIR` when set:
+The launcher scans the configured GameCube and Wii folders for `.iso`, `.rvz` and `.zip` files. Double-clicking on a row opens a dedicated player window for that game. For manual setup, place the DSP files and, if using real IPL boot, a decoded GameCube IPL inside `system` using the names below. Data paths are relative to the working directory or `GECKO_DATA_DIR` when set:
 
 ```sh
 <gecko data dir>/
@@ -96,7 +101,7 @@ The launcher scans the configured GameCube and Wii folders for `.iso`, `.rvz` an
   screenshots/               # F12 screenshots, auto-generated
   internal/                  # contains SRAM and memory cards, auto-generated
   system/                    # system files, copied by guided setup
-    IPL.bin                  # GameCube only (must be decoded! see multitool)
+    IPL.bin                  # GameCube real IPL boot only (must be decoded! see multitool)
     dsp_rom.bin              # GameCube and Wii
     dsp_coef.bin             # GameCube and Wii
   fs/                        # Wii NAND, auto-generated if missing (or drop in a Dolphin/real dump)
@@ -254,7 +259,7 @@ The panel also provides a speed slider and `Reset view` button. Game input is su
 
 ## Required files
 
-Gecko does not ship any system files.  
+Gecko does not ship original console ROMs. A built-in IPL HLE replacement is available for GameCube disc boot.
 
 Reference SHA-256 hashes (these are the files the project is developed against):
 
@@ -268,11 +273,13 @@ Reference SHA-256 hashes (these are the files the project is developed against):
 | `dsp_coef.bin`               | `d7741279c2e8ec5c5fb318f8fbdd6de6bf583520d288e836a5383233a4238179` |
 
 ### GameCube
-- IPL (NTSC and PAL tested)
+- IPL for real IPL boot only (NTSC and PAL tested); not required with IPL HLE
 - DSP IROM
 - DSP coefficient ROM
 
-If you only have an encoded IPL, decode it first with multitool:
+For IPL HLE in `tinyapp`, pass `--dvd` without `--ipl`. In the `gecko` app, enable **Settings -> Boot -> IPL HLE (GameCube)**.
+
+If using a real IPL and you only have an encoded copy, decode it first with multitool (guided setup does this automatically):
 
 ```sh
 multitool ipl --action decode private/IPL.bin private/IPL.decoded.bin
