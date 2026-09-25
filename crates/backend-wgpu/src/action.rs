@@ -270,7 +270,7 @@ impl GxRenderer {
                 height,
                 fmt,
                 mip_levels,
-                rgba,
+                data,
             } => {
                 let tid = *id;
                 let copy_size = wgpu::Extent3d {
@@ -283,7 +283,7 @@ impl GxRenderer {
                     .efb_copy_cache
                     .get(&tid.ram_addr)
                     .is_some_and(|e| *mip_levels == 1 && e.matches(*fmt, *width, *height));
-                let reference_only = rgba.is_empty();
+                let reference_only = data.is_none();
 
                 assert!(
                     !reference_only || keep_cached,
@@ -307,9 +307,9 @@ impl GxRenderer {
                 if let Some((_, cached_tex, _)) = self.texture_cache.get(&tid) {
                     let size = cached_tex.size();
                     if size.width == *width && size.height == *height && cached_tex.mip_level_count() == *mip_levels {
-                        if !reference_only {
+                        if let Some(data) = data {
                             let cached_tex = cached_tex.clone();
-                            self.upload_texture_levels(device, queue, &cached_tex, rgba);
+                            self.decode_texture_levels(device, queue, &cached_tex, *fmt, data);
                         }
 
                         if let Some((cached_fmt, _, _)) = self.texture_cache.get_mut(&tid) {
@@ -337,15 +337,13 @@ impl GxRenderer {
                         sample_count: 1,
                         dimension: wgpu::TextureDimension::D2,
                         format: wgpu::TextureFormat::Rgba8Unorm,
-                        usage: wgpu::TextureUsages::TEXTURE_BINDING
-                            | wgpu::TextureUsages::COPY_DST
-                            | wgpu::TextureUsages::COPY_SRC,
+                        usage: crate::LOAD_TEXTURE_USAGE,
                         view_formats: &[],
                     })
                 });
 
-                if !reference_only {
-                    self.upload_texture_levels(device, queue, &tex, rgba);
+                if let Some(data) = data {
+                    self.decode_texture_levels(device, queue, &tex, *fmt, data);
                 }
                 let view = tex.create_view(&Default::default());
 
@@ -406,10 +404,7 @@ impl GxRenderer {
                         sample_count: 1,
                         dimension: wgpu::TextureDimension::D2,
                         format: wgpu::TextureFormat::Rgba8Unorm,
-                        usage: wgpu::TextureUsages::TEXTURE_BINDING
-                            | wgpu::TextureUsages::RENDER_ATTACHMENT
-                            | wgpu::TextureUsages::COPY_SRC
-                            | wgpu::TextureUsages::COPY_DST,
+                        usage: crate::LOAD_TEXTURE_USAGE | wgpu::TextureUsages::RENDER_ATTACHMENT,
                         view_formats: &[],
                     });
                     let view = texture.create_view(&Default::default());
@@ -1296,49 +1291,6 @@ impl GxRenderer {
                 .draw_pass_encode_ns
                 .fetch_add(encode_started.elapsed().as_nanos() as u64, Ordering::Relaxed);
         }
-    }
-
-    fn upload_texture_levels(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        texture: &wgpu::Texture,
-        rgba: &[u8],
-    ) {
-        let mut offset = 0;
-
-        for (level, (width, height)) in
-            gecko::flipper::gx::texture::mip_dimensions(texture.width(), texture.height(), texture.mip_level_count())
-                .enumerate()
-        {
-            let end = offset + (width * height * 4) as usize;
-            let pixels = &rgba[offset..end];
-            if !self.stage_texture_upload(device, texture, level as u32, pixels, width, height) {
-                let _ = self.submit_pending(queue);
-
-                queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        mip_level: level as u32,
-                        ..texture.as_image_copy()
-                    },
-                    pixels,
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(width * 4),
-                        rows_per_image: None,
-                    },
-                    wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                );
-            }
-
-            offset = end;
-        }
-
-        debug_assert_eq!(offset, rgba.len());
     }
 
     fn ensure_sampler(&mut self, device: &wgpu::Device, key: &SamplerKey) {

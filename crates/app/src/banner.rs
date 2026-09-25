@@ -1,5 +1,4 @@
-use gecko::flipper::gx::draw::{TextureDescriptor, TextureFormat, TlutFormat};
-use gecko::flipper::gx::regs::{MagFilter, MinFilter, WrapMode};
+use gecko::flipper::gx::draw::{TextureFormat, TlutFormat};
 use gecko::flipper::gx::texture;
 
 pub fn decode(encoded: image::banner::Texture<'_>) -> Option<Vec<u8>> {
@@ -39,15 +38,12 @@ pub fn decode(encoded: image::banner::Texture<'_>) -> Option<Vec<u8>> {
         None => (Vec::new(), TlutFormat::IA8),
     };
 
-    let desc = TextureDescriptor {
-        ram_addr: 0,
-        width: encoded.width,
-        height: encoded.height,
+    Some(texture::decode_to_rgba(
+        pixels,
+        encoded.width,
+        encoded.height,
         format,
-        wrap_s: WrapMode::Clamp,
-        wrap_t: WrapMode::Clamp,
-        mag_filter: MagFilter::Nearest,
-        min_filter: MinFilter::Nearest,
-    };
-    Some(texture::decode_to_rgba(pixels, &desc, &palette, tlut))
+        &palette,
+        tlut,
+    ))
 }

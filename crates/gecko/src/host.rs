@@ -57,15 +57,16 @@ pub enum GxAction {
     SetAlphaCompare(AlphaCompare),
     SetCullMode(CullMode),
 
-    /// Upload pre-decoded texture data. Emitted when texture content at a
-    /// given address changes (detected by hash).
+    /// Decode and upload a snapshot of GX texture bytes and palette. Emitted
+    /// when texture content at a given address changes (detected by hash).
     LoadTexture {
         id: TextureKey,
         width: u32,
         height: u32,
         fmt: TextureFormat,
         mip_levels: u32,
-        rgba: Vec<u8>,
+        /// `None` references an existing GPU EFB copy without uploading RAM.
+        data: Option<crate::flipper::gx::texture::EncodedTexture>,
     },
 
     LoadEfbPalette {

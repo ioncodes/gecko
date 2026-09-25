@@ -527,7 +527,10 @@ impl McpServer {
                 None,
             )
         })?;
-        let png = encode_png(rec.width, rec.height, &rec.rgba)?;
+        let rgba = rec.data.as_ref().map_or_else(Vec::new, |data| {
+            data.decode_base_level(rec.width, rec.height, rec.format)
+        });
+        let png = encode_png(rec.width, rec.height, &rgba)?;
         ok_json(&json!({
             "ram_addr": args.ram_addr,
             "variant": key.variant,

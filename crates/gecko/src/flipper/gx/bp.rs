@@ -363,22 +363,11 @@ impl GraphicsProcessor {
                 height,
                 fmt: format,
                 mip_levels,
-                rgba: Vec::new(),
+                data: None,
             });
         }
 
         if changed {
-            let desc = draw::TextureDescriptor {
-                ram_addr,
-                width,
-                height,
-                format,
-                wrap_s: mode0.wrap_s(),
-                wrap_t: mode0.wrap_t(),
-                mag_filter: mode0.mag_filter(),
-                min_filter: mode0.min_filter(),
-            };
-
             #[cfg(feature = "gx-stats")]
             {
                 self.stats.texture_loads += 1;
@@ -390,7 +379,11 @@ impl GraphicsProcessor {
                 height,
                 fmt: format,
                 mip_levels,
-                rgba: texture::decode_mips_to_rgba(tex_slice.unwrap(), &desc, palette, tlut.format, mip_levels),
+                data: Some(texture::EncodedTexture {
+                    bytes: tex_slice.unwrap().to_vec(),
+                    palette: palette[..format.palette_entries().min(palette.len())].to_vec(),
+                    tlut_format: tlut.format,
+                }),
             });
         }
 
@@ -818,14 +811,7 @@ fn texture_cache_id(
     mip_levels: u32,
 ) -> TextureKey {
     let variant = if format.is_paletted() {
-        let max_entries = match format {
-            draw::TextureFormat::CI4 => 16,
-            draw::TextureFormat::CI8 => 256,
-            draw::TextureFormat::CI14 => 16384,
-            _ => 0,
-        };
-        let take = max_entries.min(palette.len());
-        let palette_bytes: &[u8] = bytemuck::cast_slice(&palette[..take]);
+        let palette_bytes: &[u8] = bytemuck::cast_slice(&palette[..format.palette_entries().min(palette.len())]);
         let mut h = twox_hash::xxhash3_64::Hasher::oneshot(palette_bytes);
         h ^= tlut.format as u64;
         h ^= (tlut.tmem_offset as u64) << 8;
@@ -864,14 +850,7 @@ fn texture_data_changed(
 
     let mut hash = twox_hash::xxhash3_64::Hasher::oneshot(tex);
     if format.is_paletted() {
-        let max_entries = match format {
-            draw::TextureFormat::CI4 => 16,
-            draw::TextureFormat::CI8 => 256,
-            draw::TextureFormat::CI14 => 16384,
-            _ => 0,
-        };
-        let take = max_entries.min(palette.len());
-        let palette_bytes: &[u8] = bytemuck::cast_slice(&palette[..take]);
+        let palette_bytes: &[u8] = bytemuck::cast_slice(&palette[..format.palette_entries().min(palette.len())]);
         hash ^= twox_hash::xxhash3_64::Hasher::oneshot(palette_bytes);
         // Palette pixel format is part of the visual state too, so fold it
         // into the hash or a format switch alone wouldn't force a redecode.

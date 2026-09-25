@@ -101,6 +101,16 @@ impl TextureFormat {
     pub fn is_paletted(self) -> bool {
         matches!(self, TextureFormat::CI4 | TextureFormat::CI8 | TextureFormat::CI14)
     }
+
+    #[inline(always)]
+    pub fn palette_entries(self) -> usize {
+        match self {
+            TextureFormat::CI4 => 16,
+            TextureFormat::CI8 => 256,
+            TextureFormat::CI14 => 16384,
+            _ => 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]

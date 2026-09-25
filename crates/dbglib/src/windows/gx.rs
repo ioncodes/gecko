@@ -106,7 +106,8 @@ impl Freecam {
 }
 
 fn texture_preview(ui: &mut egui::Ui, tex: &TextureDescriptor, ram: &[u8], palette: &[u16], tlut: TlutRef) {
-    let rgba = gecko::flipper::gx::texture::decode_to_rgba(ram, tex, palette, tlut.format);
+    let rgba =
+        gecko::flipper::gx::texture::decode_to_rgba(ram, tex.width, tex.height, tex.format, palette, tlut.format);
     let size = [tex.width as usize, tex.height as usize];
     let image = egui::ColorImage::from_rgba_unmultiplied(size, &rgba);
     let handle = ui.ctx().load_texture(

@@ -1,22 +1,44 @@
-use super::draw::{TextureDescriptor, TextureFormat, TlutFormat};
+use super::draw::{TextureFormat, TlutFormat};
 use multiversion::multiversion;
+
+/// An immutable snapshot of guest texture bytes and its bound TLUT. The renderer
+/// decodes this on the GPU; debug consumers can explicitly request a CPU preview.
+#[derive(Debug)]
+pub struct EncodedTexture {
+    pub bytes: Vec<u8>,
+    pub palette: Vec<u16>,
+    pub tlut_format: TlutFormat,
+}
+
+impl EncodedTexture {
+    pub fn decode_base_level(&self, width: u32, height: u32, format: TextureFormat) -> Vec<u8> {
+        self::decode_to_rgba(&self.bytes, width, height, format, &self.palette, self.tlut_format)
+    }
+}
 
 /// Decode a GX-format texture from a raw RAM slice into RGBA8 pixels.
 ///
 /// `tex` must already point at the texture's raw bytes (i.e. the caller has
-/// resolved `desc.ram_addr` against MEM1/MEM2 and produced the slice). The
+/// resolved the texture address against MEM1/MEM2 and produced the slice). The
 /// decoders below offset relative to the start of `tex`.
 ///
 /// `palette` is the slice of the palette TMEM starting at the bound TLUT's
 /// tmem_offset. It is only consulted for paletted (CI*) formats; callers may
 /// pass `&[]` for non-paletted textures. `tlut_format` specifies how each
 /// 16-bit palette entry should be expanded to RGBA8.
-pub fn decode_to_rgba(tex: &[u8], desc: &TextureDescriptor, palette: &[u16], tlut_format: TlutFormat) -> Vec<u8> {
-    let w = desc.width as usize;
-    let h = desc.height as usize;
+pub fn decode_to_rgba(
+    tex: &[u8],
+    width: u32,
+    height: u32,
+    format: TextureFormat,
+    palette: &[u16],
+    tlut_format: TlutFormat,
+) -> Vec<u8> {
+    let w = width as usize;
+    let h = height as usize;
 
     let mut rgba = vec![0u8; w * h * 4];
-    match desc.format {
+    match format {
         TextureFormat::I4 => decode_i4(tex, &mut rgba, w, h),
         TextureFormat::I8 => decode_i8(tex, &mut rgba, w, h),
         TextureFormat::IA4 => decode_ia4(tex, &mut rgba, w, h),
@@ -49,39 +71,6 @@ pub fn mip_data_size(width: u32, height: u32, format: TextureFormat, levels: u32
     self::mip_dimensions(width, height, levels)
         .map(|(w, h)| self::raw_data_size(w, h, format))
         .sum()
-}
-
-pub fn decode_mips_to_rgba(
-    tex: &[u8],
-    desc: &TextureDescriptor,
-    palette: &[u16],
-    tlut_format: TlutFormat,
-    levels: u32,
-) -> Vec<u8> {
-    if levels == 1 {
-        return self::decode_to_rgba(tex, desc, palette, tlut_format);
-    }
-
-    let mut rgba = Vec::with_capacity(
-        self::mip_dimensions(desc.width, desc.height, levels)
-            .map(|(w, h)| (w * h * 4) as usize)
-            .sum(),
-    );
-
-    let mut offset = 0;
-    for (width, height) in self::mip_dimensions(desc.width, desc.height, levels) {
-        let size = self::raw_data_size(width, height, desc.format);
-        let level = TextureDescriptor { width, height, ..*desc };
-        rgba.extend(self::decode_to_rgba(
-            tex.get(offset..offset + size).unwrap_or(&[]),
-            &level,
-            palette,
-            tlut_format,
-        ));
-        offset += size;
-    }
-
-    rgba
 }
 
 #[derive(Clone, Copy)]

@@ -9,7 +9,7 @@ pub struct TextureRecord {
     pub width: u32,
     pub height: u32,
     pub format: TextureFormat,
-    pub rgba: Vec<u8>,
+    pub data: Option<gecko::flipper::gx::texture::EncodedTexture>,
     pub last_seen_frame: u64,
 }
 
@@ -35,40 +35,43 @@ pub struct McpSink {
 
 impl RenderSink for McpSink {
     fn exec(&mut self, action: GxAction) {
-        match &action {
+        self.gx.lock().unwrap().process_action_with_external_scratch(
+            &self.device,
+            &self.queue,
+            &action,
+            &mut self.scratch,
+        );
+        match action {
             GxAction::LoadTexture {
                 id,
                 width,
                 height,
                 fmt,
-                rgba,
+                data,
                 ..
             } => {
                 let mut i = self.introspect.lock().unwrap();
                 let frame = i.frame_index;
                 i.textures.insert(
-                    *id,
+                    id,
                     TextureRecord {
-                        width: *width,
-                        height: *height,
-                        format: *fmt,
-                        rgba: rgba
-                            .get(..(*width as usize * *height as usize * 4))
-                            .unwrap_or(&[])
-                            .to_vec(),
+                        width,
+                        height,
+                        format: fmt,
+                        data,
                         last_seen_frame: frame,
                     },
                 );
             }
             GxAction::SetTexture { slot, id, .. } => {
                 let mut i = self.introspect.lock().unwrap();
-                if *slot < 8 {
-                    i.bound[*slot] = Some(*id);
+                if slot < 8 {
+                    i.bound[slot] = Some(id);
                 }
             }
             GxAction::PresentXfb { width, height, .. } | GxAction::PresentRawXfb { width, height, .. } => {
                 let mut i = self.introspect.lock().unwrap();
-                i.last_xfb_size = (*width, *height);
+                i.last_xfb_size = (width, height);
                 i.frame_index = i.frame_index.wrapping_add(1);
                 i.draw_count_this_frame = 0;
             }
@@ -77,12 +80,6 @@ impl RenderSink for McpSink {
             }
             _ => {}
         }
-        self.gx.lock().unwrap().process_action_with_external_scratch(
-            &self.device,
-            &self.queue,
-            &action,
-            &mut self.scratch,
-        );
     }
 
     fn vertex_scratch(&mut self) -> &mut Vec<DrawVertex> {

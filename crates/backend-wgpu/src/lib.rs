@@ -11,6 +11,7 @@ mod render;
 mod renderdoc_capture;
 mod shader_specialization;
 pub mod sink;
+mod texture_decode;
 
 use gecko::common::Address;
 #[cfg(feature = "renderdoc-capture")]
@@ -109,6 +110,11 @@ impl RendererStats {
         }
     }
 }
+
+pub(crate) const LOAD_TEXTURE_USAGE: wgpu::TextureUsages = wgpu::TextureUsages::TEXTURE_BINDING
+    .union(wgpu::TextureUsages::STORAGE_BINDING)
+    .union(wgpu::TextureUsages::COPY_DST)
+    .union(wgpu::TextureUsages::COPY_SRC);
 
 pub(crate) fn align_up(value: u64, alignment: u64) -> u64 {
     (value + alignment - 1) & !(alignment - 1)
@@ -377,18 +383,12 @@ pub struct GxRenderer {
     // Region-scoped EFB clear.
     pub(crate) efb_clear: clear::EfbClear,
     pub(crate) pending_command_buffers: Vec<wgpu::CommandBuffer>,
-    /// Shared staging buffer for `LoadTexture` uploads. Each upload appends
-    /// padded RGBA into `texture_staging_scratch` and records a
-    /// `copy_buffer_to_texture` into the persistent encoder; at submit time
-    /// the whole scratch is shipped through one `write_buffer_with` call.
+    pub(crate) texture_decoder: texture_decode::TextureDecoder,
+    /// Shared storage buffer for raw texture bytes, palettes and decode
+    /// parameters. All staged input is uploaded once at submission time.
     pub(crate) texture_staging_buffer: wgpu::Buffer,
     pub(crate) texture_staging_capacity: u64,
     pub(crate) texture_staging_scratch: Vec<u8>,
-    /// Largest scratch size observed within the current run. Used at submit
-    /// boundaries to decide whether to grow [`Self::texture_staging_buffer`]
-    /// for the next frame (so growth never invalidates a buffer the
-    /// in-flight encoder still references).
-    pub(crate) texture_staging_peak: u64,
     /// Persistent encoder accumulating GPU commands across operations within
     /// a frame.
     pub(crate) current_encoder: Option<wgpu::CommandEncoder>,
@@ -603,7 +603,7 @@ impl GxRenderer {
         let texture_staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("gx_texture_staging"),
             size: initial_texture_staging_capacity,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
 
@@ -1036,10 +1036,10 @@ impl GxRenderer {
             efb_color_readback_bind_group,
             efb_clear,
             pending_command_buffers: Vec::with_capacity(8),
+            texture_decoder: texture_decode::TextureDecoder::new(device),
             texture_staging_buffer,
             texture_staging_capacity: initial_texture_staging_capacity,
             texture_staging_scratch: Vec::with_capacity(initial_texture_staging_capacity as usize / 4),
-            texture_staging_peak: 0,
             current_encoder: None,
             draw_bufs_write_pending: false,
             xfb_copy_uniform_write_pending: false,
@@ -1111,10 +1111,10 @@ impl GxRenderer {
     }
 
     pub(crate) fn submit_pending(&mut self, queue: &wgpu::Queue) -> Option<wgpu::SubmissionIndex> {
-        // Ship any staged texture-upload bytes through ONE `write_buffer_with`
+        // Ship any staged texture-decode input through ONE `write_buffer_with`
         // before finishing the encoder. wgpu orders queue writes ahead of
-        // submitted commands, so the encoder's `copy_buffer_to_texture`
-        // commands (recorded earlier with offsets into this buffer) will
+        // submitted commands, so the encoder's compute decode dispatches
+        // (recorded earlier with offsets into this buffer) will
         // read the freshly-written data.
         if !self.texture_staging_scratch.is_empty()
             && let Some(size) = std::num::NonZeroU64::new(self.texture_staging_scratch.len() as u64)
@@ -1162,88 +1162,14 @@ impl GxRenderer {
         Some(submission_index)
     }
 
-    /// Append `rgba` (W*H*4 tight, no row padding) into
-    /// [`Self::texture_staging_scratch`] with COPY_BYTES_PER_ROW_ALIGNMENT
-    /// (256 bytes) row padding, and record a `copy_buffer_to_texture` into the
-    /// persistent encoder that copies the staged bytes into `dest`.
-    /// Returns `false` if the upload won't fit the current staging capacity.
-    /// Caller should fall back to `queue.write_texture` for that upload
-    /// and rely on the next submit boundary to grow the buffer via
-    /// [`Self::maybe_grow_texture_staging`].
-    pub(crate) fn stage_texture_upload(
-        &mut self,
-        device: &wgpu::Device,
-        dest: &wgpu::Texture,
-        mip_level: u32,
-        rgba: &[u8],
-        width: u32,
-        height: u32,
-    ) -> bool {
-        const ROW_ALIGNMENT: u64 = 256;
-        const COPY_BUFFER_ALIGNMENT: u64 = 4;
-        let row_bytes = (width as u64) * 4;
-        let padded_row_bytes = align_up(row_bytes, ROW_ALIGNMENT);
-        let upload_size = padded_row_bytes * height as u64;
-        let offset = align_up(self.texture_staging_scratch.len() as u64, COPY_BUFFER_ALIGNMENT);
-        let end = offset + upload_size;
-        self.texture_staging_peak = self.texture_staging_peak.max(end);
-        if end > self.texture_staging_capacity {
-            return false;
-        }
-
-        // Pad to aligned start offset, then append each row + per-row padding.
-        self.texture_staging_scratch.resize(offset as usize, 0);
-        let pad = (padded_row_bytes - row_bytes) as usize;
-        for row in 0..height as usize {
-            let src_start = row * row_bytes as usize;
-            let src_end = src_start + row_bytes as usize;
-            self.texture_staging_scratch
-                .extend_from_slice(&rgba[src_start..src_end]);
-            if pad > 0 {
-                let new_len = self.texture_staging_scratch.len() + pad;
-                self.texture_staging_scratch.resize(new_len, 0);
-            }
-        }
-
-        let mut encoder = self.take_or_create_encoder(device);
-        encoder.copy_buffer_to_texture(
-            wgpu::TexelCopyBufferInfo {
-                buffer: &self.texture_staging_buffer,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset,
-                    bytes_per_row: Some(padded_row_bytes as u32),
-                    rows_per_image: None,
-                },
-            },
-            wgpu::TexelCopyTextureInfo {
-                mip_level,
-                ..dest.as_image_copy()
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-        self.current_encoder = Some(encoder);
-        true
-    }
-
-    /// If the per-frame staging peak has exceeded the buffer's capacity,
-    /// reallocate (next power of two of peak). Safe to call only when no
-    /// encoder commands reference the existing buffer.
-    pub(crate) fn maybe_grow_texture_staging(&mut self, device: &wgpu::Device) {
-        if self.texture_staging_peak <= self.texture_staging_capacity {
-            return;
-        }
-        let new_cap = self
-            .texture_staging_peak
-            .next_power_of_two()
-            .max(self.texture_staging_peak);
+    /// Reallocate the staging buffer to fit `needed` bytes. Safe to call only
+    /// when no encoder commands reference the existing buffer.
+    pub(crate) fn grow_texture_staging(&mut self, device: &wgpu::Device, needed: u64) {
+        let new_cap = needed.next_power_of_two().min(device.limits().max_buffer_size);
         self.texture_staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("gx_texture_staging"),
             size: new_cap,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
         self.texture_staging_capacity = new_cap;

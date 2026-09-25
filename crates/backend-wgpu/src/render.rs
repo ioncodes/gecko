@@ -525,9 +525,7 @@ impl GxRenderer {
         debug_assert_eq!(tex.format(), wgpu::TextureFormat::Rgba8Unorm);
         debug_assert_eq!(tex.sample_count(), 1);
         debug_assert_eq!(tex.dimension(), wgpu::TextureDimension::D2);
-        debug_assert!(tex.usage().contains(
-            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
-        ));
+        debug_assert!(tex.usage().contains(crate::LOAD_TEXTURE_USAGE));
 
         let size = tex.size();
         let bucket = self
@@ -643,9 +641,6 @@ impl GxRenderer {
         encoder.pop_debug_group();
         self.current_encoder = Some(encoder);
         let _ = self.submit_pending(queue);
-        // The staging buffer's in-flight references have just been submitted;
-        // now's the safe moment to grow it if this frame exceeded capacity.
-        self.maybe_grow_texture_staging(device);
         self.xfb_has_content = true;
     }
 
