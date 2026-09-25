@@ -64,6 +64,7 @@ pub enum Message {
     MenuToggleSram,
     MenuSetTheme(ThemePreference),
     MenuSetUpscale(u32),
+    MenuToggleTexturePacks,
     MenuSetAspect(AspectMode),
     MenuAbout,
     AboutClose,
@@ -603,6 +604,11 @@ impl App {
                 self.persist_config();
                 Task::none()
             }
+            Message::MenuToggleTexturePacks => {
+                self.config.texture_packs = !self.config.texture_packs;
+                self.persist_config();
+                Task::none()
+            }
             Message::MenuSetAspect(aspect) => {
                 self.config.aspect = aspect;
                 self.persist_config();
@@ -950,6 +956,7 @@ impl App {
                 self.config.ipl_hle,
                 self.config.skip_ipl,
                 self.config.upscale,
+                self.config.texture_packs,
                 self.config.aspect,
                 self.config.memcard_enabled,
                 self.config.sram_enabled,

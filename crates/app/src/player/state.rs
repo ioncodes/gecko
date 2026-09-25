@@ -29,6 +29,7 @@ struct BootParams {
     memcard_path: Option<PathBuf>,
     execution_mode: gecko::ExecutionMode,
     input_config: hostinput::InputConfig,
+    texture_packs: bool,
 }
 
 struct Initialized {
@@ -110,6 +111,7 @@ impl PlayerState {
                 memcard_path: config.memcard_enabled.then(|| config::data_relative(MEMCARD_A_FILE)),
                 execution_mode: config.cpu_mode.into(),
                 input_config: config.input.clone(),
+                texture_packs: config.texture_packs,
             })),
             initialized: OnceLock::new(),
             shutdown: Arc::new(AtomicBool::new(false)),
@@ -368,6 +370,9 @@ fn finish_boot<const S: gecko::system::SystemId>(
     mut emu: gecko::system::System<S>,
     game_id: String,
 ) {
+    if params.texture_packs {
+        sink.load_texture_pack(&gecko::paths::resolve("texturepacks"), &game_id);
+    }
     self::configure_emu(&mut emu, &params, sink, state.fps.clone());
     if S == system::WII {
         emu.starlet.set_widescreen(state.aspect.is_widescreen());

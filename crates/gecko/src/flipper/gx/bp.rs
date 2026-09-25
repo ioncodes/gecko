@@ -308,8 +308,10 @@ impl GraphicsProcessor {
         // tmem_offset would silently let the latest load clobber the earlier
         // ones, since bind groups are built lazily and resolve to whichever
         // GPU texture is current at render-pass time.
+        let mipmapped = mode0.min_filter().uses_mipmaps();
         let mip_levels = texture::mip_level_count(width, height, mode0.min_filter(), mode1.max_lod());
-        let cache_id = self::texture_cache_id(ram_addr, format, tlut, palette, mip_levels);
+        let lod_key = if mipmapped { mip_levels } else { 0 };
+        let cache_id = self::texture_cache_id(ram_addr, format, tlut, palette, lod_key);
 
         // Resolve the texture's raw bytes once, against MEM1 or MEM2. If the
         // address doesn't fall in either bank, leave the slot's last binding
@@ -380,6 +382,7 @@ impl GraphicsProcessor {
                 fmt: format,
                 mip_levels,
                 data: Some(texture::EncodedTexture {
+                    mipmaps_enabled: mipmapped,
                     bytes: tex_slice.unwrap().to_vec(),
                     palette: palette[..format.palette_entries().min(palette.len())].to_vec(),
                     tlut_format: tlut.format,
@@ -405,7 +408,7 @@ impl GraphicsProcessor {
             wrap_t: mode0.wrap_t(),
             mag_filter: mode0.mag_filter(),
             min_filter: mode0.min_filter(),
-            lod: if mode0.min_filter().uses_mipmaps() {
+            lod: if mipmapped {
                 TextureLod {
                     min: mode1.min_lod().min(mode1.max_lod()),
                     max: mode1.max_lod(),
@@ -808,7 +811,7 @@ fn texture_cache_id(
     format: draw::TextureFormat,
     tlut: draw::TlutRef,
     palette: &[u16],
-    mip_levels: u32,
+    lod_key: u32,
 ) -> TextureKey {
     let variant = if format.is_paletted() {
         let palette_bytes: &[u8] = bytemuck::cast_slice(&palette[..format.palette_entries().min(palette.len())]);
@@ -822,7 +825,7 @@ fn texture_cache_id(
     };
     TextureKey {
         ram_addr: ram_addr as u32,
-        variant: variant ^ (mip_levels - 1).wrapping_mul(0x9e37_79b9),
+        variant: variant ^ lod_key.wrapping_mul(0x9e37_79b9),
     }
 }
 

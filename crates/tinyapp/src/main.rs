@@ -88,6 +88,14 @@ struct Args {
     #[arg(long)]
     immediate: bool,
 
+    /// Disable Dolphin texture replacements from the texturepacks directory
+    #[arg(long)]
+    no_texture_packs: bool,
+
+    /// Override the texture pack root (defaults to texturepacks in the data directory)
+    #[arg(long)]
+    texture_pack_dir: Option<std::path::PathBuf>,
+
     /// Disable ANSI escape codes
     #[arg(long)]
     no_ansi: bool,
@@ -405,6 +413,15 @@ fn run<const SYSTEM: SystemId>(
         args.upscale,
     );
 
+    if !args.no_texture_packs
+        && let Some(id) = game_id.as_deref()
+    {
+        let root = args
+            .texture_pack_dir
+            .clone()
+            .unwrap_or_else(|| gecko::paths::resolve("texturepacks"));
+        sink.load_texture_pack(&root, id);
+    }
     emulator.render_sink = Box::new(sink);
 
     let audio_stream = install_audio_sink(args, &mut emulator);

@@ -5,6 +5,8 @@ use multiversion::multiversion;
 /// decodes this on the GPU; debug consumers can explicitly request a CPU preview.
 #[derive(Debug)]
 pub struct EncodedTexture {
+    /// The sampler enables mipmaps, even if MAX_LOD only requests level zero.
+    pub mipmaps_enabled: bool,
     pub bytes: Vec<u8>,
     pub palette: Vec<u16>,
     pub tlut_format: TlutFormat,

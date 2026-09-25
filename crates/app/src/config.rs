@@ -22,6 +22,7 @@ pub struct Config {
     pub skip_ipl: bool,
     #[serde(default = "self::default_upscale")]
     pub upscale: u32,
+    pub texture_packs: bool,
     pub aspect: AspectMode,
     #[serde(default = "self::default_memcard_enabled")]
     pub memcard_enabled: bool,
@@ -180,6 +181,7 @@ impl Default for Config {
             ipl_hle: false,
             skip_ipl: self::default_skip_ipl(),
             upscale: self::default_upscale(),
+            texture_packs: true,
             aspect: AspectMode::default(),
             memcard_enabled: self::default_memcard_enabled(),
             sram_enabled: self::default_sram_enabled(),

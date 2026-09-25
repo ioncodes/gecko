@@ -11,7 +11,7 @@ use std::path::PathBuf;
 /// frame) silently overwrite each other and bind groups built lazily at
 /// render-pass time all resolve to whichever decode landed last.
 ///
-/// `variant` combines mip count with a 32-bit hash of
+/// `variant` combines mip count and mipmap enablement with a 32-bit hash of
 /// `(palette content, tlut.format, tmem_offset)` for paletted textures.
 /// Single-level, non-paletted textures use `0`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

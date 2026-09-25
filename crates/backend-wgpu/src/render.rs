@@ -522,10 +522,14 @@ impl GxRenderer {
     pub(crate) fn return_load_texture_to_pool(&mut self, tex: wgpu::Texture) {
         const PER_BUCKET_CAP: usize = 8;
 
+        // Pack textures are immutable and may be shared by several guest keys.
+        if !tex.usage().contains(crate::LOAD_TEXTURE_USAGE) {
+            return;
+        }
+
         debug_assert_eq!(tex.format(), wgpu::TextureFormat::Rgba8Unorm);
         debug_assert_eq!(tex.sample_count(), 1);
         debug_assert_eq!(tex.dimension(), wgpu::TextureDimension::D2);
-        debug_assert!(tex.usage().contains(crate::LOAD_TEXTURE_USAGE));
 
         let size = tex.size();
         let bucket = self

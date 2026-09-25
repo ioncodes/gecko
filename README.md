@@ -32,6 +32,8 @@ Gecko is developed with homebrew development and reverse engineering in mind, bu
 - Cranelift based JITs
   - PowerPC, DSP, vertex decoder
 - Upscaling 1x - 4x
+- Texture packs
+  - Implements Dolphin style pack support
 - Controller support
   - Xbox, Steam, etc.
   - PS5 DualSense Wiimote motion control
@@ -234,6 +236,16 @@ Nunchuk:
 | `E`             | C            |
 
 </details>
+
+### Texture packs
+
+The main `gecko` app and `tinyapp` load Dolphin `tex1_` texture packs automatically from
+`texturepacks/<game ID>/` in the data directory (the working directory by default,
+or `GECKO_DATA_DIR`).
+
+In the Gecko app, use **Settings -> Graphics -> Texture Packs (restart game)** to
+toggle replacements. In tinyapp, use `--no-texture-packs` to disable them or
+`--texture-pack-dir <directory>` to select a different pack root.
 
 ### Savestates
 

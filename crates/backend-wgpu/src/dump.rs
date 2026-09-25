@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::capture::{self, CapturedFrame};
-use crate::{GxRenderer, align_up};
+use crate::{CachedTexture, GxRenderer, align_up};
 
 impl GxRenderer {
     pub(crate) fn dump_textures(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, dir: &Path) {
@@ -17,7 +17,7 @@ impl GxRenderer {
         }
 
         let mut saved = 0usize;
-        for (cache_id, (fmt, tex, _)) in self.texture_cache.iter() {
+        for (cache_id, CachedTexture { fmt, texture: tex, .. }) in self.texture_cache.iter() {
             let size = tex.size();
             let width = size.width;
             let height = size.height;

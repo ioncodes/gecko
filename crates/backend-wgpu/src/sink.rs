@@ -121,6 +121,7 @@ struct EfbDrainRequest {
 
 #[cfg(not(target_arch = "wasm32"))]
 enum WorkerCommand {
+    LoadTexturePack(Box<crate::texture_pack::TexturePack>),
     Actions(ActionBatch),
     DrainEfbCopies(EfbDrainRequest),
     PeekEfbDepth {
@@ -137,6 +138,7 @@ impl RenderWorker {
     fn run(mut self, work_rx: crossbeam_channel::Receiver<WorkerCommand>) {
         while let Ok(command) = work_rx.recv() {
             match command {
+                WorkerCommand::LoadTexturePack(pack) => self.gx.texture_pack = *pack,
                 WorkerCommand::Actions(batch) => self.exec_batch(batch),
                 WorkerCommand::DrainEfbCopies(request) => self.drain_efb_copies(request),
                 WorkerCommand::PeekEfbDepth {
@@ -288,6 +290,12 @@ impl RenderWorker {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl ThreadedSink {
+    /// Configure replacements before attaching this sink to an emulator.
+    pub fn load_texture_pack(&self, root: &std::path::Path, game_id: &str) {
+        let pack = crate::texture_pack::TexturePack::discover(root, game_id);
+        let _ = self.work_tx.send(WorkerCommand::LoadTexturePack(Box::new(pack)));
+    }
+
     fn reclaim_batch(&mut self) {
         if !self.pending_actions.is_empty() || !self.scratch.is_empty() {
             return;

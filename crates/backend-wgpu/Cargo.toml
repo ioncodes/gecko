@@ -23,3 +23,10 @@ rustc-hash = "2.1.2"
 png = "0.18.1"
 renderdoc = { version = "0.12.1", optional = true }
 hotpath = { version = "0.16.0", optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ddsfile = "0.6.0"
+texture2ddecoder = "0.1.2"
+walkdir = "2.5.0"
+image-codec = { package = "image", version = "0.25.10", default-features = false, features = ["png"] }
+twox-hash = { version = "2.1.4", default-features = false, features = ["xxhash64"] }

@@ -1,8 +1,8 @@
 use crate::pipeline::{FullPipelineKey, PipelineKey, UberPipelineKey};
 use crate::shader_specialization::{self, ShaderKey, ShaderSpecializationKey};
 use crate::{
-    BindGroupCacheKey, DRAW_UNIFORMS_SIZE, DrawUniforms, FRAME_UNIFORMS_SIZE, FrameUniforms, GxRenderer, SamplerKey,
-    helpers,
+    BindGroupCacheKey, CachedTexture, DRAW_UNIFORMS_SIZE, DrawUniforms, FRAME_UNIFORMS_SIZE, FrameUniforms, GxRenderer,
+    SamplerKey, helpers,
 };
 use gecko::flipper::gx::draw::Primitive;
 use gecko::flipper::gx::regs::CullMode;
@@ -304,57 +304,85 @@ impl GxRenderer {
                         .retain(|key, _| !key.tex_keys.iter().flatten().any(|k| k.ram_addr == tid.ram_addr));
                 }
 
-                if let Some((_, cached_tex, _)) = self.texture_cache.get(&tid) {
-                    let size = cached_tex.size();
-                    if size.width == *width && size.height == *height && cached_tex.mip_level_count() == *mip_levels {
+                #[cfg(not(target_arch = "wasm32"))]
+                let replacement = match data {
+                    Some(data) if !keep_cached => self.texture_pack.lookup(device, queue, *width, *height, *fmt, data),
+                    _ => None,
+                };
+                #[cfg(target_arch = "wasm32")]
+                let replacement = None;
+
+                let (tex, view) = match replacement {
+                    Some(replacement) => replacement,
+                    None => {
+                        if let Some(cached) = self.texture_cache.get_mut(&tid) {
+                            let size = cached.texture.size();
+                            if cached.texture.usage().contains(crate::LOAD_TEXTURE_USAGE)
+                                && size.width == *width
+                                && size.height == *height
+                                && cached.texture.mip_level_count() == *mip_levels
+                            {
+                                cached.fmt = *fmt;
+                                if let Some(data) = data {
+                                    let cached_tex = cached.texture.clone();
+                                    self.decode_texture_levels(device, queue, &cached_tex, *fmt, data);
+                                }
+
+                                return;
+                            }
+                        }
+
+                        let pooled = self
+                            .texture_pool
+                            .get_mut(&(*width, *height, *mip_levels))
+                            .and_then(|v| v.pop());
+
+                        let tex = pooled.unwrap_or_else(|| {
+                            let texture_label = format!(
+                                "gx_tex addr={:#010x}/{:08x} fmt={:?} size={}x{}",
+                                id.ram_addr, id.variant, *fmt, *width, *height
+                            );
+                            device.create_texture(&wgpu::TextureDescriptor {
+                                label: Some(&texture_label),
+                                size: copy_size,
+                                mip_level_count: *mip_levels,
+                                sample_count: 1,
+                                dimension: wgpu::TextureDimension::D2,
+                                format: wgpu::TextureFormat::Rgba8Unorm,
+                                usage: crate::LOAD_TEXTURE_USAGE,
+                                view_formats: &[],
+                            })
+                        });
+
                         if let Some(data) = data {
-                            let cached_tex = cached_tex.clone();
-                            self.decode_texture_levels(device, queue, &cached_tex, *fmt, data);
+                            self.decode_texture_levels(device, queue, &tex, *fmt, data);
                         }
-
-                        if let Some((cached_fmt, _, _)) = self.texture_cache.get_mut(&tid) {
-                            *cached_fmt = *fmt;
-                        }
-
-                        return;
+                        let view = tex.create_view(&Default::default());
+                        (tex, view)
                     }
+                };
+
+                if self.texture_cache.get(&tid).is_some_and(|cached| cached.texture == tex) {
+                    return;
                 }
-
-                let pooled = self
-                    .texture_pool
-                    .get_mut(&(*width, *height, *mip_levels))
-                    .and_then(|v| v.pop());
-
-                let tex = pooled.unwrap_or_else(|| {
-                    let texture_label = format!(
-                        "gx_tex addr={:#010x}/{:08x} fmt={:?} size={}x{}",
-                        id.ram_addr, id.variant, *fmt, *width, *height
-                    );
-                    device.create_texture(&wgpu::TextureDescriptor {
-                        label: Some(&texture_label),
-                        size: copy_size,
-                        mip_level_count: *mip_levels,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: wgpu::TextureFormat::Rgba8Unorm,
-                        usage: crate::LOAD_TEXTURE_USAGE,
-                        view_formats: &[],
-                    })
-                });
-
-                if let Some(data) = data {
-                    self.decode_texture_levels(device, queue, &tex, *fmt, data);
-                }
-                let view = tex.create_view(&Default::default());
 
                 // Cached bind groups still hold the old TextureView for this
                 // key. Drop them so they get rebuilt against the new one.
                 self.bind_group_cache
-                    .retain(|key, _| !key.tex_keys.iter().any(|k| *k == Some(tid)));
+                    .retain(|key, _| !key.tex_keys.contains(&Some(tid)));
 
-                let prior = self.texture_cache.insert(tid, (*fmt, tex, view));
-                if let Some((_, old_tex, _)) = prior {
-                    self.return_load_texture_to_pool(old_tex);
+                let prior = self.texture_cache.insert(
+                    tid,
+                    CachedTexture {
+                        fmt: *fmt,
+                        native_w: *width,
+                        native_h: *height,
+                        texture: tex,
+                        view,
+                    },
+                );
+                if let Some(prior) = prior {
+                    self.return_load_texture_to_pool(prior.texture);
                 }
             }
             GxAction::LoadEfbPalette {
@@ -379,15 +407,15 @@ impl GxRenderer {
                     .clone();
                 debug_assert_eq!((source.width(), source.height()), (*width, *height));
 
-                let existing = self.texture_cache.get(id).filter(|(_, texture, _)| {
-                    texture.width() == *width
-                        && texture.height() == *height
-                        && texture.mip_level_count() == 1
-                        && texture.usage().contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
+                let existing = self.texture_cache.get(id).filter(|cached| {
+                    cached.texture.width() == *width
+                        && cached.texture.height() == *height
+                        && cached.texture.mip_level_count() == 1
+                        && cached.texture.usage().contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
                 });
 
-                let (texture, view) = if let Some((_, texture, view)) = existing {
-                    (texture.clone(), view.clone())
+                let (texture, view) = if let Some(cached) = existing {
+                    (cached.texture.clone(), cached.view.clone())
                 } else {
                     if self.texture_cache.contains_key(id) {
                         self.bind_group_cache
@@ -416,8 +444,16 @@ impl GxRenderer {
                 self.palette_converter
                     .encode(device, queue, &mut encoder, &source, format, palette, &view);
                 self.current_encoder = Some(encoder);
-                self.texture_cache
-                    .insert(*id, (gecko::flipper::gx::draw::TextureFormat::CI8, texture, view));
+                self.texture_cache.insert(
+                    *id,
+                    CachedTexture {
+                        fmt: gecko::flipper::gx::draw::TextureFormat::CI8,
+                        native_w: *width,
+                        native_h: *height,
+                        texture,
+                        view,
+                    },
+                );
             }
             GxAction::InvalidateCaches => {
                 self.flush_pending_draws(device, queue);
@@ -568,14 +604,13 @@ impl GxRenderer {
                             continue;
                         };
 
-                        let Some((_, tex, _)) = self.texture_cache.get(tid) else {
+                        let Some(cached) = self.texture_cache.get(tid) else {
                             continue;
                         };
 
-                        let size = tex.size();
                         let c = (slot % 2) * 2;
-                        tex_dims[slot / 2][c] = size.width;
-                        tex_dims[slot / 2][c + 1] = size.height;
+                        tex_dims[slot / 2][c] = cached.native_w;
+                        tex_dims[slot / 2][c + 1] = cached.native_h;
                     }
 
                     let draw_uniform = DrawUniforms {
@@ -864,19 +899,19 @@ impl GxRenderer {
                 for slot in 0..8 {
                     if let Some(tid) = &bg_key.tex_keys[slot] {
                         let tex_entry = self.texture_cache.get(tid);
-                        let efb_match = tex_entry.and_then(|(tex_fmt, tex_tex, _)| {
-                            if tex_tex.mip_level_count() != 1 {
+                        let efb_match = tex_entry.and_then(|cached| {
+                            if cached.texture.mip_level_count() != 1 {
                                 return None;
                             }
 
-                            let size = tex_tex.size();
+                            let size = cached.texture.size();
                             self.efb_copy_cache
                                 .get(&tid.ram_addr)
-                                .filter(|e| e.matches(*tex_fmt, size.width, size.height))
+                                .filter(|e| e.matches(cached.fmt, size.width, size.height))
                                 .map(|e| &e.view)
                         });
 
-                        if let Some(view) = efb_match.or_else(|| tex_entry.map(|(_, _, v)| v)) {
+                        if let Some(view) = efb_match.or_else(|| tex_entry.map(|cached| &cached.view)) {
                             tex_views[slot] = view;
                         } else {
                             tracing::warn!(

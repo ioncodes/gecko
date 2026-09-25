@@ -12,6 +12,8 @@ mod renderdoc_capture;
 mod shader_specialization;
 pub mod sink;
 mod texture_decode;
+#[cfg(not(target_arch = "wasm32"))]
+mod texture_pack;
 
 use gecko::common::Address;
 #[cfg(feature = "renderdoc-capture")]
@@ -243,6 +245,14 @@ pub const EFB_HEIGHT: u32 = 528;
 pub const EFB_SAMPLE_COUNT: u32 = 4;
 pub const MAX_EFB_SCALE: u32 = 4;
 
+pub(crate) struct CachedTexture {
+    pub(crate) fmt: TextureFormat,
+    pub(crate) native_w: u32,
+    pub(crate) native_h: u32,
+    pub(crate) texture: wgpu::Texture,
+    pub(crate) view: wgpu::TextureView,
+}
+
 pub(crate) struct EfbCopyEntry {
     pub(crate) format: gecko::flipper::gx::texture::CopyFormat,
     /// Guest dimensions. The GPU texture itself is `efb_scale`
@@ -308,7 +318,9 @@ pub struct GxRenderer {
     pub(crate) efb_depth_view: wgpu::TextureView,
     pub(crate) efb_needs_clear: bool,
     pub(crate) sampler_cache: FxHashMap<SamplerKey, wgpu::Sampler>,
-    pub(crate) texture_cache: FxHashMap<TextureKey, (TextureFormat, wgpu::Texture, wgpu::TextureView)>,
+    pub(crate) texture_cache: FxHashMap<TextureKey, CachedTexture>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) texture_pack: texture_pack::TexturePack,
     // Retired LoadTexture allocations grouped by (w, h, mip levels).
     pub(crate) texture_pool: FxHashMap<(u32, u32, u32), Vec<wgpu::Texture>>,
     pub(crate) efb_copy_cache: FxHashMap<Address, EfbCopyEntry>,
@@ -976,6 +988,8 @@ impl GxRenderer {
                 m
             },
             texture_cache: FxHashMap::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            texture_pack: texture_pack::TexturePack::default(),
             texture_pool: FxHashMap::default(),
             efb_copy_cache: FxHashMap::default(),
             palette_converter,
