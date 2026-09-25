@@ -63,6 +63,9 @@ impl GameCube {
             .phys_write_u32(0x28, crate::mmio::constants::RAM_SIZE as u32);
         emulator.mmio.phys_write_u32(0x2C, 1); // retail console
         emulator.mmio.phys_write_u32(0xD0, ARAM_SIZE);
+        let cpu_clock = crate::scheduler::cpu_clock(GC) as u32;
+        emulator.mmio.phys_write_u32(0xF8, cpu_clock / 3);
+        emulator.mmio.phys_write_u32(0xFC, cpu_clock);
 
         // Syscall stub? rfi
         emulator.mmio.phys_write_u32(0x0C00, 0x4C00_0064);
