@@ -1033,6 +1033,9 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
 
     #[cfg_attr(feature = "hotpath", hotpath::measure(label = "ppc_jit_compile"))]
     fn compile_div2i(&mut self, pc: u32) -> BlockEntry {
+        #[cfg(feature = "frame-timings")]
+        let _timer = crate::profile::frame_timings::Timer::new(crate::profile::frame_timings::Kind::PpcCompile);
+
         let func_id = self.func_id_for(pc);
 
         #[cfg(feature = "jit-stats")]
@@ -1165,6 +1168,9 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
     }
 
     fn compile(&mut self, spec: &block::BlockSpec, gprs: &[u32; 32], gqrs: &[u32; 8]) -> BlockEntry {
+        #[cfg(feature = "frame-timings")]
+        let _timer = crate::profile::frame_timings::Timer::new(crate::profile::frame_timings::Kind::PpcCompile);
+
         let func_id = self.func_id_for(spec.start_pc);
 
         let _ = self.target_slot_addr(spec.start_pc);

@@ -397,6 +397,8 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
 
     #[cfg_attr(feature = "hotpath", hotpath::measure(label = "dsp_jit_compile"))]
     fn compile(&mut self, spec: &block::BlockSpec) -> BlockEntry {
+        #[cfg(feature = "frame-timings")]
+        let _timer = crate::profile::frame_timings::Timer::new(crate::profile::frame_timings::Kind::DspCompile);
         let func_id = self.func_id_for(spec.start_pc);
 
         self.ctx.clear();

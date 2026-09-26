@@ -177,12 +177,34 @@ impl From<FullPipelineKey> for UberPipelineKey {
     }
 }
 
+impl UberPipelineKey {
+    fn to_bytes(self) -> [u8; UBER_PIPELINE_KEY_BYTES] {
+        let mut out = [0u8; UBER_PIPELINE_KEY_BYTES];
+        out[..SHADER_KEY_BYTES].copy_from_slice(&self.shader.to_bytes());
+        out[SHADER_KEY_BYTES..].copy_from_slice(&self.fixed.to_bytes());
+        out
+    }
+
+    fn from_bytes(b: &[u8; UBER_PIPELINE_KEY_BYTES]) -> Self {
+        Self {
+            shader: ShaderKey::from_bytes(b[..SHADER_KEY_BYTES].try_into().unwrap()),
+            fixed: PipelineKey::from_bytes(b[SHADER_KEY_BYTES..].try_into().unwrap()),
+        }
+    }
+}
+
 pub(crate) const FULL_PIPELINE_KEY_BYTES: usize = SHADER_KEY_BYTES + SPECIALIZATION_KEY_BYTES + PipelineKey::BYTES;
+const UBER_PIPELINE_KEY_BYTES: usize = SHADER_KEY_BYTES + PipelineKey::BYTES;
 const PIPELINE_CACHE_MAGIC: [u8; 4] = *b"GPKC";
+const UBER_PIPELINE_CACHE_MAGIC: [u8; 4] = *b"GUKC";
 const PIPELINE_CACHE_VERSION: u32 = 11;
 
 pub(crate) fn pipeline_cache_path() -> std::path::PathBuf {
     gecko::paths::cache("pipeline_keys.bin")
+}
+
+pub(crate) fn uber_pipeline_cache_path() -> std::path::PathBuf {
+    gecko::paths::cache("uber_pipeline_keys.bin")
 }
 
 impl FullPipelineKey {
@@ -224,6 +246,14 @@ impl FullPipelineKey {
 }
 
 pub(crate) fn load_cached_pipeline_keys(path: &Path) -> Vec<FullPipelineKey> {
+    load_keys(path, PIPELINE_CACHE_MAGIC, FullPipelineKey::from_bytes)
+}
+
+pub(crate) fn load_cached_uber_pipeline_keys(path: &Path) -> Vec<UberPipelineKey> {
+    load_keys(path, UBER_PIPELINE_CACHE_MAGIC, UberPipelineKey::from_bytes)
+}
+
+fn load_keys<const N: usize, K>(path: &Path, magic: [u8; 4], decode: fn(&[u8; N]) -> K) -> Vec<K> {
     let mut f = match File::open(path) {
         Ok(f) => f,
         Err(_) => return Vec::new(),
@@ -234,7 +264,7 @@ pub(crate) fn load_cached_pipeline_keys(path: &Path) -> Vec<FullPipelineKey> {
         return Vec::new();
     }
 
-    if header[..4] != PIPELINE_CACHE_MAGIC {
+    if header[..4] != magic {
         return Vec::new();
     }
 
@@ -244,15 +274,28 @@ pub(crate) fn load_cached_pipeline_keys(path: &Path) -> Vec<FullPipelineKey> {
     }
 
     let mut keys = Vec::new();
-    let mut buf = [0u8; FULL_PIPELINE_KEY_BYTES];
+    let mut buf = [0u8; N];
     while f.read_exact(&mut buf).is_ok() {
-        keys.push(FullPipelineKey::from_bytes(&buf));
+        keys.push(decode(&buf));
     }
 
     keys
 }
 
 pub(crate) fn save_pipeline_keys(path: &Path, keys: &[FullPipelineKey]) -> std::io::Result<()> {
+    save_keys(path, PIPELINE_CACHE_MAGIC, keys, FullPipelineKey::to_bytes)
+}
+
+pub(crate) fn save_uber_pipeline_keys(path: &Path, keys: &[UberPipelineKey]) -> std::io::Result<()> {
+    save_keys(path, UBER_PIPELINE_CACHE_MAGIC, keys, UberPipelineKey::to_bytes)
+}
+
+fn save_keys<const N: usize, K: Copy>(
+    path: &Path,
+    magic: [u8; 4],
+    keys: &[K],
+    encode: fn(K) -> [u8; N],
+) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -260,11 +303,11 @@ pub(crate) fn save_pipeline_keys(path: &Path, keys: &[FullPipelineKey]) -> std::
     let f = File::create(path)?;
 
     let mut w = BufWriter::new(f);
-    w.write_all(&PIPELINE_CACHE_MAGIC)?;
+    w.write_all(&magic)?;
     w.write_all(&PIPELINE_CACHE_VERSION.to_le_bytes())?;
 
     for k in keys {
-        w.write_all(&k.to_bytes())?;
+        w.write_all(&encode(*k))?;
     }
 
     w.flush()?;

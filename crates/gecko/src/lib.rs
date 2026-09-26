@@ -13,7 +13,12 @@ pub mod ipl;
 pub mod jit;
 pub mod mmio;
 pub mod paths;
-#[cfg(any(feature = "jit-stats", feature = "profile", feature = "gx-stats"))]
+#[cfg(any(
+    feature = "jit-stats",
+    feature = "profile",
+    feature = "gx-stats",
+    feature = "frame-timings"
+))]
 pub mod profile;
 pub mod savestate;
 pub mod scheduler;

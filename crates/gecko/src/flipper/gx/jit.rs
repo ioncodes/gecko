@@ -277,6 +277,8 @@ impl JitVertexEngine {
 
     #[cfg_attr(feature = "hotpath", hotpath::measure(label = "vtx_jit_compile"))]
     fn compile(&mut self, key: VtxKey) -> Option<CompiledParser> {
+        #[cfg(feature = "frame-timings")]
+        let _timer = crate::profile::frame_timings::Timer::new(crate::profile::frame_timings::Kind::VertexCompile);
         self.seq = self.seq.wrapping_add(1);
         let name = format!("gecko_vtx_parser_{:016x}", self.seq);
         let func_id = self
@@ -296,6 +298,12 @@ impl JitVertexEngine {
         self.module.finalize_definitions().expect("finalize vtx jit");
 
         let raw = self.module.get_finalized_function(func_id);
+        crate::jit::register_jit_code(
+            "vertex",
+            self.seq as u32,
+            raw as usize,
+            self.ctx.compiled_code().unwrap().code_buffer().len(),
+        );
         let func: ParserFn = unsafe { std::mem::transmute(raw) };
         Some(CompiledParser { func, func_id })
     }

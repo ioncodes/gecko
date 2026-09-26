@@ -77,6 +77,10 @@ pub enum GxAction {
         palette: Box<[[u8; 4]; 256]>,
     },
 
+    /// Drop textures, EFB copies and bind groups derived from emulated memory
+    /// after restoring a state. Immutable GPU pipelines remain valid.
+    InvalidateStateCaches,
+
     /// Debug action: Drop every cached pipeline, bind group, and texture on
     /// the renderer side. Used by the GX debug window to force fresh decodes.
     InvalidateCaches,

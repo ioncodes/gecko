@@ -415,7 +415,7 @@ impl RenderSink for ThreadedSink {
                     });
                 }
             }
-        } else if matches!(&action, GxAction::InvalidateCaches) {
+        } else if matches!(&action, GxAction::InvalidateStateCaches | GxAction::InvalidateCaches) {
             self.pending_efb_textures.clear();
         }
 
@@ -633,7 +633,8 @@ impl RenderSink for InlineSink {
 
 pub fn action_resets_vertex_scratch(action: &GxAction) -> bool {
     match action {
-        GxAction::InvalidateCaches
+        GxAction::InvalidateStateCaches
+        | GxAction::InvalidateCaches
         | GxAction::CopyXfb { .. }
         | GxAction::PresentXfb { .. }
         | GxAction::PresentRawXfb { .. }

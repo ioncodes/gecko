@@ -466,6 +466,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     }
 
     pub fn execute_dsp_batch(&mut self) {
+        #[cfg(feature = "frame-timings")]
+        let _timer = crate::profile::frame_timings::Timer::new(crate::profile::frame_timings::Kind::DspRun);
         #[cfg(feature = "jit")]
         if self.execution_mode == ExecutionMode::Jit {
             self.execute_dsp_batch_jit();
@@ -475,6 +477,8 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
     }
 
     pub fn drain_dsp_synchronous(&mut self, max_steps: u32) {
+        #[cfg(feature = "frame-timings")]
+        let _timer = crate::profile::frame_timings::Timer::new(crate::profile::frame_timings::Kind::DspRun);
         #[cfg(feature = "jit")]
         if self.execution_mode == ExecutionMode::Jit {
             self.drain_dsp_synchronous_jit(max_steps);

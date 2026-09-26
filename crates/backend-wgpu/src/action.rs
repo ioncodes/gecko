@@ -455,7 +455,7 @@ impl GxRenderer {
                     },
                 );
             }
-            GxAction::InvalidateCaches => {
+            GxAction::InvalidateStateCaches | GxAction::InvalidateCaches => {
                 self.flush_pending_draws(device, queue);
                 let _ = self.submit_pending(queue);
                 self.texture_cache.clear();
@@ -464,7 +464,9 @@ impl GxRenderer {
                     self.return_to_pool(tex, view);
                 }
                 self.bind_group_cache.clear();
-                self.invalidate_pipeline_caches();
+                if matches!(action, GxAction::InvalidateCaches) {
+                    self.invalidate_pipeline_caches();
+                }
             }
             #[cfg(not(target_arch = "wasm32"))]
             GxAction::DumpTextures { dir } => {

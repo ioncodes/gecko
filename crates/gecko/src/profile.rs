@@ -292,3 +292,54 @@ mod stub_sampler {
 
 #[cfg(all(feature = "profile", not(windows)))]
 pub use stub_sampler::IpSampler;
+
+#[cfg(feature = "frame-timings")]
+pub mod frame_timings {
+    use std::cell::Cell;
+    use std::time::Instant;
+
+    #[derive(Clone, Copy)]
+    pub enum Kind {
+        PpcCompile,
+        DspCompile,
+        VertexCompile,
+        DspRun,
+    }
+
+    const KINDS: usize = Kind::DspRun as usize + 1;
+
+    thread_local! {
+        static TOTALS: Cell<[(u64, u64); KINDS]> = const { Cell::new([(0, 0); KINDS]) };
+    }
+
+    pub struct Timer {
+        kind: Kind,
+        start: Instant,
+    }
+
+    impl Timer {
+        pub fn new(kind: Kind) -> Self {
+            Self {
+                kind,
+                start: Instant::now(),
+            }
+        }
+    }
+
+    impl Drop for Timer {
+        fn drop(&mut self) {
+            let ns = self.start.elapsed().as_nanos() as u64;
+
+            TOTALS.with(|cell| {
+                let mut totals = cell.get();
+                totals[self.kind as usize].0 += 1;
+                totals[self.kind as usize].1 += ns;
+                cell.set(totals);
+            });
+        }
+    }
+
+    pub fn take() -> [(u64, u64); KINDS] {
+        TOTALS.with(|cell| cell.replace([(0, 0); KINDS]))
+    }
+}

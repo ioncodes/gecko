@@ -22,6 +22,7 @@ jit-stats = ["jit", "dep:backtrace"]
 # Run both interpreter and JIT for every draw call, reports drift
 vtx-jit-validate = ["jit", "gx-stats"]
 fps-counter = []
+frame-timings = []
 gx-stats = []
 profile = ["dep:backtrace", "dep:windows-sys"]
 # Enables std::hint::black_box inside `EmptyRenderSink::exec`

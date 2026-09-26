@@ -24,9 +24,7 @@ use gecko::flipper::gx::regs::{AlphaCompare, BlendMode, CompareFunc, CullMode, M
 use gecko::host::{DrawState, TextureKey};
 use glam::Mat4;
 use pipeline::{FullPipelineKey, UberPipelineKey};
-use rustc_hash::FxHashMap;
-#[cfg(not(target_arch = "wasm32"))]
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use shader_specialization::{ShaderKey, ShaderSpecializationKey};
 use std::num::NonZeroU64;
 #[cfg(feature = "gx-stats")]
@@ -1241,6 +1239,8 @@ impl GxRenderer {
     }
 
     pub fn save_pipeline_cache(&self) -> std::io::Result<usize> {
+        let uber_keys: Vec<UberPipelineKey> = self.uber_pipeline_cache.keys().copied().collect();
+        pipeline::save_uber_pipeline_keys(&pipeline::uber_pipeline_cache_path(), &uber_keys)?;
         let path = pipeline::pipeline_cache_path();
         let keys: Vec<pipeline::FullPipelineKey> = self.pipeline_cache.keys().copied().collect();
         pipeline::save_pipeline_keys(&path, &keys)?;
@@ -1293,51 +1293,83 @@ impl GxRenderer {
 
     pub fn prewarm_pipeline_cache(&mut self, device: &wgpu::Device) {
         let path = pipeline::pipeline_cache_path();
-        let keys: Vec<pipeline::FullPipelineKey> = pipeline::load_cached_pipeline_keys(&path)
-            .into_iter()
-            .filter(|k| !self.pipeline_cache.contains_key(k) && self.shader_cache.contains_key(&k.shader))
-            .collect();
+        let keys = pipeline::load_cached_pipeline_keys(&path);
 
-        if keys.is_empty() {
+        let uber_keys: FxHashSet<UberPipelineKey> =
+            pipeline::load_cached_uber_pipeline_keys(&pipeline::uber_pipeline_cache_path())
+                .into_iter()
+                .chain(keys.iter().copied().map(UberPipelineKey::from))
+                .collect();
+        let missing_shaders: FxHashSet<ShaderKey> = uber_keys
+            .iter()
+            .map(|k| k.shader)
+            .filter(|k| !self.shader_cache.contains_key(k))
+            .collect();
+        self.shader_cache.extend(prewarm_shader_variants(
+            device,
+            &missing_shaders.into_iter().collect::<Vec<_>>(),
+        ));
+
+        #[derive(Clone, Copy)]
+        enum WarmupKey {
+            Specialized(FullPipelineKey),
+            Uber(UberPipelineKey),
+        }
+
+        let mut jobs: Vec<WarmupKey> = uber_keys
+            .into_iter()
+            .filter(|k| !self.uber_pipeline_cache.contains_key(k))
+            .map(WarmupKey::Uber)
+            .collect();
+        let num_uber_pipelines = jobs.len();
+        jobs.extend(
+            keys.into_iter()
+                .filter(|k| !self.pipeline_cache.contains_key(k))
+                .map(WarmupKey::Specialized),
+        );
+
+        if jobs.is_empty() {
             return;
         }
 
         let t0 = std::time::Instant::now();
+        let compile = |&key: &WarmupKey| {
+            let pipeline = match key {
+                WarmupKey::Specialized(k) => pipeline::create_specialized_pipeline(
+                    device,
+                    &self.pipeline_layout,
+                    self.surface_format,
+                    &self.shader_cache[&k.shader],
+                    &k,
+                ),
+                WarmupKey::Uber(k) => pipeline::create_uber_pipeline(
+                    device,
+                    &self.pipeline_layout,
+                    self.surface_format,
+                    &self.shader_cache[&k.shader],
+                    &k,
+                ),
+            };
+            (key, pipeline)
+        };
 
         // wgpu 29's WebGPU backend wraps JS handles in Rc<Cell<_>>, making
         // Device/Queue !Send — so the threaded compile path can't even
         // type-check on wasm32. Fall back to a sequential pass there.
         #[cfg(not(target_arch = "wasm32"))]
-        let compiled: Vec<(pipeline::FullPipelineKey, wgpu::RenderPipeline)> = {
+        let compiled: Vec<_> = {
             let num_threads = std::thread::available_parallelism()
                 .map(|n| n.get())
                 .unwrap_or(4)
-                .min(keys.len());
-            let chunk_size = keys.len().div_ceil(num_threads);
+                .min(jobs.len());
+            let chunk_size = jobs.len().div_ceil(num_threads);
 
-            let self_ref = &*self;
             std::thread::scope(|s| {
-                let handles: Vec<_> = keys
+                let handles: Vec<_> = jobs
                     .chunks(chunk_size)
                     .map(|chunk| {
-                        s.spawn(move || {
-                            chunk
-                                .iter()
-                                .map(|&k| {
-                                    let module = &self_ref.shader_cache[&k.shader];
-                                    (
-                                        k,
-                                        pipeline::create_specialized_pipeline(
-                                            device,
-                                            &self_ref.pipeline_layout,
-                                            self_ref.surface_format,
-                                            module,
-                                            &k,
-                                        ),
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                        })
+                        let compile = &compile;
+                        s.spawn(move || chunk.iter().map(compile).collect::<Vec<_>>())
                     })
                     .collect();
                 handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
@@ -1345,29 +1377,22 @@ impl GxRenderer {
         };
 
         #[cfg(target_arch = "wasm32")]
-        let compiled: Vec<(pipeline::FullPipelineKey, wgpu::RenderPipeline)> = keys
-            .iter()
-            .map(|&k| {
-                let module = &self.shader_cache[&k.shader];
-                (
-                    k,
-                    pipeline::create_specialized_pipeline(
-                        device,
-                        &self.pipeline_layout,
-                        self.surface_format,
-                        module,
-                        &k,
-                    ),
-                )
-            })
-            .collect();
+        let compiled: Vec<_> = jobs.iter().map(compile).collect();
 
         for (k, p) in compiled {
-            self.pipeline_cache.insert(k, p);
+            match k {
+                WarmupKey::Specialized(k) => {
+                    self.pipeline_cache.insert(k, p);
+                }
+                WarmupKey::Uber(k) => {
+                    self.uber_pipeline_cache.insert(k, p);
+                }
+            }
         }
 
         tracing::info!(
-            num_pipelines = keys.len(),
+            num_pipelines = jobs.len() - num_uber_pipelines,
+            num_uber_pipelines,
             elapsed_ms = t0.elapsed().as_millis() as u64,
             "prewarmed pipeline cache",
         );

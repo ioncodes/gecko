@@ -332,7 +332,7 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
         #[cfg(not(feature = "jit"))]
         self.mmio.clear_code_refcount();
 
-        self.render_sink.exec(crate::host::GxAction::InvalidateCaches);
+        self.render_sink.exec(crate::host::GxAction::InvalidateStateCaches);
         self.render_sink.reset_efb();
         self.audio_sink.set_sample_rate(self.ai.control.aid_sample_rate_hz());
 

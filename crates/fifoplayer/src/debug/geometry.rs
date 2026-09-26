@@ -97,7 +97,7 @@ impl GeometryCapture {
                 }
             }
             GxAction::SetTexture { slot, id, .. } => self.bindings[*slot] = Some(*id),
-            GxAction::InvalidateCaches => {
+            GxAction::InvalidateStateCaches | GxAction::InvalidateCaches => {
                 self.textures.clear();
                 self.bindings.fill(None);
             }
