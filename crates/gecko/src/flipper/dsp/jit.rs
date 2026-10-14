@@ -105,6 +105,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             _ => unreachable!(),
         };
         jit_builder.symbol(syms.read_dmem.0, syms.read_dmem.1);
+        jit_builder.symbol("gecko_dsp_jit_idle", runtime::dsp_idle_wait::<SYSTEM> as *const u8);
         jit_builder.symbol(syms.write_dmem.0, syms.write_dmem.1);
         jit_builder.symbol(syms.read_reg_full.0, syms.read_reg_full.1);
         jit_builder.symbol(syms.write_reg_full.0, syms.write_reg_full.1);
@@ -136,7 +137,16 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             .declare_function(syms.write_reg_full.0, Linkage::Import, &dmem_write_sig)
             .expect("declare write_reg_full thunk");
 
+        let idle_wait_id = module
+            .declare_function(
+                "gecko_dsp_jit_idle",
+                Linkage::Import,
+                &translator::idle_wait_signature(pointer_type, host_cc),
+            )
+            .expect("declare idle_wait thunk");
+
         let extern_funcs = translator::ExternFuncs {
+            idle_wait: idle_wait_id,
             read_dmem: read_dmem_id,
             write_dmem: write_dmem_id,
             read_reg_full: read_reg_full_id,

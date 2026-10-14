@@ -1,3 +1,5 @@
+use crate::flipper::dsp::{WaitCondition, wait};
+
 pub const MAX_BLOCK_INSTRS: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +23,7 @@ pub struct InstrEntry {
 #[derive(Debug, Clone)]
 pub struct BlockSpec {
     pub start_pc: u16,
+    pub idle_wait: bool,
     pub instrs: Vec<InstrEntry>,
     pub terminator: TermKind,
     pub fallthrough_pc: u16,
@@ -123,6 +126,10 @@ pub fn discover(iram: &[u8], irom: &[u8], start_pc: u16) -> BlockSpec {
 
     let mut spec = BlockSpec {
         start_pc,
+        idle_wait: matches!(
+            wait::interrupt_wait_at(start_pc, |addr| read_imem_word(iram, irom, addr).unwrap_or(0)),
+            WaitCondition::InterruptZero { .. } | WaitCondition::InterruptNonzero { .. }
+        ),
         instrs,
         terminator: term,
         fallthrough_pc: pc,

@@ -1,6 +1,11 @@
 use crate::flipper::dsp::{self};
 use crate::system::{GC, System, SystemId, WII};
 
+pub extern "C" fn dsp_idle_wait<const SYSTEM: SystemId>(sys: *mut core::ffi::c_void) -> u32 {
+    let sys = unsafe { &*(sys as *const System<SYSTEM>) };
+    sys.dsp.parked_in_idle_wait() as u32
+}
+
 pub extern "C" fn dsp_read_dmem_gc(sys: *mut core::ffi::c_void, addr: u32) -> u32 {
     let sys = unsafe { &mut *(sys as *mut System<GC>) };
     dsp::read_dmem(sys, addr as u16) as u32

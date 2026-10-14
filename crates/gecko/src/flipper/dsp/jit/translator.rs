@@ -8,6 +8,7 @@ use cranelift_module::{FuncId, Module};
 use super::block::{BlockSpec, TermKind};
 #[derive(Clone, Copy)]
 pub struct ExternFuncs {
+    pub idle_wait: FuncId,
     pub read_dmem: FuncId,
     pub write_dmem: FuncId,
     pub read_reg_full: FuncId,
@@ -137,7 +138,24 @@ pub fn translate(
     }
 
     let block_sig_ref = builder.import_signature(block_signature(pointer_type));
-    let mut reg_cache = t::DspRegCache::new(&mut builder, ctx_ptr);
+    if spec.idle_wait {
+        let check = module.declare_func_in_func(extern_funcs.idle_wait, builder.func);
+        let call = builder.ins().call(check, &[ctx_ptr]);
+        let parked = builder.inst_results(call)[0];
+        let idle = builder.create_block();
+        let run = builder.create_block();
+
+        builder.ins().brif(parked, idle, &[], run, &[]);
+        builder.switch_to_block(idle);
+        builder.seal_block(idle);
+
+        let pc = builder.ins().iconst(types::I32, spec.start_pc as i64);
+        builder.ins().return_(&[pc]);
+        builder.switch_to_block(run);
+        builder.seal_block(run);
+    }
+
+    let mut reg_cache = t::DspRegCache::new(&mut builder);
     let szat_needed = szat_liveness(spec, loop_end_table);
 
     for (idx, entry) in spec.instrs.iter().enumerate() {
@@ -349,6 +367,7 @@ pub fn translate(
     );
 
     builder.finalize();
+    reg_cache.materialize_loads(&mut ctx.func, ctx_ptr);
 }
 
 fn emit_block_tail_chain(
@@ -418,11 +437,28 @@ fn emit_block_tail_chain(
         ctx_ptr,
         super::abi::dsp_status_offset() as i32,
     );
-    let enabled = builder.ins().band_imm(status, 1 << 9);
+
+    const SR_IE: u32 = 9;
+    const SR_EIE: u32 = 11;
+    const CSR_PIINT: u32 = 1;
+
+    let enabled = builder.ins().band_imm(status, 1 << SR_IE);
     let masked = builder.ins().icmp_imm(IntCC::Equal, enabled, 0);
     let no_pending = builder.ins().icmp_imm(IntCC::Equal, pending, 0);
     let no_exception = builder.ins().bor(masked, no_pending);
     let ok = builder.ins().band(ok, no_exception);
+
+    let csr = builder.ins().load(
+        types::I16,
+        MemFlagsData::trusted(),
+        ctx_ptr,
+        super::abi::dsp_csr_offset() as i32,
+    );
+    let external = builder.ins().band_imm(csr, 1 << CSR_PIINT);
+    let eie = builder.ins().ushr_imm(status, (SR_EIE - CSR_PIINT) as i64);
+    let external_enabled = builder.ins().band(external, eie);
+    let no_external = builder.ins().icmp_imm(IntCC::Equal, external_enabled, 0);
+    let ok = builder.ins().band(ok, no_external);
 
     let chain_block = builder.create_block();
     let return_block = builder.create_block();
@@ -503,6 +539,13 @@ pub(super) fn emit_saturate_ac_mid(builder: &mut FunctionBuilder, high: Value, m
 
 pub fn block_signature(pointer_type: cranelift_codegen::ir::Type) -> Signature {
     let mut sig = Signature::new(CallConv::Tail);
+    sig.params.push(AbiParam::new(pointer_type));
+    sig.returns.push(AbiParam::new(types::I32));
+    sig
+}
+
+pub fn idle_wait_signature(pointer_type: cranelift_codegen::ir::Type, host_cc: CallConv) -> Signature {
+    let mut sig = Signature::new(host_cc);
     sig.params.push(AbiParam::new(pointer_type));
     sig.returns.push(AbiParam::new(types::I32));
     sig

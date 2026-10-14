@@ -1,4 +1,4 @@
-use cranelift_codegen::ir::{InstBuilder, MemFlagsData, Value, types};
+use cranelift_codegen::ir::{Function, InstBuilder, MemFlagsData, Type, Value, ValueDef, types};
 use cranelift_frontend::{FunctionBuilder, Variable};
 use cranelift_module::Module;
 
@@ -65,16 +65,16 @@ pub(crate) struct DspRegCache {
     product_full_stale: bool,
     dmem_bases: [Value; 2],
     dirty: [bool; REG_CACHE_LEN],
+    deferred_loads: Vec<(Value, i32)>,
 }
 
 impl DspRegCache {
-    pub(crate) fn new(builder: &mut FunctionBuilder, sys_ptr: Value) -> Self {
+    pub(crate) fn new(builder: &mut FunctionBuilder) -> Self {
         let offsets = reg_cache_offsets();
+        let mut deferred_loads = Vec::new();
         let vars = std::array::from_fn(|idx| {
             let var = builder.declare_var(types::I16);
-            let value = builder
-                .ins()
-                .load(types::I16, MemFlagsData::trusted(), sys_ptr, offsets[idx]);
+            let value = Self::defer_load(builder, &mut deferred_loads, types::I16, offsets[idx]);
             builder.def_var(var, value);
 
             var
@@ -82,12 +82,7 @@ impl DspRegCache {
 
         let dmem_base_offsets = [abi::dsp_dram_ptr_offset(), abi::dsp_coef_ptr_offset()];
         let dmem_bases = std::array::from_fn(|idx| {
-            builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                sys_ptr,
-                dmem_base_offsets[idx] as i32,
-            )
+            Self::defer_load(builder, &mut deferred_loads, types::I64, dmem_base_offsets[idx] as i32)
         });
 
         let mut cache = Self {
@@ -98,10 +93,61 @@ impl DspRegCache {
             product_full_stale: false,
             dmem_bases,
             dirty: [false; REG_CACHE_LEN],
+            deferred_loads,
         };
         cache.rebuild_composites(builder);
 
         cache
+    }
+
+    fn defer_load(builder: &mut FunctionBuilder, loads: &mut Vec<(Value, i32)>, ty: Type, offset: i32) -> Value {
+        let value = builder.ins().iconst(ty, 0);
+        loads.push((value, offset));
+        value
+    }
+
+    // I shouldn't have to do this but here we are lol, lesson learnt
+    pub(crate) fn materialize_loads(self, func: &mut Function, sys_ptr: Value) {
+        let mut live = vec![false; func.dfg.num_values()];
+        let mut pending = Vec::new();
+
+        for block in func.layout.blocks() {
+            for inst in func.layout.block_insts(block) {
+                let op = func.dfg.insts[inst].opcode();
+                if op.is_call()
+                    || op.is_terminator()
+                    || op.can_trap()
+                    || op.other_side_effects()
+                    || op.can_store()
+                    || op.can_load()
+                {
+                    pending.extend(func.dfg.inst_values(inst));
+                }
+            }
+        }
+
+        while let Some(value) = pending.pop() {
+            let value = func.dfg.resolve_aliases(value);
+            if std::mem::replace(&mut live[value.as_u32() as usize], true) {
+                continue;
+            }
+
+            match func.dfg.value_def(value) {
+                ValueDef::Result(inst, _) => pending.extend(func.dfg.inst_values(inst)),
+                ValueDef::Union(a, b) => pending.extend([a, b]),
+                ValueDef::Param(..) => {}
+            }
+        }
+
+        for (value, offset) in self.deferred_loads {
+            if live[value.as_u32() as usize] {
+                let ValueDef::Result(inst, _) = func.dfg.value_def(value) else {
+                    unreachable!()
+                };
+                let ty = func.dfg.value_type(value);
+                func.replace(inst).load(ty, MemFlagsData::trusted(), sys_ptr, offset);
+            }
+        }
     }
 
     fn compose_ac(&self, builder: &mut FunctionBuilder, d: u8) -> Value {
@@ -210,9 +256,9 @@ impl DspRegCache {
         }
     }
 
-    fn reload(&mut self, builder: &mut FunctionBuilder, sys_ptr: Value) {
+    fn reload(&mut self, builder: &mut FunctionBuilder) {
         for (idx, offset) in reg_cache_offsets().into_iter().enumerate() {
-            let value = builder.ins().load(types::I16, MemFlagsData::trusted(), sys_ptr, offset);
+            let value = Self::defer_load(builder, &mut self.deferred_loads, types::I16, offset);
             builder.def_var(self.vars[idx], value);
         }
 
@@ -1260,7 +1306,7 @@ impl<'a, 'b> TranslatorCtx<'a, 'b> {
         let slot_v = self.builder.ins().iconst(types::I32, slot as i64);
         let value_u32 = self.builder.ins().uextend(types::I32, value);
         self.builder.ins().call(f, &[self.sys_ptr, slot_v, value_u32]);
-        self.reg_cache.reload(self.builder, self.sys_ptr);
+        self.reg_cache.reload(self.builder);
     }
 
     pub fn emit_read_reg(&mut self, slot: u8) -> Value {

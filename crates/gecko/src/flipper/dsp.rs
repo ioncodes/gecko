@@ -8,6 +8,7 @@ pub mod interpreter;
 #[cfg(feature = "jit")]
 pub mod jit;
 pub mod regs;
+mod wait;
 
 // Dolphin's DSP IROM/coefficient replacement, used until a real dump is loaded
 // (see submodules/dolphin/docs/DSP/free_dsp_rom).
@@ -39,6 +40,7 @@ enum WaitCondition {
     CpuMailbox,
     DspMailbox,
     InterruptZero { addr: u16 },
+    InterruptNonzero { addr: u16 },
     InterruptComparison { lhs: u16, rhs: u16 },
 }
 
@@ -196,10 +198,11 @@ impl Dsp {
             WaitCondition::InterruptZero { addr } => {
                 self.registers.loop_addr.is_empty() && read_word(&self.dram[..], addr) == 0
             }
+            WaitCondition::InterruptNonzero { addr } => {
+                !self.hw_loop_ends_within(6) && read_word(&self.dram[..], addr) != 0
+            }
             WaitCondition::InterruptComparison { lhs, rhs } => {
-                if !self.registers.loop_addr.is_empty()
-                    && self.registers.loop_addr.top().wrapping_sub(self.registers.pc) <= 9
-                {
+                if self.hw_loop_ends_within(9) {
                     return false;
                 }
 
@@ -213,6 +216,11 @@ impl Dsp {
                 }
             }
         }
+    }
+
+    #[inline(always)]
+    fn hw_loop_ends_within(&self, len: u16) -> bool {
+        !self.registers.loop_addr.is_empty() && self.registers.loop_addr.top().wrapping_sub(self.registers.pc) <= len
     }
 
     pub fn rebuild_wait_table(&mut self) {
@@ -235,7 +243,7 @@ impl Dsp {
             } else if dsp {
                 WaitCondition::DspMailbox
             } else {
-                self.interrupt_wait_at(pc)
+                wait::interrupt_wait_at(pc, |addr| self.read_imem(addr))
             };
         }
     }
@@ -267,54 +275,8 @@ impl Dsp {
         words == [0x8100, 0x8900, 0x26FE, 0x02C0, 0x8000, 0x029C, start]
     }
 
-    fn interrupt_wait_at(&self, pc: u16) -> WaitCondition {
-        let words = self.read_imem_window::<9>(pc);
-
-        if let [0x8100, 0x8900, 0x00DF, rhs, 0x00DE, lhs, 0x8200, 0x0293, target] = words
-            && lhs < 0x1000
-            && rhs < 0x1000
-            && target == pc
-        {
-            return WaitCondition::InterruptComparison { lhs, rhs };
-        }
-
-        let start = if words[0] == 0x029F { words[1] } else { pc };
-        let [
-            0x00C0,
-            pointer_addr,
-            0x0088,
-            0x002F,
-            0x00DA,
-            addr,
-            0x8600,
-            0x0295,
-            target,
-        ] = self.read_imem_window::<9>(start)
-        else {
-            return WaitCondition::None;
-        };
-
-        if pointer_addr >= 0x1000 || addr >= 0x1000 {
-            return WaitCondition::None;
-        }
-
-        let [0x0088, 0xFFFF, 0x029F, back] = self.read_imem_window::<4>(target) else {
-            return WaitCondition::None;
-        };
-
-        if back != start && self.read_imem_window::<2>(back) != [0x029F, start] {
-            return WaitCondition::None;
-        }
-
-        WaitCondition::InterruptZero { addr }
-    }
-
     fn read_imem_window<const N: usize>(&self, start: u16) -> [u16; N] {
-        let mut out = [0u16; N];
-        for i in 0..N {
-            out[i] = self.read_imem(start.wrapping_add(i as u16));
-        }
-        out
+        wait::window(|addr| self.read_imem(addr), start)
     }
 
     pub fn process_aram_dma<const SYSTEM: SystemId>(&mut self, mmio: &mut Mmio<SYSTEM>) {
