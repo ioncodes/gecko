@@ -21,6 +21,13 @@ struct Inner {
 unsafe impl Send for Inner {}
 
 impl DenseArena {
+    pub fn address_range(&self) -> std::ops::Range<usize> {
+        let inner = self.inner.lock().unwrap();
+        let start = inner.alloc.as_ptr::<u8>() as usize;
+
+        start..start + inner.alloc.len()
+    }
+
     pub fn new(reserved: usize) -> io::Result<Self> {
         let alloc = region::alloc(reserved, region::Protection::READ_WRITE_EXECUTE).map_err(io::Error::other)?;
 

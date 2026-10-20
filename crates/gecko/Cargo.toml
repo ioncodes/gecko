@@ -17,6 +17,10 @@ jit = [
     "dep:cranelift-module",
     "dep:cranelift-native",
     "dep:region",
+    "dep:windows-sys",
+    "dep:iced-x86",
+    "dep:yaxpeax-arch",
+    "dep:yaxpeax-arm",
 ]
 jit-stats = ["jit", "dep:backtrace"]
 # Run both interpreter and JIT for every draw call, reports drift
@@ -65,4 +69,15 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_Threading",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Kernel",
+    "Win32_System_Memory",
+    "Win32_System_LibraryLoader",
+    "Win32_System_SystemServices",
+    "Win32_Security",
 ], optional = true }
+
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+iced-x86 = { version = "1.21.0", default-features = false, features = ["std", "decoder", "instr_info"], optional = true }
+
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+yaxpeax-arch = { version = "0.3.2", default-features = false, optional = true }
+yaxpeax-arm = { version = "0.5.0", default-features = false, optional = true }

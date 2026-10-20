@@ -82,12 +82,16 @@ macro_rules! bus_write_hooks {
 impl<const SYSTEM: SystemId> System<SYSTEM> {
     pub(crate) fn refresh_lcache_fastmem(&mut self) {
         let base = crate::mmio::constants::LCACHE_BASE;
-        self.mmio.lcache_fastmem_ptr = if self.bat_translate(base) == base {
+        let ptr = if self.bat_translate(base) == base {
             self.mmio.lcache.as_ptr() as usize
         } else {
             0
         };
-        self.mmio.fastmem_lut[(base >> crate::mmio::FASTMEM_PAGE_SHIFT) as usize] = self.mmio.lcache_fastmem_ptr;
+        if ptr == self.mmio.lcache_fastmem_ptr {
+            return;
+        }
+        self.mmio.lcache_fastmem_ptr = ptr;
+        self.mmio.set_fastmem_page(base, ptr);
     }
 
     #[cold]
@@ -882,7 +886,11 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 );
                 self.mmio.phys_write_u8(phys, val);
             }
-            _ => self.mmio.phys_write_u8(phys, val),
+            _ => {
+                self.mmio.phys_write_u8(phys, val);
+                #[cfg(feature = "jit")]
+                self.mmio.queue_icbi_for_range(phys, 1);
+            }
         }
     }
 
@@ -1052,7 +1060,11 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 );
                 self.mmio.phys_write_u16(phys, val);
             }
-            _ => self.mmio.phys_write_u16(phys, val),
+            _ => {
+                self.mmio.phys_write_u16(phys, val);
+                #[cfg(feature = "jit")]
+                self.mmio.queue_icbi_for_range(phys, 2);
+            }
         }
     }
 
@@ -1221,7 +1233,11 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
                 );
                 self.mmio.phys_write_u32(phys, val);
             }
-            _ => self.mmio.phys_write_u32(phys, val),
+            _ => {
+                self.mmio.phys_write_u32(phys, val);
+                #[cfg(feature = "jit")]
+                self.mmio.queue_icbi_for_range(phys, 4);
+            }
         }
     }
 }

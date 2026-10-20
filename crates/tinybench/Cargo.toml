@@ -6,6 +6,11 @@ edition = "2024"
 [features]
 default = ["gecko/rendersink-blackbox"]
 jit-stats = ["gecko/jit-stats"]
+jit-bench = ["gecko/frame-timings"]
+
+[[bin]]
+name = "jit_bench"
+required-features = ["jit-bench"]
 
 [dependencies]
 gecko = { path = "../gecko" }

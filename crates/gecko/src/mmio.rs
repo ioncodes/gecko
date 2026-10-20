@@ -4,12 +4,23 @@ pub mod fp;
 pub mod macros;
 pub mod traits;
 
+#[cfg(feature = "jit")]
+pub(crate) mod fastmem;
+
+#[cfg(feature = "jit")]
+pub use fastmem::Memory;
+
+#[cfg(not(feature = "jit"))]
+pub type Memory = Vec<u8>;
+
 use crate::system::{SystemId, WII};
 use constants::*;
 use rustc_hash::FxHashSet;
 
 // A page must fit the entire locked cache without mapping bytes beyond it.
 pub const FASTMEM_LUT_PAGES: usize = 1 << 18;
+/// Physical, cached and uncached EA bases of a RAM bank.
+pub const RAM_ALIASES: [u32; 3] = [0x0000_0000, 0x8000_0000, 0xC000_0000];
 pub const FASTMEM_PAGE_BYTES: usize = 1 << 14;
 pub const FASTMEM_PAGE_MASK: u32 = (FASTMEM_PAGE_BYTES as u32) - 1;
 pub const FASTMEM_PAGE_SHIFT: u32 = 14;
@@ -29,12 +40,12 @@ pub const MEM1_LINES: usize = RAM_SIZE >> CODE_LINE_SHIFT as usize;
 pub const MEM2_LINES: usize = MEM2_SIZE >> CODE_LINE_SHIFT as usize;
 
 pub struct Mmio<const SYSTEM: SystemId> {
-    pub ram: Vec<u8>,
+    pub ram: Memory,
     pub efb: Vec<u8>,
     pub hwr: Vec<u8>,
     pub ipl: Vec<u8>,
-    pub lcache: Vec<u8>,
-    pub mem2: Vec<u8>,
+    pub lcache: Memory,
+    pub mem2: Memory,
     pub ram_ptr: usize,
     pub fastmem_lut: Vec<usize>,
     pub fastmem_lut_ptr: usize,
@@ -49,6 +60,10 @@ pub struct Mmio<const SYSTEM: SystemId> {
     pub pending_icbi: FxHashSet<u32>,
     #[cfg(feature = "jit")]
     pub jit_dirty: u8,
+    #[cfg(feature = "jit")]
+    pub(crate) fastmem: Option<fastmem::Fastmem>,
+    #[cfg(feature = "jit")]
+    pub(crate) fastmem_base: usize,
 }
 
 /// Read-only view over MEM1 plus (on Wii) MEM2, addressed by physical
@@ -133,43 +148,24 @@ impl<'a> RamViewMut<'a> {
 
 impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
     pub fn new() -> Self {
-        let ram = vec![0u8; RAM_SIZE];
+        let mem2_len = if SYSTEM == WII { MEM2_SIZE } else { 0 };
+
+        #[cfg(feature = "jit")]
+        let (ram, mem2, lcache, fastmem) = Self::allocate_memory(mem2_len);
+
+        #[cfg(not(feature = "jit"))]
+        let (ram, mem2, lcache) = (vec![0u8; RAM_SIZE], vec![0u8; mem2_len], vec![0u8; LCACHE_SIZE]);
+
+        // Map MEM1 and (Wii) MEM2 at their physical, cached and uncached aliases.
         let ram_ptr = ram.as_ptr() as usize;
-        let mem2 = if SYSTEM == WII { vec![0; MEM2_SIZE] } else { Vec::new() };
-
         let mut fastmem_lut = vec![0usize; FASTMEM_LUT_PAGES];
-
-        // Map MEM1 (24 MiB) at all three aliases:
-        //   * physical 0x0000_0000..0x017F_FFFF
-        //   * cached   0x8000_0000..0x817F_FFFF
-        //   * uncached 0xC000_0000..0xC17F_FFFF
-        let mem1_pages = (RAM_SIZE / FASTMEM_PAGE_BYTES) as u32;
-        let bases = [0x0000_0000u32, 0x8000_0000, 0xC000_0000];
-        for base in bases {
-            let lut_base = (base >> FASTMEM_PAGE_SHIFT) as usize;
-            for i in 0..mem1_pages {
-                let host_addr = ram_ptr + (i as usize) * FASTMEM_PAGE_BYTES;
-                fastmem_lut[lut_base + i as usize] = host_addr;
-            }
-        }
-
-        // Wii: also map MEM2 (64 MiB) at its three aliases:
-        //   * physical 0x1000_0000..0x13FF_FFFF
-        //   * cached   0x9000_0000..0x93FF_FFFF
-        //   * uncached 0xD000_0000..0xD3FF_FFFF
-        if SYSTEM == WII {
-            let mem2_pages = (MEM2_SIZE / FASTMEM_PAGE_BYTES) as u32;
-            let mem2_ptr = mem2.as_ptr() as usize;
-            let bases = [0x1000_0000u32, 0x9000_0000, 0xD000_0000];
-            for base in bases {
-                let lut_base = (base >> FASTMEM_PAGE_SHIFT) as usize;
-                for i in 0..mem2_pages {
-                    let host_addr = mem2_ptr + (i as usize) * FASTMEM_PAGE_BYTES;
-                    fastmem_lut[lut_base + i as usize] = host_addr;
+        for (bank, len, backing) in [(0u32, RAM_SIZE, ram_ptr), (MEM2_BASE, mem2_len, mem2.as_ptr() as usize)] {
+            for alias in RAM_ALIASES {
+                for offset in (0..len).step_by(FASTMEM_PAGE_BYTES) {
+                    fastmem_lut[((bank | alias) as usize + offset) >> FASTMEM_PAGE_SHIFT] = backing + offset;
                 }
             }
         }
-
         let fastmem_lut_ptr = fastmem_lut.as_ptr() as usize;
 
         let refcount_len = if SYSTEM == WII {
@@ -190,7 +186,7 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
             efb: vec![0; EFB_SIZE],
             hwr: vec![0; HW_REG_SIZE],
             ipl: vec![0; 0],
-            lcache: vec![0; LCACHE_SIZE],
+            lcache,
             mem2,
             ram_ptr,
             fastmem_lut,
@@ -206,6 +202,41 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
             pending_icbi: FxHashSet::default(),
             #[cfg(feature = "jit")]
             jit_dirty: 0,
+            #[cfg(feature = "jit")]
+            fastmem_base: fastmem.as_ref().map_or(0, |mapping| mapping.base()),
+            #[cfg(feature = "jit")]
+            fastmem,
+        }
+    }
+
+    #[cfg(feature = "jit")]
+    fn allocate_memory(mem2_len: usize) -> (Memory, Memory, Memory, Option<fastmem::Fastmem>) {
+        if fastmem::enabled() {
+            match fastmem::Fastmem::allocate(SYSTEM == WII) {
+                Ok((ram, mem2, lcache, mapping)) => return (ram, mem2, lcache, Some(mapping)),
+                Err(error) => tracing::warn!(%error, "host fastmem unavailable; using software LUT"),
+            }
+        }
+
+        (
+            Memory::owned(RAM_SIZE),
+            Memory::owned(mem2_len),
+            Memory::owned(LCACHE_SIZE),
+            None,
+        )
+    }
+
+    pub(crate) fn set_fastmem_page(&mut self, ea: u32, host: usize) {
+        assert_eq!(ea as usize & (FASTMEM_PAGE_BYTES - 1), 0);
+
+        let page = (ea >> FASTMEM_PAGE_SHIFT) as usize;
+        self.fastmem_lut[page] = host;
+
+        #[cfg(feature = "jit")]
+        if let Some(mapping) = &mut self.fastmem {
+            mapping
+                .set_page(page, host)
+                .expect("cannot keep host fastmem and software LUT coherent");
         }
     }
 
@@ -242,14 +273,10 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
 
             let phys_base = page << FASTMEM_PAGE_SHIFT;
             let is_fastmem = phys_base <= RAM_END || (SYSTEM == WII && (MEM2_BASE..=MEM2_END).contains(&phys_base));
-            let aliases: &[u32] = if is_fastmem {
-                &[0x0000_0000, 0x8000_0000, 0xC000_0000]
-            } else {
-                &[]
-            };
+            let aliases: &[u32] = if is_fastmem { &RAM_ALIASES } else { &[] };
 
             for &alias in aliases {
-                self.fastmem_lut[((phys_base | alias) >> FASTMEM_PAGE_SHIFT) as usize] = 0;
+                self.set_fastmem_page(phys_base | alias, 0);
             }
         }
     }
@@ -279,7 +306,8 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
 
         let write_generation = self.memory_write_generation;
 
-        for page in self.efb_writeback_pages.drain() {
+        let pages = std::mem::take(&mut self.efb_writeback_pages);
+        for &page in &pages {
             let phys_base = page << FASTMEM_PAGE_SHIFT;
             let phys_end = phys_base + FASTMEM_PAGE_BYTES as u32 - 1;
 
@@ -291,23 +319,22 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
             }
 
             let (host_addr, aliases): (usize, &[u32]) = if phys_base <= RAM_END {
-                (
-                    self.ram_ptr + phys_base as usize,
-                    &[0x0000_0000, 0x8000_0000, 0xC000_0000],
-                )
+                (self.ram_ptr + phys_base as usize, &RAM_ALIASES)
             } else if SYSTEM == WII && (MEM2_BASE..=MEM2_END).contains(&phys_base) {
                 (
                     self.mem2.as_ptr() as usize + (phys_base - MEM2_BASE) as usize,
-                    &[0x0000_0000, 0x8000_0000, 0xC000_0000],
+                    &RAM_ALIASES,
                 )
             } else {
                 continue;
             };
 
             for &alias in aliases {
-                self.fastmem_lut[((phys_base | alias) >> FASTMEM_PAGE_SHIFT) as usize] = host_addr;
+                self.set_fastmem_page(phys_base | alias, host_addr);
             }
         }
+        self.efb_writeback_pages = pages;
+        self.efb_writeback_pages.clear();
     }
 
     /// Resolve a physical address to a `(backing_slice, offset)` pair
@@ -504,6 +531,14 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
         Self::for_each_code_line(start, len, |line| {
             if let Some(i) = Self::code_refcount_index(line) {
                 let v = &mut self.code_refcount[i];
+
+                #[cfg(feature = "jit")]
+                if *v == 0 {
+                    if let Some(mapping) = &mut self.fastmem {
+                        mapping.code_line_changed(&self.fastmem_lut, line, true);
+                    }
+                }
+
                 *v = v.saturating_add(1);
             }
         });
@@ -514,6 +549,13 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
             if let Some(i) = Self::code_refcount_index(line) {
                 let v = &mut self.code_refcount[i];
                 if *v != u8::MAX {
+                    #[cfg(feature = "jit")]
+                    if *v == 1 {
+                        if let Some(mapping) = &mut self.fastmem {
+                            mapping.code_line_changed(&self.fastmem_lut, line, false);
+                        }
+                    }
+
                     *v = v.saturating_sub(1);
                 }
             }
@@ -530,6 +572,10 @@ impl<const SYSTEM: SystemId> Mmio<SYSTEM> {
 
     pub fn clear_code_refcount(&mut self) {
         self.code_refcount.fill(0);
+        #[cfg(feature = "jit")]
+        if let Some(mapping) = &mut self.fastmem {
+            mapping.clear_code(&self.fastmem_lut);
+        }
     }
 
     #[inline]

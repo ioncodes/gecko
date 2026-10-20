@@ -1,5 +1,6 @@
 pub mod abi;
 pub mod block;
+mod fastmem;
 pub mod handlers;
 pub mod idle;
 pub mod insn;
@@ -16,12 +17,13 @@ pub mod lut_wii {
     include!(concat!(env!("OUT_DIR"), "/gekko_jit_lut_wii.rs"));
 }
 
+use self::translator::FunctionBuilder;
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{AbiParam, InstBuilder, Signature, types};
 use cranelift_codegen::isa::CallConv;
 use cranelift_codegen::settings::{self, Configurable};
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+use cranelift_frontend::FunctionBuilderContext;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 use rustc_hash::FxHashMap;
@@ -150,11 +152,18 @@ pub struct JitEngine<const SYSTEM: SystemId> {
     trampoline_fn: TrampolineFn,
     block_lookup_table_addr: usize,
     block_seq: u64,
+    faults: fastmem::FaultState,
+    fastmem_available: bool,
+    fastmem_enabled: bool,
 }
 
 impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
     pub fn new() -> Self {
+        let fastmem_available = crate::mmio::fastmem::enabled() && fastmem::install();
         let mut flag_builder = settings::builder();
+        flag_builder
+            .set("enable_pinned_reg", if fastmem_available { "true" } else { "false" })
+            .unwrap();
         flag_builder.set("use_colocated_libcalls", "false").unwrap();
         flag_builder.set("is_pic", "false").unwrap();
         flag_builder.set("opt_level", "speed").unwrap();
@@ -375,6 +384,7 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         }
 
         let arena = crate::jit::arena::DenseArena::new(512 << 20).expect("reserve JIT code arena");
+        let arena_range = arena.address_range();
         jit_builder.memory_provider(Box::new(arena));
 
         let mut module = JITModule::new(jit_builder);
@@ -555,7 +565,8 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
                 .expect("declare cause_smc_write"),
         };
 
-        let trampoline_fn = build_trampoline(&mut module, call_conv, pointer_type, &block_sig);
+        let trampoline_fn =
+            build_trampoline::<SYSTEM>(&mut module, call_conv, pointer_type, &block_sig, fastmem_available);
 
         let block_lookup_table = vec![
             BlockLookupSlot {
@@ -588,6 +599,9 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             trampoline_fn,
             block_lookup_table_addr,
             block_seq: 0,
+            faults: fastmem::FaultState::new(arena_range),
+            fastmem_available,
+            fastmem_enabled: false,
         }
     }
 
@@ -670,6 +684,16 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
     }
 
     pub fn lookup_or_compile(&mut self, sys: &mut System<SYSTEM>, pc: u32) -> BlockEntry {
+        let enabled = self.fastmem_available && sys.mmio.fastmem_base != 0;
+
+        #[cfg(unix)]
+        let enabled = enabled && fastmem::prepare_thread();
+        #[cfg(unix)]
+        if self.fastmem_enabled != enabled && !self.cache.is_empty() {
+            self.flush_with_refcount(&mut sys.mmio);
+        }
+
+        self.fastmem_enabled = enabled;
         unsafe {
             let table = self.block_lookup_table_addr as *const BlockLookupSlot;
             let idx = ((pc >> 2) & BLOCK_LOOKUP_TABLE_MASK) as usize;
@@ -838,8 +862,19 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
         let pc = sys.gekko.pc;
         let entry = self.lookup_or_compile(sys, pc);
         let ctx_ptr = sys as *mut System<SYSTEM> as *mut core::ffi::c_void;
-        let next_pc = unsafe { (self.trampoline_fn)(ctx_ptr, entry) };
+        let next_pc = {
+            let _guard = self
+                .fastmem_enabled
+                .then(|| unsafe { fastmem::enter(sys, &mut self.faults) });
+            unsafe { (self.trampoline_fn)(ctx_ptr, entry) }
+        };
         sys.gekko.pc = next_pc;
+        while let Some(site) = self.faults.pending_sites.pop() {
+            self.invalidate_line(
+                &mut sys.mmio,
+                crate::mmio::virt_to_phys(site) & crate::mmio::CODE_LINE_MASK,
+            );
+        }
     }
 
     #[cfg(feature = "jit-stats")]
@@ -1214,6 +1249,8 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
             self_pc: spec.start_pc,
             target_slots: &self.target_slots,
             block_lookup_table_addr,
+            fastmem: self.fastmem_enabled,
+            slowmem: &self.faults.slowmem,
         };
 
         translator::translate::<SYSTEM>(
@@ -1236,6 +1273,24 @@ impl<const SYSTEM: SystemId> JitEngine<SYSTEM> {
 
         self.module.finalize_definitions().expect("finalize");
         let entry = self.module.get_finalized_function(func_id) as usize;
+        let sources = if self.fastmem_enabled {
+            self.ctx.compiled_code().unwrap().buffer.get_srclocs_sorted()
+        } else {
+            &[]
+        };
+        for source in sources {
+            debug_assert!(
+                self.faults
+                    .sites
+                    .last()
+                    .is_none_or(|site| site.start <= entry + source.start as usize)
+            );
+            self.faults.sites.push(fastmem::Site {
+                start: entry + source.start as usize,
+                end: entry + source.end as usize,
+                guest_pc: source.loc.bits(),
+            });
+        }
         crate::jit::register_jit_code(
             "ppc",
             spec.start_pc,
@@ -1300,11 +1355,12 @@ fn looks_like_polling_shape(spec: &block::BlockSpec, body_cap: usize) -> bool {
     target == spec.start_pc
 }
 
-fn build_trampoline(
+fn build_trampoline<const SYSTEM: SystemId>(
     module: &mut JITModule,
     host_cc: CallConv,
     pointer_type: cranelift_codegen::ir::Type,
     block_sig: &Signature,
+    fastmem: bool,
 ) -> TrampolineFn {
     let mut tramp_sig = Signature::new(host_cc);
     tramp_sig.params.push(AbiParam::new(pointer_type));
@@ -1330,11 +1386,25 @@ fn build_trampoline(
 
         let ctx_ptr = builder.block_params(entry)[0];
         let block_ptr = builder.block_params(entry)[1];
+        let saved_base = fastmem.then(|| {
+            let saved = builder.ins().get_pinned_reg(types::I64);
+            let base = builder.ins().load(
+                types::I64,
+                cranelift_codegen::ir::MemFlagsData::trusted().with_readonly(),
+                ctx_ptr,
+                abi::fastmem_base_offset::<SYSTEM>() as i32,
+            );
+            builder.ins().set_pinned_reg(base);
+            saved
+        });
         let no_host_return = builder.ins().iconst(types::I32, u32::MAX as i64);
         let call = builder
             .ins()
             .call_indirect(block_sig_ref, block_ptr, &[ctx_ptr, no_host_return]);
         let result = builder.inst_results(call)[0];
+        if let Some(saved) = saved_base {
+            builder.ins().set_pinned_reg(saved);
+        }
         builder.ins().return_(&[result]);
         builder.finalize();
     }

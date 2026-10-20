@@ -1,6 +1,6 @@
+use super::FunctionBuilder;
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{InstBuilder, Value, types};
-use cranelift_frontend::FunctionBuilder;
 
 use crate::mmio::FASTMEM_PAGE_BYTES;
 use crate::system::SystemId;
@@ -8,6 +8,9 @@ use crate::system::SystemId;
 use super::{BlockEmitContext, MemSize, emit_fastmem_load, emit_fastmem_lookup, emit_fastmem_store};
 
 fn pointer<const SYSTEM: SystemId>(builder: &mut FunctionBuilder, ctx_ptr: Value, ea: Value, size: MemSize) -> Value {
+    if let Some(address) = super::host_address(builder, ea) {
+        return address;
+    }
     let bytes = size.bytes() as usize;
 
     let (base, offset) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);

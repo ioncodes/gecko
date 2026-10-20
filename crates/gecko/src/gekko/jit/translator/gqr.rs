@@ -1,6 +1,6 @@
+use super::FunctionBuilder;
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{InstBuilder, SigRef, Value, types};
-use cranelift_frontend::FunctionBuilder;
 
 use crate::gekko::instruction::Instruction;
 use crate::gekko::interpreter::psq::{gqr_ld_type, gqr_st_type};

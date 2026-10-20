@@ -1,6 +1,6 @@
+use super::translator::FunctionBuilder;
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{InstBuilder, Value, types};
-use cranelift_frontend::FunctionBuilder;
 
 use crate::gekko::instruction::Instruction;
 use crate::gekko::jit::translator::{

@@ -266,12 +266,7 @@ impl<const SYSTEM: SystemId> Scheduler<SYSTEM> {
 /// Reschedules itself every frame.
 pub fn vsync_handler<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
     if !sys.vi_present_seen_this_frame {
-        sys.vsync_pending = true;
-
-        #[cfg(feature = "fps-counter")]
-        {
-            sys.fps_counter.vsync_count += 1;
-        }
+        crate::flipper::gx::present_xfb(sys);
     }
 
     sys.vi_present_seen_this_frame = false;

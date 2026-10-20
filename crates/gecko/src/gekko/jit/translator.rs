@@ -2,7 +2,7 @@ use cranelift_codegen::Context;
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{AliasRegion, AliasRegionData, Block, FuncRef, InstBuilder, MemFlagsData, Value, types};
 
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+use cranelift_frontend::FunctionBuilderContext;
 use cranelift_jit::JITModule;
 use cranelift_module::Module;
 use rustc_hash::FxHashMap;
@@ -18,6 +18,37 @@ mod gqr;
 mod quantized;
 
 pub(crate) use gqr::GqrAssumptions;
+
+pub(crate) struct FunctionBuilder<'a> {
+    inner: cranelift_frontend::FunctionBuilder<'a>,
+    pub(crate) fastmem: bool,
+    fastmem_base: Option<Value>,
+}
+
+impl<'a> FunctionBuilder<'a> {
+    pub(crate) fn new(func: &'a mut cranelift_codegen::ir::Function, ctx: &'a mut FunctionBuilderContext) -> Self {
+        Self {
+            inner: cranelift_frontend::FunctionBuilder::new(func, ctx),
+            fastmem: false,
+            fastmem_base: None,
+        }
+    }
+    pub(crate) fn finalize(self) {
+        self.inner.finalize();
+    }
+}
+
+impl<'a> std::ops::Deref for FunctionBuilder<'a> {
+    type Target = cranelift_frontend::FunctionBuilder<'a>;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+impl std::ops::DerefMut for FunctionBuilder<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
 
 struct GqrCache {
     values: [Option<Value>; 8],
@@ -59,6 +90,8 @@ pub struct ChainContext<'a> {
     pub self_pc: u32,
     pub target_slots: &'a std::cell::RefCell<FxHashMap<u32, usize>>,
     pub block_lookup_table_addr: i64,
+    pub fastmem: bool,
+    pub slowmem: &'a rustc_hash::FxHashSet<u32>,
 }
 
 impl<'a> ChainContext<'a> {
@@ -325,6 +358,8 @@ pub(crate) fn translate<const SYSTEM: SystemId>(
     let mut chained = false;
     let mut pending_cycles: i64 = 0;
 
+    builder.fastmem_base = chain.fastmem.then(|| builder.ins().get_pinned_reg(types::I64));
+
     let self_loop_header = is_self_loop.then(|| {
         let header = builder.create_block();
         builder.ins().jump(header, &[]);
@@ -356,6 +391,8 @@ pub(crate) fn translate<const SYSTEM: SystemId>(
     for (i, &word) in spec.instrs.iter().enumerate() {
         let instr = Instruction(word);
         let pc = spec.pc_of(i);
+        builder.fastmem = chain.fastmem && !chain.slowmem.contains(&pc);
+        builder.set_srcloc(cranelift_codegen::ir::SourceLoc::new(pc));
         let is_terminator = i + 1 == spec.instrs.len() && !matches!(spec.terminator, TermKind::LengthCap);
 
         t.pc = pc;
@@ -2446,9 +2483,28 @@ pub(crate) fn emit_smc_check<const SYSTEM: SystemId>(
         .ins()
         .icmp_imm(IntCC::UnsignedLessThan, phys, crate::mmio::constants::RAM_SIZE as i64);
 
+    let (in_ram, indexed_phys) = if SYSTEM == crate::system::WII {
+        let mem2_offset = builder
+            .ins()
+            .iadd_imm(phys, -(crate::mmio::constants::MEM2_BASE as i64));
+        let in_mem2 = builder.ins().icmp_imm(
+            IntCC::UnsignedLessThan,
+            mem2_offset,
+            crate::mmio::constants::MEM2_SIZE as i64,
+        );
+        let in_ram = builder.ins().bor(in_mem1, in_mem2);
+        let mem2_index = builder
+            .ins()
+            .iadd_imm(mem2_offset, crate::mmio::constants::RAM_SIZE as i64);
+        let indexed_phys = builder.ins().select(in_mem1, phys, mem2_index);
+        (in_ram, indexed_phys)
+    } else {
+        (in_mem1, phys)
+    };
+
     let check_block = builder.create_block();
     let post_block = builder.create_block();
-    builder.ins().brif(in_mem1, check_block, &[], post_block, &[]);
+    builder.ins().brif(in_ram, check_block, &[], post_block, &[]);
 
     builder.switch_to_block(check_block);
     builder.seal_block(check_block);
@@ -2456,7 +2512,9 @@ pub(crate) fn emit_smc_check<const SYSTEM: SystemId>(
     let rc_off = abi::code_refcount_ptr_offset::<SYSTEM>() as i32;
     let rc_base = builder.ins().load(types::I64, vmctx_readonly_flags(), ctx_ptr, rc_off);
 
-    let lo_idx_u32 = builder.ins().ushr_imm(phys, crate::mmio::CODE_LINE_SHIFT as i64);
+    let lo_idx_u32 = builder
+        .ins()
+        .ushr_imm(indexed_phys, crate::mmio::CODE_LINE_SHIFT as i64);
     let lo_idx = builder.ins().uextend(types::I64, lo_idx_u32);
     let lo_addr = builder.ins().iadd(rc_base, lo_idx);
     let rc_lo = builder.ins().load(types::I8, vmctx_flags(), lo_addr, 0);
@@ -2464,7 +2522,7 @@ pub(crate) fn emit_smc_check<const SYSTEM: SystemId>(
     let combined = if size_bytes <= 1 {
         rc_lo
     } else {
-        let hi_phys = builder.ins().iadd_imm(phys, (size_bytes as i64) - 1);
+        let hi_phys = builder.ins().iadd_imm(indexed_phys, (size_bytes as i64) - 1);
         let hi_idx_u32 = builder.ins().ushr_imm(hi_phys, crate::mmio::CODE_LINE_SHIFT as i64);
         let hi_idx = builder.ins().uextend(types::I64, hi_idx_u32);
         let hi_addr = builder.ins().iadd(rc_base, hi_idx);
@@ -2516,6 +2574,29 @@ pub(crate) fn emit_fastmem_lookup<const SYSTEM: SystemId>(
     (host_ptr, page_off)
 }
 
+fn emit_host_lookup<const SYSTEM: SystemId>(
+    builder: &mut FunctionBuilder,
+    ctx_ptr: Value,
+    ea: Value,
+) -> (Value, Value) {
+    if let Some(addr) = host_address(builder, ea) {
+        return (addr, addr);
+    }
+    let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
+    (host_ptr, builder.ins().iadd(host_ptr, page_off))
+}
+
+fn host_address(builder: &mut FunctionBuilder, ea: Value) -> Option<Value> {
+    if !builder.fastmem {
+        return None;
+    }
+
+    builder.ins().sequence_point();
+    let base = builder.fastmem_base.expect("native fastmem base at block entry");
+    let offset = builder.ins().uextend(types::I64, ea);
+    Some(builder.ins().iadd(base, offset))
+}
+
 pub(crate) fn emit_load<const SYSTEM: SystemId>(
     builder: &mut FunctionBuilder,
     ctx_ptr: Value,
@@ -2536,43 +2617,58 @@ pub(crate) fn emit_lha_d_form<const SYSTEM: SystemId>(
     update: bool,
 ) {
     let ea = emit_d_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
+    emit_lha_at_ea::<SYSTEM>(builder, ctx_ptr, ea, instr, slow, update);
+}
 
-    let fast_block = builder.create_block();
-    let slow_block = builder.create_block();
-    builder.set_cold_block(slow_block);
-    let merge = builder.create_block();
-    builder.append_block_param(merge, types::I32);
+fn emit_lha_at_ea<const SYSTEM: SystemId>(
+    builder: &mut FunctionBuilder,
+    ctx_ptr: Value,
+    ea: Value,
+    instr: Instruction,
+    slow: FuncRef,
+    update: bool,
+) {
+    let read_sext = |builder: &mut FunctionBuilder, addr| {
+        let raw = builder.ins().load(types::I16, heap_flags(), addr, 0);
+        let swapped = builder.ins().bswap(raw);
+        builder.ins().sextend(types::I32, swapped)
+    };
 
-    let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
-    let host_addr = builder.ins().iadd(host_ptr, page_off);
-    builder
-        .ins()
-        .brif(host_ptr, fast_block, &[host_addr.into()], slow_block, &[]);
-    builder.append_block_param(fast_block, types::I64);
+    let val = if let Some(addr) = host_address(builder, ea) {
+        read_sext(builder, addr)
+    } else {
+        let fast_block = builder.create_block();
+        let slow_block = builder.create_block();
+        builder.set_cold_block(slow_block);
+        let merge = builder.create_block();
+        builder.append_block_param(merge, types::I32);
 
-    builder.switch_to_block(fast_block);
-    builder.seal_block(fast_block);
-    let addr = builder.block_params(fast_block)[0];
-    let raw_val = builder.ins().load(types::I16, heap_flags(), addr, 0);
-    let swapped = builder.ins().bswap(raw_val);
+        let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
+        let host_addr = builder.ins().iadd(host_ptr, page_off);
+        builder
+            .ins()
+            .brif(host_ptr, fast_block, &[host_addr.into()], slow_block, &[]);
+        builder.append_block_param(fast_block, types::I64);
 
-    let val32 = builder.ins().sextend(types::I32, swapped);
-    builder.ins().jump(merge, &[val32.into()]);
+        builder.switch_to_block(fast_block);
+        builder.seal_block(fast_block);
+        let addr = builder.block_params(fast_block)[0];
+        let val32 = read_sext(builder, addr);
+        builder.ins().jump(merge, &[val32.into()]);
 
-    builder.switch_to_block(slow_block);
-    builder.seal_block(slow_block);
-    let call = builder.ins().call(slow, &[ctx_ptr, ea]);
-    let raw_u16_in_u32 = builder.inst_results(call)[0];
+        builder.switch_to_block(slow_block);
+        builder.seal_block(slow_block);
+        let call = builder.ins().call(slow, &[ctx_ptr, ea]);
+        let raw_u16_in_u32 = builder.inst_results(call)[0];
+        let trunc = builder.ins().ireduce(types::I16, raw_u16_in_u32);
+        let sext = builder.ins().sextend(types::I32, trunc);
+        builder.ins().jump(merge, &[sext.into()]);
 
-    let trunc = builder.ins().ireduce(types::I16, raw_u16_in_u32);
-    let sext = builder.ins().sextend(types::I32, trunc);
-    builder.ins().jump(merge, &[sext.into()]);
-
-    builder.switch_to_block(merge);
-    builder.seal_block(merge);
-    let val = builder.block_params(merge)[0];
+        builder.switch_to_block(merge);
+        builder.seal_block(merge);
+        builder.block_params(merge)[0]
+    };
     gpr_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), val);
-
     if update {
         gpr_store::<SYSTEM>(builder, ctx_ptr, instr.ra(), ea);
     }
@@ -2634,33 +2730,18 @@ pub(crate) fn emit_u32_store_at_ea<const SYSTEM: SystemId>(
     slow: FuncRef,
     cause_smc_write: FuncRef,
 ) {
-    let fast_block = builder.create_block();
-    let slow_block = builder.create_block();
-    builder.set_cold_block(slow_block);
-    let merge = builder.create_block();
-
-    let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
-    let host_addr = builder.ins().iadd(host_ptr, page_off);
-    builder
-        .ins()
-        .brif(host_ptr, fast_block, &[host_addr.into()], slow_block, &[]);
-    builder.append_block_param(fast_block, types::I64);
-
-    builder.switch_to_block(fast_block);
-    builder.seal_block(fast_block);
-    let addr = builder.block_params(fast_block)[0];
-    let bswapped = builder.ins().bswap(val);
-    builder.ins().store(heap_flags(), bswapped, addr, 0);
-    emit_smc_check::<SYSTEM>(builder, ctx_ptr, ea, 4, cause_smc_write);
-    builder.ins().jump(merge, &[]);
-
-    builder.switch_to_block(slow_block);
-    builder.seal_block(slow_block);
-    builder.ins().call(slow, &[ctx_ptr, ea, val]);
-    builder.ins().jump(merge, &[]);
-
-    builder.switch_to_block(merge);
-    builder.seal_block(merge);
+    let (host_ptr, host_addr) = emit_host_lookup::<SYSTEM>(builder, ctx_ptr, ea);
+    emit_fastmem_store::<SYSTEM>(
+        builder,
+        ctx_ptr,
+        ea,
+        host_ptr,
+        host_addr,
+        val,
+        MemSize::U32,
+        slow,
+        cause_smc_write,
+    );
 }
 
 pub(crate) fn emit_psq_x<const SYSTEM: SystemId>(
@@ -2742,6 +2823,7 @@ pub(crate) fn emit_lwarx<const SYSTEM: SystemId>(
     instr: Instruction,
     local: &BlockEmitContext,
 ) {
+    builder.fastmem = false;
     let ea = emit_x_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
     emit_load_at_ea::<SYSTEM>(
         builder,
@@ -2763,6 +2845,7 @@ pub(crate) fn emit_stwcx_dot<const SYSTEM: SystemId>(
     instr: Instruction,
     local: &BlockEmitContext,
 ) {
+    builder.fastmem = false;
     let ea = emit_x_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
 
     let reserve_off = abi::reserve_addr_offset::<SYSTEM>() as i32;
@@ -2854,43 +2937,7 @@ pub(crate) fn emit_lha_xform<const SYSTEM: SystemId>(
     update: bool,
 ) {
     let ea = emit_x_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
-
-    let fast_block = builder.create_block();
-    let slow_block = builder.create_block();
-    builder.set_cold_block(slow_block);
-    let merge = builder.create_block();
-    builder.append_block_param(merge, types::I32);
-
-    let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
-    let host_addr = builder.ins().iadd(host_ptr, page_off);
-    builder
-        .ins()
-        .brif(host_ptr, fast_block, &[host_addr.into()], slow_block, &[]);
-    builder.append_block_param(fast_block, types::I64);
-
-    builder.switch_to_block(fast_block);
-    builder.seal_block(fast_block);
-    let addr = builder.block_params(fast_block)[0];
-    let raw_val = builder.ins().load(types::I16, heap_flags(), addr, 0);
-    let swapped = builder.ins().bswap(raw_val);
-    let val32 = builder.ins().sextend(types::I32, swapped);
-    builder.ins().jump(merge, &[val32.into()]);
-
-    builder.switch_to_block(slow_block);
-    builder.seal_block(slow_block);
-    let call = builder.ins().call(slow, &[ctx_ptr, ea]);
-    let raw_u16_in_u32 = builder.inst_results(call)[0];
-    let trunc = builder.ins().ireduce(types::I16, raw_u16_in_u32);
-    let sext = builder.ins().sextend(types::I32, trunc);
-    builder.ins().jump(merge, &[sext.into()]);
-
-    builder.switch_to_block(merge);
-    builder.seal_block(merge);
-    let val = builder.block_params(merge)[0];
-    gpr_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), val);
-    if update {
-        gpr_store::<SYSTEM>(builder, ctx_ptr, instr.ra(), ea);
-    }
+    emit_lha_at_ea::<SYSTEM>(builder, ctx_ptr, ea, instr, slow, update);
 }
 
 pub(crate) fn emit_load_xform_brx<const SYSTEM: SystemId>(
@@ -2901,6 +2948,16 @@ pub(crate) fn emit_load_xform_brx<const SYSTEM: SystemId>(
     slow: FuncRef,
 ) {
     let ea = emit_x_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
+
+    if let Some(addr) = host_address(builder, ea) {
+        let raw = builder.ins().load(size.ir_type(), heap_flags(), addr, 0);
+        let value = match size {
+            MemSize::U32 => raw,
+            _ => builder.ins().uextend(types::I32, raw),
+        };
+        gpr_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), value);
+        return;
+    }
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
@@ -2957,6 +3014,15 @@ pub(crate) fn emit_store_xform_brx<const SYSTEM: SystemId>(
 ) {
     let ea = emit_x_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
     let val32 = gpr_load::<SYSTEM>(builder, ctx_ptr, instr.rs());
+
+    if let Some(addr) = host_address(builder, ea) {
+        let value = match size {
+            MemSize::U32 => val32,
+            _ => builder.ins().ireduce(size.ir_type(), val32),
+        };
+        builder.ins().store(heap_flags(), value, addr, 0);
+        return;
+    }
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
@@ -3128,37 +3194,7 @@ pub(crate) fn emit_lfs<const SYSTEM: SystemId>(
     _slow_u32: FuncRef,
 ) {
     let ea = emit_d_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
-
-    let fast_block = builder.create_block();
-    let slow_block = builder.create_block();
-    builder.set_cold_block(slow_block);
-    let merge = builder.create_block();
-    builder.append_block_param(merge, types::F64);
-
-    let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
-    let host_addr = builder.ins().iadd(host_ptr, page_off);
-    builder
-        .ins()
-        .brif(host_ptr, fast_block, &[host_addr.into()], slow_block, &[]);
-    builder.append_block_param(fast_block, types::I64);
-
-    builder.switch_to_block(fast_block);
-    builder.seal_block(fast_block);
-    let addr = builder.block_params(fast_block)[0];
-    let f64v = emit_direct_read_f32(builder, addr);
-    builder.ins().jump(merge, &[f64v.into()]);
-
-    builder.switch_to_block(slow_block);
-    builder.seal_block(slow_block);
-    let call = builder.ins().call(slow_f32, &[ctx_ptr, ea]);
-    let f64v_slow = builder.inst_results(call)[0];
-    builder.ins().jump(merge, &[f64v_slow.into()]);
-
-    builder.switch_to_block(merge);
-    builder.seal_block(merge);
-    let val = builder.block_params(merge)[0];
-
-    fpr_store_paired::<SYSTEM>(builder, ctx_ptr, instr.rd(), val);
+    emit_lfs_at_ea::<SYSTEM>(builder, ctx_ptr, instr.rd(), ea, slow_f32);
 }
 
 pub(crate) fn emit_lfd<const SYSTEM: SystemId>(
@@ -3168,38 +3204,7 @@ pub(crate) fn emit_lfd<const SYSTEM: SystemId>(
     slow_f64: FuncRef,
 ) {
     let ea = emit_d_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
-
-    let fast_block = builder.create_block();
-    let slow_block = builder.create_block();
-    builder.set_cold_block(slow_block);
-    let merge = builder.create_block();
-    builder.append_block_param(merge, types::F64);
-
-    let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
-    let host_addr = builder.ins().iadd(host_ptr, page_off);
-    builder
-        .ins()
-        .brif(host_ptr, fast_block, &[host_addr.into()], slow_block, &[]);
-    builder.append_block_param(fast_block, types::I64);
-
-    builder.switch_to_block(fast_block);
-    builder.seal_block(fast_block);
-    let addr = builder.block_params(fast_block)[0];
-    let raw_u64 = builder.ins().load(types::I64, heap_flags(), addr, 0);
-    let be_u64 = builder.ins().bswap(raw_u64);
-    let f64v = builder.ins().bitcast(types::F64, MemFlagsData::new(), be_u64);
-    builder.ins().jump(merge, &[f64v.into()]);
-
-    builder.switch_to_block(slow_block);
-    builder.seal_block(slow_block);
-    let call = builder.ins().call(slow_f64, &[ctx_ptr, ea]);
-    let f64v_slow = builder.inst_results(call)[0];
-    builder.ins().jump(merge, &[f64v_slow.into()]);
-
-    builder.switch_to_block(merge);
-    builder.seal_block(merge);
-    let val = builder.block_params(merge)[0];
-    fpr_store::<SYSTEM>(builder, ctx_ptr, instr.rd(), val);
+    emit_lfd_at_ea::<SYSTEM>(builder, ctx_ptr, instr.rd(), ea, slow_f64);
 }
 
 pub(crate) fn emit_stfs<const SYSTEM: SystemId>(
@@ -3211,34 +3216,7 @@ pub(crate) fn emit_stfs<const SYSTEM: SystemId>(
     cause_smc_write: FuncRef,
 ) {
     let ea = emit_d_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
-    let f64v = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rs());
-
-    let fast_block = builder.create_block();
-    let slow_block = builder.create_block();
-    builder.set_cold_block(slow_block);
-    let merge = builder.create_block();
-
-    let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
-    let host_addr = builder.ins().iadd(host_ptr, page_off);
-    builder
-        .ins()
-        .brif(host_ptr, fast_block, &[host_addr.into()], slow_block, &[]);
-    builder.append_block_param(fast_block, types::I64);
-
-    builder.switch_to_block(fast_block);
-    builder.seal_block(fast_block);
-    let addr = builder.block_params(fast_block)[0];
-    emit_direct_write_f32(builder, addr, f64v);
-    emit_smc_check::<SYSTEM>(builder, ctx_ptr, ea, 4, cause_smc_write);
-    builder.ins().jump(merge, &[]);
-
-    builder.switch_to_block(slow_block);
-    builder.seal_block(slow_block);
-    builder.ins().call(slow_f32, &[ctx_ptr, ea, f64v]);
-    builder.ins().jump(merge, &[]);
-
-    builder.switch_to_block(merge);
-    builder.seal_block(merge);
+    emit_stfs_at_ea::<SYSTEM>(builder, ctx_ptr, instr.rs(), ea, slow_f32, cause_smc_write);
 }
 
 pub(crate) fn emit_stfd<const SYSTEM: SystemId>(
@@ -3249,36 +3227,7 @@ pub(crate) fn emit_stfd<const SYSTEM: SystemId>(
     cause_smc_write: FuncRef,
 ) {
     let ea = emit_d_form_ea::<SYSTEM>(builder, ctx_ptr, instr);
-    let f64v = fpr_load::<SYSTEM>(builder, ctx_ptr, instr.rs());
-
-    let fast_block = builder.create_block();
-    let slow_block = builder.create_block();
-    builder.set_cold_block(slow_block);
-    let merge = builder.create_block();
-
-    let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
-    let host_addr = builder.ins().iadd(host_ptr, page_off);
-    builder
-        .ins()
-        .brif(host_ptr, fast_block, &[host_addr.into()], slow_block, &[]);
-    builder.append_block_param(fast_block, types::I64);
-
-    builder.switch_to_block(fast_block);
-    builder.seal_block(fast_block);
-    let addr = builder.block_params(fast_block)[0];
-    let bits = builder.ins().bitcast(types::I64, MemFlagsData::new(), f64v);
-    let swapped = builder.ins().bswap(bits);
-    builder.ins().store(heap_flags(), swapped, addr, 0);
-    emit_smc_check::<SYSTEM>(builder, ctx_ptr, ea, 8, cause_smc_write);
-    builder.ins().jump(merge, &[]);
-
-    builder.switch_to_block(slow_block);
-    builder.seal_block(slow_block);
-    builder.ins().call(slow_f64, &[ctx_ptr, ea, f64v]);
-    builder.ins().jump(merge, &[]);
-
-    builder.switch_to_block(merge);
-    builder.seal_block(merge);
+    emit_stfd_at_ea::<SYSTEM>(builder, ctx_ptr, instr.rs(), ea, slow_f64, cause_smc_write);
 }
 
 pub(crate) fn emit_lfsx<const SYSTEM: SystemId>(
@@ -3330,6 +3279,12 @@ pub(crate) fn emit_lfs_at_ea<const SYSTEM: SystemId>(
     ea: Value,
     slow_f32: FuncRef,
 ) {
+    if let Some(addr) = host_address(builder, ea) {
+        let value = emit_direct_read_f32(builder, addr);
+        fpr_store_paired::<SYSTEM>(builder, ctx_ptr, rd, value);
+        return;
+    }
+
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
     builder.set_cold_block(slow_block);
@@ -3371,6 +3326,12 @@ pub(crate) fn emit_lfd_at_ea<const SYSTEM: SystemId>(
     ea: Value,
     slow_f64: FuncRef,
 ) {
+    if let Some(addr) = host_address(builder, ea) {
+        let value = emit_direct_read_f64(builder, addr);
+        fpr_store::<SYSTEM>(builder, ctx_ptr, rd, value);
+        return;
+    }
+
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
     builder.set_cold_block(slow_block);
@@ -3387,9 +3348,7 @@ pub(crate) fn emit_lfd_at_ea<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
     let addr = builder.block_params(fast_block)[0];
-    let raw_u64 = builder.ins().load(types::I64, heap_flags(), addr, 0);
-    let be_u64 = builder.ins().bswap(raw_u64);
-    let f64v = builder.ins().bitcast(types::F64, MemFlagsData::new(), be_u64);
+    let f64v = emit_direct_read_f64(builder, addr);
     builder.ins().jump(merge, &[f64v.into()]);
 
     builder.switch_to_block(slow_block);
@@ -3413,6 +3372,11 @@ pub(crate) fn emit_stfs_at_ea<const SYSTEM: SystemId>(
     cause_smc_write: FuncRef,
 ) {
     let f64v = fpr_load::<SYSTEM>(builder, ctx_ptr, rs);
+
+    if let Some(addr) = host_address(builder, ea) {
+        emit_direct_write_f32(builder, addr, f64v);
+        return;
+    }
 
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
@@ -3455,6 +3419,11 @@ pub(crate) fn emit_stfd_at_ea<const SYSTEM: SystemId>(
 ) {
     let f64v = fpr_load::<SYSTEM>(builder, ctx_ptr, rs);
 
+    if let Some(addr) = host_address(builder, ea) {
+        emit_direct_write_f64(builder, addr, f64v);
+        return;
+    }
+
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
     builder.set_cold_block(slow_block);
@@ -3470,9 +3439,7 @@ pub(crate) fn emit_stfd_at_ea<const SYSTEM: SystemId>(
     builder.switch_to_block(fast_block);
     builder.seal_block(fast_block);
     let addr = builder.block_params(fast_block)[0];
-    let bits = builder.ins().bitcast(types::I64, MemFlagsData::new(), f64v);
-    let swapped = builder.ins().bswap(bits);
-    builder.ins().store(heap_flags(), swapped, addr, 0);
+    emit_direct_write_f64(builder, addr, f64v);
     emit_smc_check::<SYSTEM>(builder, ctx_ptr, ea, 8, cause_smc_write);
     builder.ins().jump(merge, &[]);
 
@@ -3491,6 +3458,19 @@ fn emit_direct_read_f32(builder: &mut FunctionBuilder, addr: Value) -> Value {
     let value = builder.ins().bitcast(types::F32, MemFlagsData::new(), be);
 
     builder.ins().fpromote(types::F64, value)
+}
+
+fn emit_direct_read_f64(builder: &mut FunctionBuilder, addr: Value) -> Value {
+    let raw = builder.ins().load(types::I64, heap_flags(), addr, 0);
+    let be = builder.ins().bswap(raw);
+
+    builder.ins().bitcast(types::F64, MemFlagsData::new(), be)
+}
+
+fn emit_direct_write_f64(builder: &mut FunctionBuilder, addr: Value, value: Value) {
+    let bits = builder.ins().bitcast(types::I64, MemFlagsData::new(), value);
+    let swapped = builder.ins().bswap(bits);
+    builder.ins().store(heap_flags(), swapped, addr, 0);
 }
 
 fn emit_direct_read_ps_pair(builder: &mut FunctionBuilder, addr: Value) -> Value {
@@ -3797,6 +3777,21 @@ pub(crate) fn emit_psq_load_quantized<const SYSTEM: SystemId>(
 
     builder.switch_to_block(tramp_block);
     builder.seal_block(tramp_block);
+    if let Some(addr) = host_address(builder, ea) {
+        let p0 = emit_direct_read_f32(builder, addr);
+        fpr_store::<SYSTEM>(builder, ctx_ptr, fd, p0);
+        let p1 = if w {
+            builder.ins().f64const(1.0)
+        } else {
+            let ea1 = builder.ins().iadd_imm(ea, 4);
+            let addr1 = host_address(builder, ea1).unwrap();
+            emit_direct_read_f32(builder, addr1)
+        };
+        ps1_store::<SYSTEM>(builder, ctx_ptr, fd, p1);
+        builder.ins().jump(merge, &[]);
+        return;
+    }
+
     let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
     let host_addr = builder.ins().iadd(host_ptr, page_off);
     let fast_f32_block = builder.create_block();
@@ -3879,6 +3874,19 @@ pub(crate) fn emit_psq_store_quantized<const SYSTEM: SystemId>(
 
     builder.switch_to_block(tramp_block);
     builder.seal_block(tramp_block);
+    if let Some(addr) = host_address(builder, ea) {
+        let p0 = fpr_load::<SYSTEM>(builder, ctx_ptr, fs);
+        emit_direct_write_f32(builder, addr, p0);
+        if !w {
+            let ea1 = builder.ins().iadd_imm(ea, 4);
+            let addr1 = host_address(builder, ea1).unwrap();
+            let p1 = ps1_load::<SYSTEM>(builder, ctx_ptr, fs);
+            emit_direct_write_f32(builder, addr1, p1);
+        }
+        builder.ins().jump(merge, &[]);
+        return;
+    }
+
     let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
     let host_addr = builder.ins().iadd(host_ptr, page_off);
     let fast_f32_block = builder.create_block();
@@ -3929,6 +3937,10 @@ pub(crate) fn emit_read_f32<const SYSTEM: SystemId>(
     ea: Value,
     slow_f32: FuncRef,
 ) -> Value {
+    if let Some(addr) = host_address(builder, ea) {
+        return emit_direct_read_f32(builder, addr);
+    }
+
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
     builder.set_cold_block(slow_block);
@@ -3970,6 +3982,11 @@ pub(crate) fn emit_write_f32<const SYSTEM: SystemId>(
     slow_f32: FuncRef,
     cause_smc_write: FuncRef,
 ) {
+    if let Some(addr) = host_address(builder, ea) {
+        emit_direct_write_f32(builder, addr, f64v);
+        return;
+    }
+
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
     builder.set_cold_block(slow_block);
@@ -4011,6 +4028,10 @@ pub(crate) fn emit_read_ps_pair<const SYSTEM: SystemId>(
     ea: Value,
     slow_f32: FuncRef,
 ) -> Value {
+    if let Some(addr) = host_address(builder, ea) {
+        return emit_direct_read_ps_pair(builder, addr);
+    }
+
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
     builder.set_cold_block(slow_block);
@@ -4053,6 +4074,11 @@ pub(crate) fn emit_write_ps_pair<const SYSTEM: SystemId>(
     slow_f32: FuncRef,
     cause_smc_write: FuncRef,
 ) {
+    if let Some(addr) = host_address(builder, ea) {
+        emit_direct_write_ps_pair(builder, addr, pair);
+        return;
+    }
+
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
     builder.set_cold_block(slow_block);
@@ -4730,8 +4756,7 @@ pub(crate) fn emit_load_at_ea<const SYSTEM: SystemId>(
     slow: FuncRef,
     update: bool,
 ) {
-    let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
-    let host_addr = builder.ins().iadd(host_ptr, page_off);
+    let (host_ptr, host_addr) = emit_host_lookup::<SYSTEM>(builder, ctx_ptr, ea);
     let val = emit_fastmem_load(builder, ctx_ptr, ea, host_ptr, host_addr, size, slow);
     gpr_store::<SYSTEM>(builder, ctx_ptr, rd, val);
 
@@ -4749,6 +4774,15 @@ pub(crate) fn emit_fastmem_load(
     size: MemSize,
     slow: FuncRef,
 ) -> Value {
+    if builder.fastmem {
+        let raw = builder.ins().load(size.ir_type(), heap_flags(), host_addr, 0);
+        let value = size.swap(builder, raw);
+        return match size {
+            MemSize::U32 => value,
+            _ => builder.ins().uextend(types::I32, value),
+        };
+    }
+
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
     builder.set_cold_block(slow_block);
@@ -4835,8 +4869,7 @@ pub(crate) fn emit_store_at_ea<const SYSTEM: SystemId>(
     update: bool,
 ) {
     let val32 = gpr_load::<SYSTEM>(builder, ctx_ptr, rs);
-    let (host_ptr, page_off) = emit_fastmem_lookup::<SYSTEM>(builder, ctx_ptr, ea);
-    let host_addr = builder.ins().iadd(host_ptr, page_off);
+    let (host_ptr, host_addr) = emit_host_lookup::<SYSTEM>(builder, ctx_ptr, ea);
     emit_fastmem_store::<SYSTEM>(
         builder,
         ctx_ptr,
@@ -4865,6 +4898,16 @@ pub(crate) fn emit_fastmem_store<const SYSTEM: SystemId>(
     slow: FuncRef,
     cause_smc_write: FuncRef,
 ) {
+    if builder.fastmem {
+        let raw = match size {
+            MemSize::U32 => val32,
+            _ => builder.ins().ireduce(size.ir_type(), val32),
+        };
+        let value = size.swap(builder, raw);
+        builder.ins().store(heap_flags(), value, host_addr, 0);
+        return;
+    }
+
     let fast_block = builder.create_block();
     let slow_block = builder.create_block();
     builder.set_cold_block(slow_block);

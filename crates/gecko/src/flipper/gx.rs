@@ -170,6 +170,13 @@ impl XfbRegion {
 // don't composite over fresh ones.
 const XFB_REGION_MAX_AGE_PRESENTS: u64 = 8;
 
+fn cpu_written_xfb_base(regions: &FxHashMap<u32, XfbRegion>, ram: &RamView<'_>) -> Option<u32> {
+    regions
+        .iter()
+        .filter_map(|(&base, region)| region.cpu_written(ram, base).then_some(base))
+        .min()
+}
+
 #[cfg(feature = "gx-stats")]
 #[derive(Default, Clone)]
 pub(crate) struct GxStats {
@@ -325,19 +332,11 @@ pub fn present_xfb<const SYSTEM: SystemId>(sys: &mut System<SYSTEM>) {
         vi_base
     };
 
-    if let Some(region) = sys.gx.xfb_regions.get(&frame_base).copied() {
-        if region.cpu_written(&sys.mmio.ram_view(), frame_base) {
-            self::present_raw_xfb(
-                sys,
-                frame_base,
-                frame_w,
-                frame_h,
-                region.stride,
-                region.width,
-                region.height,
-            );
-            return;
-        }
+    // TODO: Verify this
+    let cpu_written_base = cpu_written_xfb_base(&sys.gx.xfb_regions, &sys.mmio.ram_view());
+    if let Some(base) = cpu_written_base {
+        self::present_raw_xfb(sys, base, frame_w, frame_h, bytes_per_row as u32, frame_w, frame_h);
+        return;
     }
 
     // Measure the page-flip cadence. Emission is paced to it further down.

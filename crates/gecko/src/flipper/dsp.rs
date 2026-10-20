@@ -477,7 +477,12 @@ impl<const SYSTEM: SystemId> System<SYSTEM> {
             self.dsp.jit.as_mut().unwrap().record_chain_depth(chain_depth);
         }
 
-        (self.dsp.instr_count as u64).max(1)
+        let consumed = (self.dsp.instr_count as u64).max(1);
+
+        #[cfg(feature = "jit-stats")]
+        DSP_EXECUTED_STEPS.fetch_add(consumed, std::sync::atomic::Ordering::Relaxed);
+
+        consumed
     }
 
     #[cfg(feature = "jit")]
@@ -731,6 +736,8 @@ pub static DSP_DRAIN_EXIT_BUDGET: std::sync::atomic::AtomicU64 = std::sync::atom
 pub static DSP_BATCH_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 #[cfg(feature = "jit-stats")]
 pub static DSP_BATCH_STEPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(feature = "jit-stats")]
+pub static DSP_EXECUTED_STEPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 #[cfg(feature = "jit-stats")]
 pub static DSP_BATCH_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
