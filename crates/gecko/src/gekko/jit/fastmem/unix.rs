@@ -218,6 +218,50 @@ unsafe fn write_context(context: *mut c_void, registers: &Registers) {
     }
 }
 
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+fn gprs(context: &mut libc::__darwin_x86_thread_state64) -> [&mut u64; 16] {
+    [
+        &mut context.__rax,
+        &mut context.__rcx,
+        &mut context.__rdx,
+        &mut context.__rbx,
+        &mut context.__rsp,
+        &mut context.__rbp,
+        &mut context.__rsi,
+        &mut context.__rdi,
+        &mut context.__r8,
+        &mut context.__r9,
+        &mut context.__r10,
+        &mut context.__r11,
+        &mut context.__r12,
+        &mut context.__r13,
+        &mut context.__r14,
+        &mut context.__r15,
+    ]
+}
+
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+unsafe fn read_context(context: *mut c_void) -> Registers {
+    let context = unsafe { &mut (*(*context.cast::<libc::ucontext_t>()).uc_mcontext).__ss };
+    let mut result = Registers {
+        pc: context.__rip,
+        ..Registers::default()
+    };
+    for (value, slot) in result.gpr.iter_mut().zip(gprs(context)) {
+        *value = *slot;
+    }
+    result
+}
+
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+unsafe fn write_context(context: *mut c_void, registers: &Registers) {
+    let context = unsafe { &mut (*(*context.cast::<libc::ucontext_t>()).uc_mcontext).__ss };
+    context.__rip = registers.pc;
+    for (value, slot) in registers.gpr.iter().zip(gprs(context)) {
+        *slot = *value;
+    }
+}
+
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 #[repr(C)]
 struct DarwinContext {
